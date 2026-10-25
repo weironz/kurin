@@ -1,3 +1,4 @@
+/target
 # kurin M1 实施 spec
 
 Rust 重写的 Kubernetes 集群安装器，对标 [kubekey](https://github.com/kubesphere/kubekey)（功能对标，非代码移植）。
@@ -149,7 +150,9 @@ trait Task {
 
 ```
 kurin/            # 单 crate 主程序（lib: config/ssh/artifact/plan/exec 模块 + thin CLI bin）
+kurin/templates/  # minijinja 模板（rust-embed 以 crate 根为基准，编译期嵌入二进制）
+kurin/examples/   # 示例配置（cluster.example.toml）
 kurin-config/     # 配置 schema 类型（M1 唯一预拆 crate）
-templates/        # minijinja 模板，rust-embed 嵌入
 e2e/              # tier-0/1/2 harness（Makefile + 断言）
+docs/             # m1-spec.md / progress.md / w1-tracks.md
 ```

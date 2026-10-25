@@ -1,0 +1,19 @@
+[package]
+name = "kurin-config"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Declarative cluster configuration schema for kurin (parse, don't validate)"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_yml = "0.0.12"
+toml = "0.8"
+thiserror = "2"
+miette = "7"
+semver = { version = "1", features = ["serde"] }
+ipnet = { version = "2", features = ["serde"] }
+
+[dev-dependencies]
+insta = { version = "1", features = ["toml"] }
