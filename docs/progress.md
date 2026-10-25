@@ -46,6 +46,15 @@ kubeadm 1.33 + VIP 的三个真实坑（都是 tier-3 暴露的）：
 
 tier-3 干净循环 PASS（新 3 VM → 安装 → 断言 → 幂等，exit 0，~13 分钟）：3 节点 Ready、2 个 CP join、VIP `/readyz`、全 pod Running、二遍全 skip。
 
+## M1 步骤 6 — 增删节点与销毁 ✅（2026-10-26）
+
+实机验证（tier-2 集群）：
+
+- `kurin add nodes -f`：新 worker 2 秒 join，既有节点/阶段全部 skip（同一条命令兼作 reconcile）。
+- `kurin delete node <name> -f`：drain → kubectl delete node → kubeadm reset → 服务停用 → 制品清除；验证节点从集群消失且 `/etc/kubernetes`、kubelet 二进制被清空。
+- `kurin delete cluster -f`：workers 先、控制面后逐个擦除 —— 两节点均确认 `/etc/kubernetes` 不存在、containerd/kubelet 停止、`/usr/local/bin` kubernetes 制品清空（含 containerd-stress），本地 join 材料与 run-state 一并删除。
+- 修复：drain 在 NotReady 节点上会被优雅驱逐卡死，改用 `--disable-eviction --grace-period=0 --timeout=90s`。
+
 ## 下一步（M1 实施顺序）
 
 1. ✅ Planner + dry-run + Task 引擎骨架（tier-0 PASS）
@@ -55,6 +64,6 @@ tier-3 干净循环 PASS（新 3 VM → 安装 → 断言 → 幂等，exit 0，
    - 修复并验证：cni kubectl 显式 `--kubeconfig`；CRD 由 operator 自建需轮询（Calico ≥3.26 operator manifest 不含 CRD）；exec 超时 120s→900s（kubeadm init ~55s + 镜像拉取）；kernel-deps 任务（apt/dnf 兜底 conntrack/socat/ebtables/ipset/ipvsadm）；kubeadm 节点名取自配置（`nodeRegistration.name`，缺省会用 hostname）。
    - tier-1 断言：cluster-ready 事件零 task-failed、node01 Ready（轮询）、podCIDR 为集群 /18 的 /24 切片、全部 pod Running（含 calico-system）、第二遍全 skip 幂等。
    - **干净环境全流程证明**（新 VM→create cluster→断言→销毁，exit 0，225s）：`make tier1-down && make tier1 && make tier1-test`。
-4. ✅ 多节点（tier-2 PASS）；5. ✅ HA/kube-vip（tier-3 PASS）；6. ⏳ add/delete nodes；7. ⏳ 离线验收
+4. ✅ 多节点（tier-2 PASS）；5. ✅ HA/kube-vip（tier-3 PASS）；6. ✅ add/delete nodes；7. ⏳ 离线验收
 
 已知留白：join 任务需要控制面 bootstrap token 的跨节点协作（kubeadm token create → worker join flag 注入，M1 步骤 3 接线）；`delete cluster` 命令未实现。

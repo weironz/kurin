@@ -9,6 +9,7 @@ pub mod render;
 pub mod ssh;
 pub mod state;
 pub mod tasks;
+pub mod teardown;
 pub mod templates;
 pub mod version;
 

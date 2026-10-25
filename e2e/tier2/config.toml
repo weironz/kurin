@@ -17,11 +17,16 @@ method = "private_key"
 key-path = "/home/gsops/data/repos/kurin/e2e/tier2/.keys/id_ed25519"
 
 [nodes.master01]
-address = "10.97.0.50"
-internal-address = "10.97.0.50"
+address = "10.97.0.226"
+internal-address = "10.97.0.226"
 role = "control-plane"
 
 [nodes.worker01]
-address = "10.97.0.170"
-internal-address = "10.97.0.170"
+address = "10.97.0.85"
+internal-address = "10.97.0.85"
+role = "worker"
+
+[nodes.worker02]
+address = "10.97.0.167"
+internal-address = "10.97.0.167"
 role = "worker"

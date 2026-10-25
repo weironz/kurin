@@ -79,6 +79,12 @@ async fn ensure_admin_role_binding(session: &dyn Session) -> Result<()> {
     }
 }
 
+/// Public refresh: `add nodes` re-harvests a fresh token + certificate key
+/// before joining (the certificate key is only valid for 2h).
+pub async fn refresh_join_material(session: &dyn Session, cluster: &str) -> Result<()> {
+    write_join_material(session, cluster).await
+}
+
 async fn write_join_material(session: &dyn Session, cluster: &str) -> Result<()> {
     // admin.conf targets the control-plane endpoint (the VIP on HA): right
     // after init the VIP may not be routable yet, so poll instead of failing.
