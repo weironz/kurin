@@ -1,0 +1,72 @@
+---
+source: kurin-config/tests/format.rs
+expression: view(&t)
+---
+(
+    "prod",
+    192.168.10.100,
+    [
+        Node {
+            name: "master01",
+            role: ControlPlane,
+            address: 192.168.10.11,
+            internal_address: 192.168.10.11,
+            ssh: ResolvedSsh {
+                user: "root",
+                port: 22,
+                auth: PrivateKey {
+                    key_path: "/root/.ssh/id_ed25519",
+                    passphrase: None,
+                },
+            },
+            labels: {},
+        },
+        Node {
+            name: "master02",
+            role: ControlPlane,
+            address: 192.168.10.12,
+            internal_address: 192.168.10.12,
+            ssh: ResolvedSsh {
+                user: "root",
+                port: 22,
+                auth: PrivateKey {
+                    key_path: "/root/.ssh/id_ed25519",
+                    passphrase: None,
+                },
+            },
+            labels: {},
+        },
+        Node {
+            name: "master03",
+            role: ControlPlane,
+            address: 192.168.10.13,
+            internal_address: 192.168.10.13,
+            ssh: ResolvedSsh {
+                user: "root",
+                port: 22,
+                auth: PrivateKey {
+                    key_path: "/root/.ssh/id_ed25519",
+                    passphrase: None,
+                },
+            },
+            labels: {},
+        },
+        Node {
+            name: "worker01",
+            role: Worker,
+            address: 192.168.10.21,
+            internal_address: 192.168.10.21,
+            ssh: ResolvedSsh {
+                user: "root",
+                port: 22,
+                auth: PrivateKey {
+                    key_path: "/root/.ssh/id_ed25519",
+                    passphrase: None,
+                },
+            },
+            labels: {
+                "node-role.kurin.io/pool": "general",
+            },
+        },
+    ],
+)

@@ -1,0 +1,5 @@
+---
+source: kurin-config/tests/snapshots.rs
+expression: reason(&err)
+---
+ha.vip 10.233.64.5 falls inside network.pod-cidr 10.233.64.0/18; pick a VIP outside the pod and service ranges

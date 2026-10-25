@@ -1,0 +1,5 @@
+---
+source: kurin-config/tests/snapshots.rs
+expression: reason(&err)
+---
+unknown field `pod-cider`, expected one of `pod-cidr`, `service-cidr`, `dns-domain`, `cni`

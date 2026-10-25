@@ -1,0 +1,5 @@
+---
+source: kurin-config/tests/snapshots.rs
+expression: reason(&err)
+---
+node name "Worker_01" is not a valid DNS label: use lowercase letters, digits and '-', starting and ending with a letter or digit (uppercase or underscore hostnames break kubeadm installs)

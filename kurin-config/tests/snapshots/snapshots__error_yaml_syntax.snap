@@ -1,0 +1,5 @@
+---
+source: kurin-config/tests/snapshots.rs
+expression: reason(&err)
+---
+nodes: invalid type: sequence, expected a map at line 2 column 8

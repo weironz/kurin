@@ -1,0 +1,5 @@
+---
+source: kurin-config/tests/snapshots.rs
+expression: reason(&err)
+---
+node master01: no ssh auth and no default [ssh] auth

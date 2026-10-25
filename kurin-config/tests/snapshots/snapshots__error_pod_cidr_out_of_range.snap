@@ -1,0 +1,5 @@
+---
+source: kurin-config/tests/snapshots.rs
+expression: reason(&err)
+---
+network.pod-cidr /7 out of range: prefix must be between /8 and /24

@@ -2,7 +2,7 @@
 //! `Cluster::from_config` merges defaults; `validate` is the business-rule
 //! gate. Every cross-field conflict is a hard error before any SSH happens.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::net::IpAddr;
 
 use ipnet::Ipv4Net;
@@ -115,6 +115,49 @@ impl Cluster {
         if self.nodes.is_empty() {
             return Err(invalid("at least one node is required in [nodes]".into()));
         }
+        for n in &self.nodes {
+            let name = &n.name;
+            let valid = !name.is_empty()
+                && name.len() <= 63
+                && name
+                    .chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+                && !name.starts_with('-')
+                && !name.ends_with('-');
+            if !valid {
+                return Err(invalid(format!(
+                    "node name {name:?} is not a valid DNS label: use lowercase letters, digits \
+                     and '-', starting and ending with a letter or digit (uppercase or \
+                     underscore hostnames break kubeadm installs)"
+                )));
+            }
+        }
+        // Addresses must be unique across address AND internal_address: two
+        // nodes claiming one IP breaks etcd/API-server bootstrap.
+        let mut seen: HashMap<IpAddr, (&str, &str)> = HashMap::new();
+        for n in &self.nodes {
+            for (field, addr) in
+                [("address", n.address), ("internal_address", n.internal_address)]
+            {
+                // internal_address defaults to address; a node's own pair is not a duplicate.
+                let is_default = field == "internal_address" && addr == n.address;
+                if is_default {
+                    continue;
+                }
+                if let Some((other_name, other_field)) = seen.insert(addr, (&n.name, field)) {
+                    return Err(invalid(format!(
+                        "node {} {field} {addr} duplicates node {other_name} {other_field}",
+                        n.name
+                    )));
+                }
+            }
+        }
+        let prefix = self.pod_cidr.prefix_len();
+        if !(8..=24).contains(&prefix) {
+            return Err(invalid(format!(
+                "network.pod-cidr /{prefix} out of range: prefix must be between /8 and /24"
+            )));
+        }
         let cp = self.control_plane().count();
         if cp == 0 {
             return Err(invalid("at least one control-plane node is required".into()));
@@ -147,6 +190,24 @@ impl Cluster {
             return Err(invalid(
                 "network.pod-cidr and network.service-cidr must not overlap".into(),
             ));
+        }
+        if let Some(vip) = self.vip {
+            if let IpAddr::V4(v4) = vip {
+                if self.pod_cidr.contains(&v4) {
+                    return Err(invalid(format!(
+                        "ha.vip {v4} falls inside network.pod-cidr {}; pick a VIP outside the \
+                         pod and service ranges",
+                        self.pod_cidr
+                    )));
+                }
+                if self.service_cidr.contains(&v4) {
+                    return Err(invalid(format!(
+                        "ha.vip {v4} falls inside network.service-cidr {}; pick a VIP outside \
+                         the pod and service ranges",
+                        self.service_cidr
+                    )));
+                }
+            }
         }
         Ok(())
     }
