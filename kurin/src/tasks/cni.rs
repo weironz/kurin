@@ -103,11 +103,11 @@ impl Task for CalicoOperator {
             "set -e\n\
              {KUBECTL} apply -f {op}\n\
              n=0; until {KUBECTL} wait --for=condition=Established crd/installations.operator.tigera.io --timeout=30s 2>/dev/null; do\n\
-               n=$((n+1)); [ $n -ge 30 ] && {{ echo 'CRD never Established' >&2; exit 1; }}\n\
+               n=$((n+1)); [ $n -ge 120 ] && {{ echo 'CRD never Established' >&2; exit 1; }}\n\
                sleep 2\n\
              done\n\
              n=0; until {KUBECTL} -n tigera-operator wait --for=condition=Available deployment/tigera-operator --timeout=60s 2>/dev/null; do\n\
-               n=$((n+1)); [ $n -ge 10 ] && {{ echo 'tigera-operator never Available' >&2; exit 1; }}\n\
+               n=$((n+1)); [ $n -ge 40 ] && {{ echo 'tigera-operator never Available' >&2; exit 1; }}\n\
                sleep 5\n\
              done\n\
              {KUBECTL} apply -f {cr}\n\

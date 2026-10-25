@@ -46,13 +46,56 @@ pub fn read_join_material(cluster: &str) -> Option<JoinMaterial> {
     if m.join_command.is_empty() { None } else { Some(m) }
 }
 
-async fn write_join_material(session: &dyn Session, cluster: &str) -> Result<()> {
+/// kubeadm 1.33 moved admin.conf out of system:masters into
+/// kubeadm:cluster-admins and tries to create the matching CRB via the
+/// controlPlaneEndpoint. With HA the endpoint is the kube-vip VIP, which
+/// can't come up until kube-vip gets its lease — and the lease needs this
+/// exact CRB. Break the cycle with the kubeadm-provided super-admin.conf
+/// (system:masters) against the local API server (certSANs includes 127.0.0.1).
+async fn ensure_admin_role_binding(session: &dyn Session) -> Result<()> {
+    let superconf_exists = session
+        .exec("test -f /etc/kubernetes/super-admin.conf")
+        .await?
+        .ok();
+    if !superconf_exists {
+        // Pre-1.33 kubeadm keeps admin.conf in system:masters; nothing to do.
+        return Ok(());
+    }
+    let k = "kubectl --kubeconfig /etc/kubernetes/super-admin.conf --server https://127.0.0.1:6443";
     let out = session
-        .exec("kubeadm token create --print-join-command")
+        .exec(&format!(
+            "{k} get clusterrolebinding kubeadm:cluster-admins >/dev/null 2>&1 || \
+             {k} create clusterrolebinding kubeadm:cluster-admins \
+             --clusterrole=cluster-admin --group=kubeadm:cluster-admins"
+        ))
+        .await?;
+    if out.ok() {
+        Ok(())
+    } else {
+        Err(miette::miette!(
+            "could not ensure kubeadm:cluster-admins binding: {}",
+            out.stderr.lines().last().unwrap_or("")
+        ))
+    }
+}
+
+async fn write_join_material(session: &dyn Session, cluster: &str) -> Result<()> {
+    // admin.conf targets the control-plane endpoint (the VIP on HA): right
+    // after init the VIP may not be routable yet, so poll instead of failing.
+    let out = session
+        .exec(
+            "for i in $(seq 1 60); do \
+               out=$(kubeadm token create --print-join-command 2>/dev/null) && [ -n \"$out\" ] && { echo \"$out\"; exit 0; }; \
+               sleep 2; \
+             done; echo 'join command unavailable' >&2; exit 1",
+        )
         .await?;
     let join_cmd = out.stdout.trim().to_string();
     if join_cmd.is_empty() {
-        return Err(miette::miette!("kubeadm token create returned empty join command"));
+        return Err(miette::miette!(
+            "kubeadm token create produced no join command: {}",
+            out.stderr.lines().last().unwrap_or("").trim()
+        ));
     }
     // Fresh certificate key (2h TTL). Never persisted on the node.
     let out = session
@@ -73,6 +116,7 @@ async fn write_join_material(session: &dyn Session, cluster: &str) -> Result<()>
 pub struct KubeadmInit {
     node_name: String,
     cluster_name: String,
+    api_endpoint: String,
     rendered: String,
 }
 
@@ -83,6 +127,10 @@ impl KubeadmInit {
             .vip
             .map(|v| format!("{v}:6443"))
             .unwrap_or_else(|| format!("{advertise}:6443"));
+        let endpoint_host = cluster
+            .vip
+            .map(|v| v.to_string())
+            .unwrap_or_else(|| advertise.clone());
         let rendered = templates::render(
             "kubeadm/kubeadm-init.yaml.j2",
             minijinja::context! {
@@ -100,7 +148,60 @@ impl KubeadmInit {
         Self {
             node_name: first.name.clone(),
             cluster_name: cluster.name.clone(),
+            api_endpoint: endpoint_host,
             rendered,
+        }
+    }
+
+    /// The control-plane endpoint kubeadm wrote into the kubeconfigs.
+    fn endpoint(&self) -> String {
+        format!("{}:6443", self.api_endpoint)
+    }
+
+    /// Wait until the endpoint serves /readyz (kube-vip lease lands a few
+    /// seconds after the admin RBAC repair; bounded to fail loudly).
+    async fn wait_api_ready(&self, session: &dyn Session) -> Result<()> {
+        let ep = self.endpoint();
+        let out = session
+            .exec(&format!(
+                "for i in $(seq 1 60); do \
+                   kubectl --kubeconfig /etc/kubernetes/admin.conf --server https://{ep} get --raw /readyz >/dev/null 2>&1 && exit 0; \
+                   sleep 2; \
+                 done; echo 'API at {ep} never became ready' >&2; exit 1"
+            ))
+            .await?;
+        if out.ok() {
+            Ok(())
+        } else {
+            Err(miette::miette!(
+                "API at {ep} not ready after RBAC repair: {}",
+                out.stderr.lines().last().unwrap_or("").trim()
+            ))
+        }
+    }
+
+    /// kubeadm's own post-init phases that publish what joins consume: the
+    /// kubeadm-config/kubelet-config ConfigMaps (+ token RBAC) and
+    /// kube-public/cluster-info (+ anonymous RBAC). On HA the VIP endpoint is
+    /// not routable while kubeadm init runs, so these phases silently leave
+    /// nothing behind and every join starves at discovery/preflight.
+    /// Re-run them once the API serves; both are idempotent.
+    async fn ensure_post_init_phases(&self, session: &dyn Session) -> Result<()> {
+        let out = session
+            .exec(&format!(
+                "kubeadm init phase upload-config all --config {0} && \
+                 kubeadm init phase bootstrap-token --config {0} && \
+                 kubeadm init phase addon all --config {0}",
+                Self::config_path()
+            ))
+            .await?;
+        if out.ok() {
+            Ok(())
+        } else {
+            Err(miette::miette!(
+                "post-init phases failed: {}",
+                out.stderr.lines().last().unwrap_or("").trim()
+            ))
         }
     }
 
@@ -175,9 +276,22 @@ impl Task for KubeadmInit {
             }
         }
 
-        // Harvest join material for the Join stage. A failure here doesn't
-        // mean the cluster is broken: report Unknown so the next pass
-        // re-checks (init InSync) and retries the harvest.
+        // kubeadm 1.33 HA: repair the admin-group RBAC first (kube-vip's
+        // lease depends on it; kubeadm's own attempt runs against the
+        // not-yet-routable VIP). Then wait for the VIP-backed API, re-run
+        // kubeadm's bootstrap-token phase (cluster-info CM + anonymous
+        // RBAC — same VIP blind spot), and only then harvest join material.
+        // A failure here doesn't mean the cluster is broken: report Unknown
+        // so the next pass re-checks (init InSync) and retries.
+        if let Err(e) = ensure_admin_role_binding(session).await {
+            return Ok(Outcome::Unknown(format!("repair admin RBAC: {e}")));
+        }
+        if let Err(e) = self.wait_api_ready(session).await {
+            return Ok(Outcome::Unknown(format!("api readiness: {e}")));
+        }
+        if let Err(e) = self.ensure_post_init_phases(session).await {
+            return Ok(Outcome::Unknown(format!("post-init phases: {e}")));
+        }
         if let Err(e) = write_join_material(session, &self.cluster_name).await {
             return Ok(Outcome::Unknown(format!("harvest join material: {e}")));
         }
@@ -191,6 +305,92 @@ fn init_failure(out: &crate::engine::ExecOutput, node: &str) -> miette::Report {
         out.exit_code,
         out.stderr.lines().last().unwrap_or("")
     )
+}
+
+/// Gate for the Join stage: on HA clusters, joins discover via the VIP, so
+/// the VIP-backend API must actually answer before anyone joins.
+pub struct ApiReady {
+    node_name: String,
+    endpoint: String,
+    ha: bool,
+}
+
+impl ApiReady {
+    pub fn new(cluster: &Cluster, first: &Node) -> Self {
+        let endpoint = match cluster.vip {
+            Some(vip) => format!("{vip}:6443"),
+            None => format!("{}:6443", first.internal_address),
+        };
+        Self {
+            node_name: first.name.clone(),
+            endpoint,
+            ha: cluster.vip.is_some(),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl Task for ApiReady {
+    fn id(&self) -> String {
+        format!("bootstrap/api-ready@{}", self.node_name)
+    }
+    fn stage(&self) -> Stage {
+        Stage::ApiReady
+    }
+    fn node(&self) -> &str {
+        &self.node_name
+    }
+    fn describe(&self) -> String {
+        format!("wait until {} serves the API (VIP backend up)", self.endpoint)
+    }
+
+    async fn check(&self, session: &dyn Session) -> Result<Drift> {
+        // Same probe as apply; cheap and non-mutating, so a converged
+        // cluster reports InSync on every rerun.
+        match session
+            .exec(&format!(
+                "kubectl --kubeconfig /etc/kubernetes/admin.conf --server https://{} get --raw /readyz",
+                self.endpoint
+            ))
+            .await?
+        {
+            out if out.ok() => Ok(Drift::InSync),
+            out => Ok(Drift::Drifted(format!(
+                "API at {} not ready: {}",
+                self.endpoint,
+                out.stderr.lines().last().unwrap_or("").trim()
+            ))),
+        }
+    }
+
+    async fn apply(&self, session: &dyn Session) -> miette::Result<Outcome> {
+        // Bounded poll: kube-vip's lease usually lands within seconds of
+        // init, but the etcd/quorum-less HA case still needs a ceiling.
+        let script = format!(
+            "for i in $(seq 1 60); do \n\
+               kubectl --kubeconfig /etc/kubernetes/admin.conf --server https://{} get --raw /readyz >/dev/null 2>&1 && exit 0\n\
+               sleep 2\n\
+             done\n\
+             echo 'API endpoint never became ready' >&2; exit 1",
+            self.endpoint
+        );
+        let out = session.exec(&script).await?;
+        if out.ok() {
+            Ok(Outcome::Verified)
+        } else if self.ha {
+            Err(miette::miette!(
+                "HA API endpoint {} never became ready (kube-vip lease/forwarding failed): {}",
+                self.endpoint,
+                out.stderr.lines().last().unwrap_or("").trim()
+            ))
+        } else {
+            Err(miette::miette!(
+                "API endpoint {} never became ready: {}",
+                self.endpoint,
+                out.stderr.lines().last().unwrap_or("").trim()
+            ))
+        }
+    }
 }
 
 /// Path of the kube-vip static pod manifest watched by kubelet.

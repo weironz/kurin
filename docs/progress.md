@@ -34,6 +34,18 @@
 - **CNI 竞态**：Calico ≥3.26 的 CRD 由 operator 运行时创建，`kubectl wait` 会撞上 nil conditions；两个 readiness wait 改为带超时的容错轮询。
 - **tier-2 干净循环 PASS**（新 VM×2 → 安装 → 断言 → 幂等，exit 0，296s）：worker join 事件出现、双节点 Ready、worker podCIDR、全 pod Running、二遍 0 重跑。
 
+## M1 步骤 5 — HA 控制面 ✅（2026-10-26）
+
+新增 `vip` 与 `api-ready` 阶段：kube-vip 静态 pod 必须在 init 前落盘，join 前必须确认 VIP 后端真的在服务。
+
+kubeadm 1.33 + VIP 的三个真实坑（都是 tier-3 暴露的）：
+
+1. **admin RBAC 自举死锁**：1.33 把 admin.conf 移出 `system:masters`（组 `kubeadm:cluster-admins`），补建 CRB 的调用走 controlPlaneEndpoint=VIP，而 VIP 需要 kube-vip 的 lease、lease 又要这个 CRB。解法：用 kubeadm 自带的 `super-admin.conf`（system:masters）经 `127.0.0.1` 补建（apiserver certSANs 增加 127.0.0.1）。
+2. **post-init phases 静默缺失**：`upload-config`（kubeadm-config CM + token RBAC）、`bootstrap-token`（cluster-info CM + 匿名 RBAC）、`addon`（kube-proxy + CoreDNS）都经 VIP 访问 API，init 时不可达 → 全部缺失 → join 在 discovery/preflight 阶段饿死、CNI 无法调度。解法：init 后按序等待 API ready 并重放这三个幂等 phase。
+3. **kube-vip address 语义**：v0.8 把 `address + vip_subnet` 拼成 CIDR，`vip_subnet` 必须带斜杠（`/32`）。
+
+tier-3 干净循环 PASS（新 3 VM → 安装 → 断言 → 幂等，exit 0，~13 分钟）：3 节点 Ready、2 个 CP join、VIP `/readyz`、全 pod Running、二遍全 skip。
+
 ## 下一步（M1 实施顺序）
 
 1. ✅ Planner + dry-run + Task 引擎骨架（tier-0 PASS）
@@ -43,6 +55,6 @@
    - 修复并验证：cni kubectl 显式 `--kubeconfig`；CRD 由 operator 自建需轮询（Calico ≥3.26 operator manifest 不含 CRD）；exec 超时 120s→900s（kubeadm init ~55s + 镜像拉取）；kernel-deps 任务（apt/dnf 兜底 conntrack/socat/ebtables/ipset/ipvsadm）；kubeadm 节点名取自配置（`nodeRegistration.name`，缺省会用 hostname）。
    - tier-1 断言：cluster-ready 事件零 task-failed、node01 Ready（轮询）、podCIDR 为集群 /18 的 /24 切片、全部 pod Running（含 calico-system）、第二遍全 skip 幂等。
    - **干净环境全流程证明**（新 VM→create cluster→断言→销毁，exit 0，225s）：`make tier1-down && make tier1 && make tier1-test`。
-4. ✅ 多节点（tier-2 PASS）；5. ⏳ HA/kube-vip；6. add/delete nodes；7. 离线验收
+4. ✅ 多节点（tier-2 PASS）；5. ✅ HA/kube-vip（tier-3 PASS）；6. ⏳ add/delete nodes；7. ⏳ 离线验收
 
 已知留白：join 任务需要控制面 bootstrap token 的跨节点协作（kubeadm token create → worker join flag 注入，M1 步骤 3 接线）；`delete cluster` 命令未实现。

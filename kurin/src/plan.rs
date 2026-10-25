@@ -28,7 +28,9 @@ impl Plan {
             Stage::Preflight,
             Stage::Artifacts,
             Stage::Prepare,
+            Stage::Vip,
             Stage::Bootstrap,
+            Stage::ApiReady,
             Stage::Join,
             Stage::Cni,
             Stage::Post,
@@ -70,15 +72,19 @@ impl Plan {
                 )),
             );
         }
-        // Bootstrap: kube-vip on every control-plane node (VIP only), then
-        // kubeadm init on the first. Stage order keeps init after vip.
+        // Vip: kube-vip static pod on every control-plane node (VIP only).
+        // Must be written before init binds the VIP as controlPlaneEndpoint.
         for node in cluster.control_plane() {
             if let Some(kubevip) = tasks::bootstrap::KubeVip::new(cluster, node) {
                 push(3, Arc::new(kubevip));
             }
         }
         if let Some(first) = cluster.control_plane().next() {
-            push(3, Arc::new(tasks::bootstrap::KubeadmInit::new(cluster, first)));
+            push(4, Arc::new(tasks::bootstrap::KubeadmInit::new(cluster, first)));
+            // ApiReady: the VIP-backed API must serve before any join. join's
+            // discovery hits the VIP, which requires kube-vip's lease + 6443
+            // forwarding to be live (seconds after init on a fresh node).
+            push(5, Arc::new(tasks::bootstrap::ApiReady::new(cluster, first)));
         }
         // Join: workers and additional control-plane members.
         for node in cluster.nodes.iter().skip(0) {
@@ -89,11 +95,11 @@ impl Plan {
             if is_first_cp {
                 continue;
             }
-            push(4, Arc::new(tasks::join::KubeadmJoin::new(cluster, node)));
+            push(6, Arc::new(tasks::join::KubeadmJoin::new(cluster, node)));
         }
         // CNI + post.
-        push(5, Arc::new(tasks::cni::CalicoOperator::new(cluster)));
-        push(6, Arc::new(tasks::post::KubeconfigPull::new(cluster)));
+        push(7, Arc::new(tasks::cni::CalicoOperator::new(cluster)));
+        push(8, Arc::new(tasks::post::KubeconfigPull::new(cluster)));
 
         Plan { graph, stages: idx }
     }

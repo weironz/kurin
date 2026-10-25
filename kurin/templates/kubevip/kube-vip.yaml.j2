@@ -28,8 +28,10 @@ spec:
     - { name: vip_leaseduration, value: "15" }
     - { name: vip_renewdeadline, value: "10" }
     - { name: vip_retryperiod, value: "2" }
+    # kube-vip v0.8 parses `address + vip_subnet` as one CIDR string, so the
+    # slash lives in vip_subnet and address stays a bare IP.
     - { name: address, value: "{{ vip }}" }
-    - { name: vip_subnet, value: "32" }
+    - { name: vip_subnet, value: "/32" }
     - { name: vip_arp, value: "true" }
     - { name: vip_retryforever, value: "true" }
     - { name: cp_enable, value: "true" }

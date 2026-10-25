@@ -32,7 +32,12 @@ pub enum Stage {
     /// Binary-first distribution: fetch + install pinned binaries.
     Artifacts,
     Prepare,
+    /// kube-vip static pod manifests on every control-plane node
+    /// (must precede init: kubeadm binds the VIP as controlPlaneEndpoint).
+    Vip,
     Bootstrap,
+    /// VIP-backed API is actually serving before any join attempt.
+    ApiReady,
     Join,
     Cni,
     Post,
@@ -44,7 +49,9 @@ impl Stage {
             Stage::Preflight => "preflight",
             Stage::Artifacts => "artifacts",
             Stage::Prepare => "prepare",
+            Stage::Vip => "vip",
             Stage::Bootstrap => "bootstrap",
+            Stage::ApiReady => "api-ready",
             Stage::Join => "join",
             Stage::Cni => "cni",
             Stage::Post => "post",

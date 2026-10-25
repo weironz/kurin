@@ -51,3 +51,12 @@ tier2-test:
 	e2e/tier2/assert.sh target/tier2/debug/kurin e2e/tier2/config.toml
 tier2-down:
 	e2e/tier2/down.sh
+
+.PHONY: tier3 tier3-test tier3-down
+tier3:
+	e2e/tier3/up.sh
+tier3-test:
+	CARGO_TARGET_DIR=target/tier3 cargo build -p kurin
+	e2e/tier3/assert.sh target/tier3/debug/kurin e2e/tier3/config.toml
+tier3-down:
+	e2e/tier3/down.sh
