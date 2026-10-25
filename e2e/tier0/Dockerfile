@@ -4,7 +4,8 @@
 FROM jrei/systemd-ubuntu:22.04
 
 RUN apt-get update \
- && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends openssh-server \
+ && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      openssh-server containerd \
  && rm -rf /var/lib/apt/lists/* \
  && mkdir -p /run/sshd /root/.ssh \
  && chmod 700 /root/.ssh \
