@@ -41,7 +41,8 @@ Rust 重写的 Kubernetes 集群安装器，对标 [kubekey](https://github.com/
 
 - **Planner（编译期）**：读配置，在内存构建任务 DAG（petgraph），**不发起任何网络连接**。产物 = 阶段图 + 每任务的渲染后负载（kubeadm.yaml、config.toml、systemd unit、shell 片段）。
 - **Executor（运行期）**：消费 Planner 产物，走 SSH 执行。
-- `--dry-run` 把 DAG 打印为树状执行计划：哪些节点、哪些任务、渲染出的完整文件内容。`--json` 模式输出机器可读计划。
+
+- 两档 dry-run：`--dry-run` 纯离线，只渲染计划不建连（可 100% 单测）；`--dry-run --check` 额外对每个任务跑 `check_state`，计划上标注 `would-change` / `unchanged`（Terraform `plan` 语义）。默认离线，因为用户常在配置阶段先看计划。
 
 收益（也是验收标准）：核心逻辑不碰真实虚拟机即可 100% 单测；`apply` 与 `plan` 永远不会漂移。
 
