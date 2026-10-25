@@ -1,5 +1,6 @@
 pub mod bootstrap;
 pub mod install;
+pub mod kernel_deps;
 pub mod cni;
 pub mod join;
 pub mod post;

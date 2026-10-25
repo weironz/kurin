@@ -7,11 +7,16 @@
 use kurin_config::Cluster;
 use miette::Result;
 
+use crate::artifact::{Arch, ArtifactManifest, ArtifactStore};
 use crate::engine::{Drift, Outcome, Session, Stage, Task};
 use crate::templates;
 
 /// Staged on the control-plane node, then applied and removed.
 const INSTALLATION_STAGING_PATH: &str = "/tmp/kurin-calico-installation.yaml";
+/// Pinned operator manifest, fetched via the artifact store (cache/offline).
+const OPERATOR_STAGING_PATH: &str = "/tmp/kurin-tigera-operator.yaml";
+/// kubectl on a fresh control plane has no $HOME/.kube/config yet.
+const KUBECTL: &str = "kubectl --kubeconfig /etc/kubernetes/admin.conf";
 
 pub struct CalicoOperator {
     node_name: String,
@@ -39,11 +44,21 @@ impl CalicoOperator {
         .expect("embedded calico Installation template renders")
     }
 
-    fn operator_url() -> String {
-        format!(
-            "https://raw.githubusercontent.com/projectcalico/calico/{}/manifests/tigera-operator.yaml",
-            crate::version::CALICO_VERSION
-        )
+    /// Operator manifest comes from the artifact store so online and
+    /// offline installs share one verified source.
+    async fn operator_manifest() -> miette::Result<Vec<u8>> {
+        let store = ArtifactStore::open_default()?;
+        let manifest = ArtifactManifest::embedded()?;
+        let arch = match std::env::consts::ARCH {
+            "x86_64" => Arch::Amd64,
+            "aarch64" => Arch::Arm64,
+            other => return Err(miette::miette!("unsupported arch: {other}")),
+        };
+        let spec = manifest.spec("calico-operator", arch)?;
+        // Manifest artifacts are not node-installed; presence in the cache is
+        // enough, and the CNI stage runs after staged downloads elsewhere.
+        let path = store.fetch(&spec).await?;
+        Ok(std::fs::read(path).map_err(|e| miette::miette!("read operator manifest: {e}"))?)
     }
 }
 
@@ -64,7 +79,7 @@ impl Task for CalicoOperator {
 
     async fn check(&self, session: &dyn Session) -> Result<Drift> {
         let out = session
-            .exec("kubectl get installation default -o name 2>/dev/null")
+            .exec(&format!("{KUBECTL} get installation default -o name 2>/dev/null"))
             .await?;
         if out.ok() && out.stdout.trim() == "installation.operator.tigera.io/default" {
             Ok(Drift::InSync)
@@ -77,14 +92,26 @@ impl Task for CalicoOperator {
         session
             .write_file(INSTALLATION_STAGING_PATH, self.installation_cr().as_bytes())
             .await?;
-        let out = session
-            .exec(&format!(
-                "kubectl apply -f {} && kubectl apply -f {} && rm -f {}",
-                Self::operator_url(),
-                INSTALLATION_STAGING_PATH,
-                INSTALLATION_STAGING_PATH
-            ))
+        session
+            .write_file(OPERATOR_STAGING_PATH, &Self::operator_manifest().await?)
             .await?;
+        // The operator creates its own CRDs at startup (Calico >=3.26), so a
+        // bare `wait` right after apply races the operator pod: poll instead.
+        let script = format!(
+            "set -e\n\
+             {KUBECTL} apply -f {op}\n\
+             for i in $(seq 1 90); do\n\
+               {KUBECTL} get crd installations.operator.tigera.io >/dev/null 2>&1 && break\n\
+               sleep 2\n\
+             done\n\
+             {KUBECTL} wait --for=condition=Established crd/installations.operator.tigera.io --timeout=60s\n\
+             {KUBECTL} -n tigera-operator wait --for=condition=Available deployment/tigera-operator --timeout=180s\n\
+             {KUBECTL} apply -f {cr}\n\
+             rm -f {op} {cr}",
+            op = OPERATOR_STAGING_PATH,
+            cr = INSTALLATION_STAGING_PATH,
+        );
+        let out = session.exec(&script).await?;
         if out.ok() {
             Ok(Outcome::Verified)
         } else {

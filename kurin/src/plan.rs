@@ -55,6 +55,7 @@ impl Plan {
             push(0, Arc::new(tasks::preflight::Preflight::new(node)));
             push(1, Arc::new(tasks::install::ArtifactsInstall::new(node, arch)));
             push(2, Arc::new(tasks::prepare::Sysctl::new(node)));
+            push(2, Arc::new(tasks::kernel_deps::KernelDeps::new(node)));
             push(
                 2,
                 Arc::new(tasks::prepare::ContainerdConfig::new(node, crate::version::PAUSE_IMAGE)),

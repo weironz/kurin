@@ -30,7 +30,7 @@ use kurin_config::{Cluster, ResolvedSsh, SshAuth};
 use crate::engine::{ExecOutput, Session};
 
 /// Upper bound for one `exec` round trip, including data transfer.
-pub const EXEC_TIMEOUT: Duration = Duration::from_secs(120);
+pub const EXEC_TIMEOUT: Duration = Duration::from_secs(900);
 /// `write_file` may carry a larger payload than a probe.
 pub const WRITE_TIMEOUT: Duration = Duration::from_secs(300);
 /// TCP connect + key exchange + authentication.

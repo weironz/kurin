@@ -34,3 +34,11 @@ tier0-test: $(KURIN_BIN)
 
 tier0-down:
 	./$(TIER0_DIR)/down.sh
+.PHONY: tier1 tier1-test tier1-down
+tier1:
+	e2e/tier1/up.sh
+tier1-test:
+	CARGO_TARGET_DIR=target/tier1 cargo build -p kurin
+	e2e/tier1/assert.sh target/tier1/debug/kurin e2e/tier1/config.toml
+tier1-down:
+	e2e/tier1/down.sh
