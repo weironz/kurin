@@ -142,8 +142,11 @@ trait Task {
 
 ## 构建与分发
 
-- x86_64 与 aarch64 musl 静态二进制（rustls，无 OpenSSL）
-- `cargo-dist` 产出 GitHub Releases + `curl | sh` 安装脚本
+- x86_64 与 aarch64 musl 静态二进制（rustls，无 OpenSSL）；x86_64 用 musl-gcc，
+  aarch64 用 `cargo zigbuild`（zig 跨 libc）
+- 本地与 CI 统一由 `just` 驱动（`just check` / `just release-musl` / tier 系列）
+- GitHub Actions：push → check + tier0；tag `v*` → musl 双架构 tarball + sha256 上传 release
+- `scripts/install.sh`：`curl | sh`，下载后强制 sha256 校验
 - license：Apache-2.0
 
 ## 仓库结构
@@ -153,6 +156,9 @@ kurin/            # 单 crate 主程序（lib: config/ssh/artifact/plan/exec 模
 kurin/templates/  # minijinja 模板（rust-embed 以 crate 根为基准，编译期嵌入二进制）
 kurin/examples/   # 示例配置（cluster.example.toml）
 kurin-config/     # 配置 schema 类型（M1 唯一预拆 crate）
-e2e/              # tier-0/1/2 harness（Makefile + 断言）
+e2e/              # tier-0/1/2/3 harness（脚本 + 断言）
+scripts/          # install.sh、checksum 收集
+.github/          # CI（self-hosted runner）
+justfile          # 本地构建/测试/发布入口
 docs/             # m1-spec.md / progress.md / w1-tracks.md
 ```

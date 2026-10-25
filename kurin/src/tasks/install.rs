@@ -37,9 +37,18 @@ fn install_for(name: &str) -> Option<Install> {
         "kubectl" => Install::Direct("/usr/local/bin/kubectl"),
         "runc" => Install::Direct("/usr/local/bin/runc"),
         // containerd tgz layout: bin/containerd, bin/containerd-shim-* (no strip)
-        "containerd" => Install::Tar { dir: "/usr/local", strip: 0 },
-        "crictl" => Install::Tar { dir: "/usr/local/bin", strip: 0 },
-        "cni-plugins" => Install::Tar { dir: "/opt/cni/bin", strip: 0 },
+        "containerd" => Install::Tar {
+            dir: "/usr/local",
+            strip: 0,
+        },
+        "crictl" => Install::Tar {
+            dir: "/usr/local/bin",
+            strip: 0,
+        },
+        "cni-plugins" => Install::Tar {
+            dir: "/opt/cni/bin",
+            strip: 0,
+        },
         _ => return None, // images / manifests are not node-level installs
     })
 }
@@ -53,7 +62,11 @@ pub struct ArtifactsInstall {
 
 impl ArtifactsInstall {
     pub fn new(node: &Node, arch: Arch, offline: Option<std::path::PathBuf>) -> Self {
-        Self { node: node.clone(), arch, offline }
+        Self {
+            node: node.clone(),
+            arch,
+            offline,
+        }
     }
 
     /// Resolve the local payload for one artifact, online or offline.
@@ -61,9 +74,9 @@ impl ArtifactsInstall {
         match &self.offline {
             Some(dir) => {
                 let dm = ArtifactManifest::from_dir(dir)?;
-                let found = dm
-                    .find(&spec.name, self.arch)
-                    .ok_or_else(|| miette::miette!("offline bundle lacks {} ({})", spec.name, self.arch))?;
+                let found = dm.find(&spec.name, self.arch).ok_or_else(|| {
+                    miette::miette!("offline bundle lacks {} ({})", spec.name, self.arch)
+                })?;
                 Ok(found.file.clone())
             }
             None => {
@@ -136,10 +149,14 @@ impl Task for ArtifactsInstall {
         };
         let manifest = ArtifactManifest::embedded()?;
 
-        session.exec("mkdir -p /usr/local/bin /opt/cni/bin /etc/kurin").await?;
+        session
+            .exec("mkdir -p /usr/local/bin /opt/cni/bin /etc/kurin")
+            .await?;
 
         for entry in manifest.artifacts() {
-            let Some(install) = install_for(&entry.name) else { continue };
+            let Some(install) = install_for(&entry.name) else {
+                continue;
+            };
             let spec = manifest.spec(&entry.name, self.arch)?;
             let local: PathBuf = self.payload(&spec).await?;
             let bytes = std::fs::read(&local)
@@ -153,9 +170,15 @@ impl Task for ArtifactsInstall {
                 Install::Tar { dir, strip } => {
                     let remote_tmp = format!("/tmp/kurin-{}.tgz", spec.name);
                     session.write_file(&remote_tmp, &bytes).await?;
-                    let strip_flag = if strip > 0 { format!("--strip-components={strip}") } else { String::new() };
+                    let strip_flag = if strip > 0 {
+                        format!("--strip-components={strip}")
+                    } else {
+                        String::new()
+                    };
                     let out = session
-                        .exec(&format!("tar -xzf {remote_tmp} -C {dir} {strip_flag} && rm -f {remote_tmp}"))
+                        .exec(&format!(
+                            "tar -xzf {remote_tmp} -C {dir} {strip_flag} && rm -f {remote_tmp}"
+                        ))
                         .await?;
                     if !out.ok() {
                         return Err(miette::miette!(
@@ -180,7 +203,9 @@ impl Task for ArtifactsInstall {
             let sha = spec.expected_sha256().unwrap_or_default();
             lines.push_str(&format!("{}={sha}@r{INSTALL_RECIPE}\n", entry.name));
         }
-        session.write_file("/etc/kurin/artifacts.marker", lines.as_bytes()).await?;
+        session
+            .write_file("/etc/kurin/artifacts.marker", lines.as_bytes())
+            .await?;
         Ok(Outcome::Verified)
     }
 }

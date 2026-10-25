@@ -31,7 +31,10 @@ pub fn render(path: &str, ctx: minijinja::Value) -> Result<String, minijinja::Er
 }
 
 /// Convenience for the common cluster-level context.
-pub fn render_cluster(path: &str, cluster: &kurin_config::Cluster) -> Result<String, minijinja::Error> {
+pub fn render_cluster(
+    path: &str,
+    cluster: &kurin_config::Cluster,
+) -> Result<String, minijinja::Error> {
     render(
         path,
         context! {

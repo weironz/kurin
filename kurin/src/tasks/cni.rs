@@ -62,11 +62,13 @@ impl CalicoOperator {
                 let dm = ArtifactManifest::from_dir(dir)?;
                 dm.find("calico-operator", arch)
                     .map(|a| a.file.clone())
-                    .ok_or_else(|| miette::miette!("offline bundle lacks calico-operator manifest"))?
+                    .ok_or_else(|| {
+                        miette::miette!("offline bundle lacks calico-operator manifest")
+                    })?
             }
             None => ArtifactStore::open_default()?.fetch(&spec).await?,
         };
-        Ok(std::fs::read(path).map_err(|e| miette::miette!("read operator manifest: {e}"))?)
+        std::fs::read(path).map_err(|e| miette::miette!("read operator manifest: {e}"))
     }
 }
 
@@ -87,7 +89,9 @@ impl Task for CalicoOperator {
 
     async fn check(&self, session: &dyn Session) -> Result<Drift> {
         let out = session
-            .exec(&format!("{KUBECTL} get installation default -o name 2>/dev/null"))
+            .exec(&format!(
+                "{KUBECTL} get installation default -o name 2>/dev/null"
+            ))
             .await?;
         if out.ok() && out.stdout.trim() == "installation.operator.tigera.io/default" {
             Ok(Drift::InSync)
@@ -151,7 +155,9 @@ mod tests {
             ssh: ResolvedSsh {
                 user: "root".into(),
                 port: 22,
-                auth: SshAuth::Password { password: "x".into() },
+                auth: SshAuth::Password {
+                    password: "x".into(),
+                },
             },
             labels: BTreeMap::new(),
         };
@@ -189,6 +195,9 @@ mod tests {
             .unwrap();
         assert!(spec.url().contains(crate::version::CALICO_VERSION));
         assert!(spec.url().ends_with("/manifests/tigera-operator.yaml"));
-        assert!(spec.expected_sha256().is_some(), "manifest must be checksum-pinned");
+        assert!(
+            spec.expected_sha256().is_some(),
+            "manifest must be checksum-pinned"
+        );
     }
 }

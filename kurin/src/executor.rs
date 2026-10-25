@@ -85,7 +85,9 @@ pub async fn run_with(
         let stage = node.stage;
         let tasks = std::mem::take(&mut node.tasks);
         if tasks.is_empty() {
-            emit(Event::StageDone { stage: stage.label() });
+            emit(Event::StageDone {
+                stage: stage.label(),
+            });
             node.tasks = tasks;
             continue;
         }
@@ -157,7 +159,9 @@ pub async fn run_with(
             }
             return Err(err);
         }
-        emit(Event::StageDone { stage: stage.label() });
+        emit(Event::StageDone {
+            stage: stage.label(),
+        });
     }
 
     state.flush()?;
@@ -177,7 +181,11 @@ async fn execute_one(
 
     // Emitted before anything can fail, so every task always starts its
     // event sequence — a session failure still yields TaskFailed.
-    let _ = tx.send(Event::TaskStart { id: id.clone(), node: node.clone(), stage });
+    let _ = tx.send(Event::TaskStart {
+        id: id.clone(),
+        node: node.clone(),
+        stage,
+    });
 
     let result: Result<()> = async {
         let session = pool.get(&node).await?;
@@ -186,7 +194,11 @@ async fn execute_one(
             Drift::InSync => {
                 // Covers the resume path: a recorded-done task that is still
                 // in sync is skipped exactly like a fresh no-op.
-                let _ = tx.send(Event::TaskSkipped { id: id.clone(), node: node.clone(), stage });
+                let _ = tx.send(Event::TaskSkipped {
+                    id: id.clone(),
+                    node: node.clone(),
+                    stage,
+                });
                 return Ok(());
             }
             Drift::Drifted(_reason) => {}
@@ -198,15 +210,23 @@ async fn execute_one(
 
         match outcome {
             Outcome::Verified => {
-                let _ = tx.send(Event::TaskDone { id: id.clone(), node: node.clone(), stage, ms });
+                let _ = tx.send(Event::TaskDone {
+                    id: id.clone(),
+                    node: node.clone(),
+                    stage,
+                    ms,
+                });
                 Ok(())
             }
             Outcome::Unknown(reason) => {
                 // Recovery rule: probe again before deciding anything.
                 match task.check(session.as_ref()).await? {
                     Drift::InSync => {
-                        let _ =
-                            tx.send(Event::TaskReconciled { id: id.clone(), node: node.clone(), stage });
+                        let _ = tx.send(Event::TaskReconciled {
+                            id: id.clone(),
+                            node: node.clone(),
+                            stage,
+                        });
                         Ok(())
                     }
                     Drift::Drifted(still) => Err(miette::miette!(
@@ -219,7 +239,12 @@ async fn execute_one(
     .await;
 
     if let Err(err) = &result {
-        let _ = tx.send(Event::TaskFailed { id, node, stage, reason: err.to_string() });
+        let _ = tx.send(Event::TaskFailed {
+            id,
+            node,
+            stage,
+            reason: err.to_string(),
+        });
     }
     result
 }
@@ -403,20 +428,33 @@ mod tests {
         let mut graph = StableDiGraph::new();
         let mut idx = Vec::with_capacity(stages.len());
         for s in stages {
-            idx.push(graph.add_node(StageNode { stage: *s, tasks: Vec::new() }));
+            idx.push(graph.add_node(StageNode {
+                stage: *s,
+                tasks: Vec::new(),
+            }));
         }
         for w in idx.windows(2) {
             graph.add_edge(w[0], w[1], ());
         }
         for t in tasks {
-            let pos = stages.iter().position(|s| *s == t.stage()).expect("task stage in stages");
-            graph[idx[pos]].tasks.push(PlannedTask { task: t, drift: None });
+            let pos = stages
+                .iter()
+                .position(|s| *s == t.stage())
+                .expect("task stage in stages");
+            graph[idx[pos]].tasks.push(PlannedTask {
+                task: t,
+                drift: None,
+            });
         }
         Plan { graph, stages: idx }
     }
 
     fn task_events(events: &[Event]) -> Vec<&'static str> {
-        events.iter().map(|e| e.kind()).filter(|k| k.starts_with("task-")).collect()
+        events
+            .iter()
+            .map(|e| e.kind())
+            .filter(|k| k.starts_with("task-"))
+            .collect()
     }
 
     #[tokio::test]
@@ -425,12 +463,17 @@ mod tests {
             "prepare/sysctl@n1",
             "n1",
             Stage::Prepare,
-            vec![Drift::Drifted("kernel params missing".into()), Drift::InSync],
+            vec![
+                Drift::Drifted("kernel params missing".into()),
+                Drift::InSync,
+            ],
             vec![Outcome::Unknown("ssh channel dropped mid-apply".into())],
         );
         let mut plan = plan_with(vec![task.clone()], &[Stage::Preflight, Stage::Prepare]);
         let mut events = Vec::new();
-        run(&mut plan, &pool(), &mut |e| events.push(e)).await.unwrap();
+        run(&mut plan, &pool(), &mut |e| events.push(e))
+            .await
+            .unwrap();
 
         assert_eq!(task_events(&events), ["task-start", "task-reconciled"]);
         assert_eq!(task.applies(), 1);
@@ -444,12 +487,17 @@ mod tests {
             "bootstrap/kubeadm-init@cp1",
             "cp1",
             Stage::Bootstrap,
-            vec![Drift::Drifted("no cluster".into()), Drift::Drifted("still no cluster".into())],
+            vec![
+                Drift::Drifted("no cluster".into()),
+                Drift::Drifted("still no cluster".into()),
+            ],
             vec![Outcome::Unknown("connection reset".into())],
         );
         let mut plan = plan_with(vec![task.clone()], &[Stage::Bootstrap]);
         let mut events = Vec::new();
-        let err = run(&mut plan, &pool(), &mut |e| events.push(e)).await.unwrap_err();
+        let err = run(&mut plan, &pool(), &mut |e| events.push(e))
+            .await
+            .unwrap_err();
 
         assert!(err.to_string().contains("still no cluster"));
         assert_eq!(
@@ -458,7 +506,10 @@ mod tests {
             "no blind retry: apply stays at 1"
         );
         assert_eq!(task.applies(), 1);
-        let failed = events.iter().find(|e| e.kind() == "task-failed").expect("TaskFailed event");
+        let failed = events
+            .iter()
+            .find(|e| e.kind() == "task-failed")
+            .expect("TaskFailed event");
         match failed {
             Event::TaskFailed { reason, .. } => {
                 assert!(reason.contains("connection reset") && reason.contains("still no cluster"))
@@ -466,7 +517,9 @@ mod tests {
             _ => panic!("wrong variant"),
         }
         // StageDone / ClusterReady never fire after a failure.
-        assert!(!events.iter().any(|e| matches!(e.kind(), "stage-done" | "cluster-ready")));
+        assert!(!events
+            .iter()
+            .any(|e| matches!(e.kind(), "stage-done" | "cluster-ready")));
     }
 
     #[tokio::test]
@@ -480,7 +533,9 @@ mod tests {
         );
         let mut plan = plan_with(vec![task.clone()], &[Stage::Preflight]);
         let mut events = Vec::new();
-        run(&mut plan, &pool(), &mut |e| events.push(e)).await.unwrap();
+        run(&mut plan, &pool(), &mut |e| events.push(e))
+            .await
+            .unwrap();
 
         assert_eq!(task_events(&events), ["task-start", "task-skipped"]);
         assert_eq!(task.applies(), 0);
@@ -497,7 +552,9 @@ mod tests {
         );
         let mut plan = plan_with(vec![task.clone()], &[Stage::Prepare]);
         let mut events = Vec::new();
-        run(&mut plan, &pool(), &mut |e| events.push(e)).await.unwrap();
+        run(&mut plan, &pool(), &mut |e| events.push(e))
+            .await
+            .unwrap();
 
         assert_eq!(task_events(&events), ["task-start", "task-done"]);
         assert_eq!(task.applies(), 1);
@@ -538,7 +595,10 @@ mod tests {
         .await
         .expect("stage members run in parallel (no barrier deadlock)")
         .unwrap();
-        assert_eq!(task_events(&events), ["task-start", "task-start", "task-done", "task-done"]);
+        assert_eq!(
+            task_events(&events),
+            ["task-start", "task-start", "task-done", "task-done"]
+        );
     }
 
     #[tokio::test]
@@ -561,21 +621,25 @@ mod tests {
         );
         let mut plan = plan_with(vec![first, second], &[Stage::Prepare, Stage::Join]);
         let mut events = Vec::new();
-        run(&mut plan, &pool(), &mut |e| events.push(e)).await.unwrap();
+        run(&mut plan, &pool(), &mut |e| events.push(e))
+            .await
+            .unwrap();
 
         let pos = |k: &'static str, id: &str| {
-            events.iter().position(|e| {
-                e.kind() == k
-                    && match e {
-                        Event::TaskStart { id: i, .. }
-                        | Event::TaskDone { id: i, .. }
-                        | Event::TaskSkipped { id: i, .. }
-                        | Event::TaskFailed { id: i, .. }
-                        | Event::TaskReconciled { id: i, .. } => i == id,
-                        _ => false,
-                    }
-            })
-            .expect("event present")
+            events
+                .iter()
+                .position(|e| {
+                    e.kind() == k
+                        && match e {
+                            Event::TaskStart { id: i, .. }
+                            | Event::TaskDone { id: i, .. }
+                            | Event::TaskSkipped { id: i, .. }
+                            | Event::TaskFailed { id: i, .. }
+                            | Event::TaskReconciled { id: i, .. } => i == id,
+                            _ => false,
+                        }
+                })
+                .expect("event present")
         };
         assert!(pos("task-done", "prepare/a@n1") < pos("task-start", "join/kubeadm-join@w1"));
         let stage_done = events.iter().filter(|e| e.kind() == "stage-done").count();
@@ -593,7 +657,9 @@ mod tests {
         );
         let mut plan = plan_with(vec![fail], &[Stage::Prepare]);
         let mut events = Vec::new();
-        run(&mut plan, &pool(), &mut |e| events.push(e)).await.unwrap_err();
+        run(&mut plan, &pool(), &mut |e| events.push(e))
+            .await
+            .unwrap_err();
         assert_eq!(task_events(&events), ["task-start", "task-failed"]);
     }
 
@@ -615,7 +681,11 @@ mod tests {
             &mut plan,
             &pool(),
             &mut |e| events.push(e),
-            RunOptions { cluster: "demo".into(), state_file: Some(path.clone()), resume: true },
+            RunOptions {
+                cluster: "demo".into(),
+                state_file: Some(path.clone()),
+                resume: true,
+            },
         )
         .await
         .unwrap();
@@ -630,7 +700,10 @@ mod tests {
 
         let text = std::fs::read_to_string(&path).unwrap();
         assert!(text.contains("prepare/sysctl@n1"), "current run recorded");
-        assert!(text.contains("bootstrap/kubeadm-init@cp1"), "resume preserved old record");
+        assert!(
+            text.contains("bootstrap/kubeadm-init@cp1"),
+            "resume preserved old record"
+        );
 
         // A fresh (non-resume) run wipes the file before starting.
         let task2 = ScriptedTask::new(
@@ -645,7 +718,11 @@ mod tests {
             &mut plan2,
             &pool(),
             &mut |_| {},
-            RunOptions { cluster: "demo".into(), state_file: Some(path.clone()), resume: false },
+            RunOptions {
+                cluster: "demo".into(),
+                state_file: Some(path.clone()),
+                resume: false,
+            },
         )
         .await
         .unwrap();
@@ -671,7 +748,10 @@ mod tests {
             vec![Drift::InSync],
             vec![],
         );
-        let mut plan = plan_with(vec![drifted.clone(), in_sync.clone()], &[Stage::Preflight, Stage::Prepare]);
+        let mut plan = plan_with(
+            vec![drifted.clone(), in_sync.clone()],
+            &[Stage::Preflight, Stage::Prepare],
+        );
         probe(&mut plan, &pool()).await.unwrap();
 
         let get = |id: &str| {

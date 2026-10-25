@@ -7,8 +7,8 @@ use kurin_config::{Cluster, Node};
 use miette::Result;
 
 use crate::engine::{Drift, Outcome, Session, Stage, Task};
-use crate::templates;
 use crate::tasks::bootstrap::{read_join_material, KUBEADM_DIR};
+use crate::templates;
 
 const JOIN_CONFIG_NAME: &str = "kubeadm-join.yaml";
 
@@ -51,7 +51,8 @@ impl KubeadmJoin {
                 },
             )
         };
-        let rendered = templates::render(path, ctx).expect("embedded kubeadm join template renders");
+        let rendered =
+            templates::render(path, ctx).expect("embedded kubeadm join template renders");
         Self {
             node_name: node.name.clone(),
             cluster_name: cluster.name.clone(),
@@ -79,7 +80,11 @@ impl Task for KubeadmJoin {
         &self.node_name
     }
     fn describe(&self) -> String {
-        let role = if self.is_control_plane { "control-plane" } else { "worker" };
+        let role = if self.is_control_plane {
+            "control-plane"
+        } else {
+            "worker"
+        };
         format!("kubeadm join ({role}) -> {}", self.api_server_endpoint)
     }
 
@@ -109,14 +114,20 @@ impl Task for KubeadmJoin {
         };
         let mut cmd = material.join_command.clone();
         cmd.push_str(&format!(" --node-name {}", self.node_name));
-        cmd.push_str(&format!(" --apiserver-advertise-address {}", self.advertise_address));
+        cmd.push_str(&format!(
+            " --apiserver-advertise-address {}",
+            self.advertise_address
+        ));
         if self.is_control_plane {
             if material.certificate_key.is_empty() {
                 return Ok(Outcome::Unknown(
                     "control-plane join needs a certificate key that was not harvested".into(),
                 ));
             }
-            cmd.push_str(&format!(" --control-plane --certificate-key {}", material.certificate_key));
+            cmd.push_str(&format!(
+                " --control-plane --certificate-key {}",
+                material.certificate_key
+            ));
         }
         session.exec(&format!("mkdir -p {KUBEADM_DIR}")).await?;
         session
@@ -157,7 +168,9 @@ mod tests {
             ssh: ResolvedSsh {
                 user: "root".into(),
                 port: 22,
-                auth: SshAuth::Password { password: "x".into() },
+                auth: SshAuth::Password {
+                    password: "x".into(),
+                },
             },
             labels: BTreeMap::new(),
         }
@@ -188,9 +201,14 @@ mod tests {
         let c = cluster(Some("192.168.10.100"));
         let t = KubeadmJoin::new(&c, &c.nodes[2]);
         assert!(t.rendered.contains("kind: JoinConfiguration"));
-        assert!(t.rendered.contains("apiServerEndpoint: 192.168.10.100:6443"));
+        assert!(t
+            .rendered
+            .contains("apiServerEndpoint: 192.168.10.100:6443"));
         assert!(t.rendered.contains("name: w1"));
-        assert!(!t.rendered.contains("certificateKey:"), "no secrets in templates");
+        assert!(
+            !t.rendered.contains("certificateKey:"),
+            "no secrets in templates"
+        );
         // No VIP: falls back to the first control-plane node.
         let c = cluster(None);
         let t = KubeadmJoin::new(&c, &c.nodes[2]);
@@ -203,7 +221,9 @@ mod tests {
         let t = KubeadmJoin::new(&c, &c.nodes[1]);
         assert!(t.rendered.contains("controlPlane:"));
         assert!(t.rendered.contains("advertiseAddress: 192.168.10.12"));
-        assert!(t.rendered.contains("apiServerEndpoint: 192.168.10.100:6443"));
+        assert!(t
+            .rendered
+            .contains("apiServerEndpoint: 192.168.10.100:6443"));
         assert!(t.rendered.contains("name: m2"));
     }
 }

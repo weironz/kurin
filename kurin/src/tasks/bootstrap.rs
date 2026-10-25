@@ -9,8 +9,8 @@ use kurin_config::{Cluster, Node};
 use miette::Result;
 
 use crate::engine::{Drift, Outcome, Session, Stage, Task};
-use crate::templates;
 use crate::tasks::prepare::sha256_hex;
+use crate::templates;
 
 pub const KUBEADM_DIR: &str = "/etc/kurin";
 
@@ -43,7 +43,11 @@ pub fn read_join_material(cluster: &str) -> Option<JoinMaterial> {
             m.certificate_key = v.trim().to_string();
         }
     }
-    if m.join_command.is_empty() { None } else { Some(m) }
+    if m.join_command.is_empty() {
+        None
+    } else {
+        Some(m)
+    }
 }
 
 /// kubeadm 1.33 moved admin.conf out of system:masters into
@@ -108,8 +112,14 @@ async fn write_join_material(session: &dyn Session, cluster: &str) -> Result<()>
         .exec("kubeadm init phase upload-certs --upload-certs | tail -n1")
         .await?;
     let key = out.stdout.trim().to_string();
-    if key.len() != 64 || !key.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()) {
-        return Err(miette::miette!("upload-certs returned unexpected key: {key}"));
+    if key.len() != 64
+        || !key
+            .chars()
+            .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
+    {
+        return Err(miette::miette!(
+            "upload-certs returned unexpected key: {key}"
+        ));
     }
     let dir = join_material_path(cluster);
     std::fs::create_dir_all(&dir).map_err(|e| miette::miette!("mkdir {dir:?}: {e}"))?;
@@ -251,17 +261,21 @@ impl Task for KubeadmInit {
     }
 
     async fn apply(&self, session: &dyn Session) -> miette::Result<Outcome> {
-        let dir = Self::config_path().rsplit_once('/').map(|(d, _)| d).unwrap_or(KUBEADM_DIR).to_string();
+        let dir = Self::config_path()
+            .rsplit_once('/')
+            .map(|(d, _)| d)
+            .unwrap_or(KUBEADM_DIR)
+            .to_string();
         session.exec(&format!("mkdir -p {dir}")).await?;
         session
             .write_file(&Self::config_path(), self.rendered.as_bytes())
             .await?;
         // Only run init when the cluster isn't ready; a converged node that
         // merely lacks join.env (older kurin) skips the expensive init.
-        let already = matches!(
-            session.file_sha256("/etc/kubernetes/admin.conf").await?,
-            Some(_)
-        );
+        let already = session
+            .file_sha256("/etc/kubernetes/admin.conf")
+            .await?
+            .is_some();
         if !already {
             let out = session
                 .exec(&format!(
@@ -347,7 +361,10 @@ impl Task for ApiReady {
         &self.node_name
     }
     fn describe(&self) -> String {
-        format!("wait until {} serves the API (VIP backend up)", self.endpoint)
+        format!(
+            "wait until {} serves the API (VIP backend up)",
+            self.endpoint
+        )
     }
 
     async fn check(&self, session: &dyn Session) -> Result<Drift> {
@@ -451,7 +468,9 @@ impl Task for KubeVip {
         let want = sha256_hex(self.rendered.as_bytes());
         match session.file_sha256(KUBEVIP_MANIFEST).await? {
             Some(have) if have == want => Ok(Drift::InSync),
-            _ => Ok(Drift::Drifted("kube-vip manifest differs from rendered".into())),
+            _ => Ok(Drift::Drifted(
+                "kube-vip manifest differs from rendered".into(),
+            )),
         }
     }
 
@@ -486,7 +505,9 @@ mod tests {
             ssh: ResolvedSsh {
                 user: "root".into(),
                 port: 22,
-                auth: SshAuth::Password { password: "x".into() },
+                auth: SshAuth::Password {
+                    password: "x".into(),
+                },
             },
             labels: BTreeMap::new(),
         }
@@ -513,7 +534,9 @@ mod tests {
         let t = KubeadmInit::new(&c, &c.nodes[0]);
         assert!(t.rendered.contains("podSubnet: 10.233.64.0/18"));
         assert!(t.rendered.contains("serviceSubnet: 10.233.0.0/18"));
-        assert!(t.rendered.contains("controlPlaneEndpoint: 192.168.10.100:6443"));
+        assert!(t
+            .rendered
+            .contains("controlPlaneEndpoint: 192.168.10.100:6443"));
         assert!(t.rendered.contains("advertiseAddress: 192.168.10.11"));
     }
 
@@ -524,9 +547,10 @@ mod tests {
         assert!(t.rendered.contains("value: \"192.168.10.100\""));
         assert!(t.rendered.contains("value: \"eth0\""));
         assert!(t.rendered.contains("10.233.64.0/18"));
-        assert!(t
-            .rendered
-            .contains(&format!("ghcr.io/kube-vip/kube-vip:{}", crate::version::KUBE_VIP_VERSION)));
+        assert!(t.rendered.contains(&format!(
+            "ghcr.io/kube-vip/kube-vip:{}",
+            crate::version::KUBE_VIP_VERSION
+        )));
         assert!(t.rendered.contains("hostNetwork: true"));
     }
 

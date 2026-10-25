@@ -1,0 +1,37 @@
+name: check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: self-hosted
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: toolchain
+        run: |
+          export PATH="$HOME/.cargo/bin:/usr/local/bin:$PATH"
+          rustup component add clippy rustfmt
+      - name: checks
+        run: |
+          export PATH="$HOME/.cargo/bin:/usr/local/bin:$PATH"
+          just fmt-check clippy test
+
+  e2e-tier0:
+    runs-on: self-hosted
+    needs: check
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: tier-0 (systemd containers, idempotency)
+        run: |
+          export PATH="$HOME/.cargo/bin:/usr/local/bin:$PATH"
+          just tier0 tier0-test
+      - name: cleanup
+        if: always()
+        run: |
+          export PATH="$HOME/.cargo/bin:/usr/local/bin:$PATH"
+          just tier0-down || true

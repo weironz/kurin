@@ -1,5 +1,14 @@
 # 进度日志
 
+## W2 — 发布工程与 CI（2026-10-26）
+
+- **just 取代 Makefile**：`just -l` 列出全部 recipe；`check`（fmt + clippy -D warnings + 单测）、tier0-3、`tier1-offline`、`release-musl`、`ci-gate`。
+- **musl 静态双架构**：x86_64 走 musl-gcc，aarch64 走 `cargo zigbuild`（zig 装在 /usr/local/bin）；`just release-musl` 产出 tarball + 裸文件名 sha256 sidecar。
+- **install.sh**：`KURIN_BASE_URL` 可覆盖；本地 http 端到端实测（下载 → 校验 → 安装 → 可跑）。
+- **CI（.github/workflows/）**：push/PR 跑 check + tier0，tag v* 跑 musl release（self-hosted runner；依赖 rustup+just+zig+docker）。
+- **clippy 清零**：修 8 处真 lint，`result_large_err` 项目级 allow（理由注释在 kurin/src/lib.rs）。
+- 国内镜像源维持留口不实现（2026-10-26 决策）。
+
 ## W0 — 契约冻结（2026-10-25）✅
 
 - **kurin-config**：`v1alpha1` schema（TOML/YAML、deny_unknown_fields、tagged enum、强类型）、四段流水线、miette 行列诊断。

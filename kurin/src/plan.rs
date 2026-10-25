@@ -39,13 +39,21 @@ impl Plan {
         let mut graph = StableDiGraph::new();
         let mut idx = Vec::with_capacity(stages.len());
         for s in stages {
-            idx.push(graph.add_node(StageNode { stage: s, tasks: Vec::new() }));
+            idx.push(graph.add_node(StageNode {
+                stage: s,
+                tasks: Vec::new(),
+            }));
         }
         for w in idx.windows(2) {
             graph.add_edge(w[0], w[1], ());
         }
 
-        let mut push = |i: usize, t: Arc<dyn Task>| graph[idx[i]].tasks.push(PlannedTask { task: t, drift: None });
+        let mut push = |i: usize, t: Arc<dyn Task>| {
+            graph[idx[i]].tasks.push(PlannedTask {
+                task: t,
+                drift: None,
+            })
+        };
 
         // Preflight, Artifacts & Prepare: every node.
         // Rust's ARCH names differ from Go-style artifact arch names.
@@ -56,12 +64,22 @@ impl Plan {
         };
         for node in &cluster.nodes {
             push(0, Arc::new(tasks::preflight::Preflight::new(node)));
-            push(1, Arc::new(tasks::install::ArtifactsInstall::new(node, arch, cluster.offline_dir.clone())));
+            push(
+                1,
+                Arc::new(tasks::install::ArtifactsInstall::new(
+                    node,
+                    arch,
+                    cluster.offline_dir.clone(),
+                )),
+            );
             push(2, Arc::new(tasks::prepare::Sysctl::new(node)));
             push(2, Arc::new(tasks::kernel_deps::KernelDeps::new(node)));
             push(
                 2,
-                Arc::new(tasks::prepare::ContainerdConfig::new(node, crate::version::PAUSE_IMAGE)),
+                Arc::new(tasks::prepare::ContainerdConfig::new(
+                    node,
+                    crate::version::PAUSE_IMAGE,
+                )),
             );
             push(2, Arc::new(tasks::prepare::ContainerdUnit::new(node)));
             push(
@@ -94,14 +112,17 @@ impl Plan {
             }
         }
         if let Some(first) = cluster.control_plane().next() {
-            push(4, Arc::new(tasks::bootstrap::KubeadmInit::new(cluster, first)));
+            push(
+                4,
+                Arc::new(tasks::bootstrap::KubeadmInit::new(cluster, first)),
+            );
             // ApiReady: the VIP-backed API must serve before any join. join's
             // discovery hits the VIP, which requires kube-vip's lease + 6443
             // forwarding to be live (seconds after init on a fresh node).
             push(5, Arc::new(tasks::bootstrap::ApiReady::new(cluster, first)));
         }
         // Join: workers and additional control-plane members.
-        for node in cluster.nodes.iter().skip(0) {
+        for node in cluster.nodes.iter() {
             let is_first_cp = cluster
                 .control_plane()
                 .next()

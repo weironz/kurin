@@ -73,23 +73,40 @@ pub async fn delete_node(
                 node.name
             ))
             .await?;
-        report(&node.name, "drain", drain.exit_code == 0, drain.stderr.trim().lines().next().unwrap_or(""));
+        report(
+            &node.name,
+            "drain",
+            drain.exit_code == 0,
+            drain.stderr.trim().lines().next().unwrap_or(""),
+        );
         let del = cp
             .exec(&format!("{k} delete node {} 2>&1; true", node.name))
             .await?;
-        report(&node.name, "delete node", del.exit_code == 0, del.stderr.trim().lines().next().unwrap_or(""));
+        report(
+            &node.name,
+            "delete node",
+            del.exit_code == 0,
+            del.stderr.trim().lines().next().unwrap_or(""),
+        );
     }
 
     let s = session_of(pool, &node.name).await?;
 
     // 2. kubeadm reset (stops kubelet, removes static pods, kills etcd data).
     let out = s.exec("kubeadm reset -f 2>&1; true").await?;
-    report(&node.name, "kubeadm reset", out.ok(), out.stdout.trim().lines().next().unwrap_or(""));
+    report(
+        &node.name,
+        "kubeadm reset",
+        out.ok(),
+        out.stdout.trim().lines().next().unwrap_or(""),
+    );
 
     // 3. kube-vip VIP release (harmless when never assigned).
     let _ = s
-        .exec("ip a 2>/dev/null | awk '/inet .*\\/32/{print $2}' | \
-               grep -vE '127\\.|/32$' -m1 >/dev/null; true")
+        .exec(
+            "ip a 2>/dev/null | awk '/inet .*\\/32/{print $2}' | \
+               grep -vE '127\\.|/32$' -m1 >/dev/null; true",
+        )
         .await;
 
     // 4. Stop services, then remove every artifact kurin/kubeadm laid down.
@@ -105,7 +122,12 @@ pub async fn delete_node(
         .collect::<Vec<_>>()
         .join(" && ");
     let out = s.exec(&format!("{paths}; true")).await?;
-    report(&node.name, "artifacts removed", out.ok(), out.stderr.trim().lines().next().unwrap_or(""));
+    report(
+        &node.name,
+        "artifacts removed",
+        out.ok(),
+        out.stderr.trim().lines().next().unwrap_or(""),
+    );
     Ok(())
 }
 

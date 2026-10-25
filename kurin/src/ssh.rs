@@ -190,7 +190,9 @@ impl NodeConn {
                 )
                 .await
                 .map_err(|_| miette!("ssh {}: password authentication timed out", self.label()))?
-                .map_err(|e| miette!("ssh {}: password authentication failed: {e}", self.label()))?;
+                .map_err(|e| {
+                    miette!("ssh {}: password authentication failed: {e}", self.label())
+                })?;
                 if !auth.success() {
                     return Err(miette!(
                         "ssh {}: password authentication rejected",
@@ -202,8 +204,8 @@ impl NodeConn {
                 key_path,
                 passphrase,
             } => {
-                let key = russh::keys::load_secret_key(key_path, passphrase.as_deref())
-                    .map_err(|e| {
+                let key =
+                    russh::keys::load_secret_key(key_path, passphrase.as_deref()).map_err(|e| {
                         miette!(
                             "ssh {}: cannot load private key {}: {e}",
                             self.label(),
@@ -226,10 +228,7 @@ impl NodeConn {
                 .map_err(|_| miette!("ssh {}: key authentication timed out", self.label()))?
                 .map_err(|e| miette!("ssh {}: key authentication failed: {e}", self.label()))?;
                 if !auth.success() {
-                    return Err(miette!(
-                        "ssh {}: key authentication rejected",
-                        self.label()
-                    ));
+                    return Err(miette!("ssh {}: key authentication rejected", self.label()));
                 }
             }
         }
@@ -378,7 +377,11 @@ impl Session for SshSession {
                 .unwrap_or_else(|| ".".into());
             // Bytes go over the channel's stdin, not the command line: safe
             // for arbitrary (binary) payloads and free of shell quoting risk.
-            let command = format!("mkdir -p -- {} && cat > {}", shell_quote(&dir), shell_quote(&path));
+            let command = format!(
+                "mkdir -p -- {} && cat > {}",
+                shell_quote(&dir),
+                shell_quote(&path)
+            );
             let mut channel = handle
                 .channel_open_session()
                 .await
@@ -438,7 +441,10 @@ impl Session for SshSession {
                 if sum.len() == 64 && sum.bytes().all(|b| b.is_ascii_hexdigit()) {
                     Ok(Some(sum))
                 } else {
-                    Err(miette!("ssh: unparsable sha256sum output: {}", out.stdout.trim()))
+                    Err(miette!(
+                        "ssh: unparsable sha256sum output: {}",
+                        out.stdout.trim()
+                    ))
                 }
             }
             3 => Ok(None),
@@ -452,7 +458,9 @@ impl Session for SshSession {
     }
 
     async fn service_active(&self, name: &str) -> Result<bool> {
-        let out = self.exec(&format!("systemctl is-active -- {}", shell_quote(name))).await?;
+        let out = self
+            .exec(&format!("systemctl is-active -- {}", shell_quote(name)))
+            .await?;
         if out.exit_code == 127 {
             return Err(miette!("ssh: systemctl not found on node"));
         }
@@ -576,7 +584,10 @@ impl SshSessionPoolBuilder {
         let known_hosts = self.known_hosts;
         if let Some(parent) = known_hosts.parent() {
             std::fs::create_dir_all(parent).map_err(|e| {
-                miette!("ssh: cannot create known_hosts directory {}: {e}", parent.display())
+                miette!(
+                    "ssh: cannot create known_hosts directory {}: {e}",
+                    parent.display()
+                )
             })?;
         }
         let mut nodes = HashMap::with_capacity(self.nodes.len());
@@ -631,7 +642,10 @@ mod tests {
 
     #[test]
     fn quotes_plain_paths_verbatim() {
-        assert_eq!(shell_quote("/etc/kubernetes/kubelet.conf"), "/etc/kubernetes/kubelet.conf");
+        assert_eq!(
+            shell_quote("/etc/kubernetes/kubelet.conf"),
+            "/etc/kubernetes/kubelet.conf"
+        );
         assert_eq!(shell_quote("10.233.64.0/18"), "10.233.64.0/18");
     }
 

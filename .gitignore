@@ -1,2 +1,4 @@
 /target
 *.swp
+target/tier0/
+release-dist/

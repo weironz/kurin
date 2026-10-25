@@ -66,7 +66,12 @@ pub struct RunState {
 impl RunState {
     /// State that is never persisted (default for plain `run`).
     pub fn disabled() -> Self {
-        Self { path: None, cluster: String::new(), tasks: BTreeMap::new(), dirty: false }
+        Self {
+            path: None,
+            cluster: String::new(),
+            tasks: BTreeMap::new(),
+            dirty: false,
+        }
     }
 
     /// Open the state for `cluster` at `path`.
@@ -74,7 +79,11 @@ impl RunState {
     /// `resume == true` loads existing records (missing file = empty);
     /// `resume == false` starts empty and immediately overwrites the file, so
     /// a stale resume snapshot can never leak into a fresh install.
-    pub fn open(path: impl Into<PathBuf>, cluster: impl Into<String>, resume: bool) -> Result<Self> {
+    pub fn open(
+        path: impl Into<PathBuf>,
+        cluster: impl Into<String>,
+        resume: bool,
+    ) -> Result<Self> {
         let path = path.into();
         let cluster = cluster.into();
         let mut tasks = BTreeMap::new();
@@ -96,7 +105,12 @@ impl RunState {
             }
             tasks = file.tasks;
         }
-        let mut state = Self { path: Some(path), cluster, tasks, dirty: true };
+        let mut state = Self {
+            path: Some(path),
+            cluster,
+            tasks,
+            dirty: true,
+        };
         if !resume {
             state.flush()?;
         }
@@ -108,7 +122,11 @@ impl RunState {
         let base = std::env::var_os("XDG_CACHE_HOME")
             .map(PathBuf::from)
             .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".cache")))?;
-        Some(base.join("kurin").join("runs").join(format!("{}.json", sanitize(cluster))))
+        Some(
+            base.join("kurin")
+                .join("runs")
+                .join(format!("{}.json", sanitize(cluster))),
+        )
     }
 
     pub fn path(&self) -> Option<&Path> {
@@ -127,8 +145,13 @@ impl RunState {
     /// Record a task as done. Skipped (`check == InSync`) tasks count too:
     /// their desired state is already present on the node.
     pub fn mark_done(&mut self, id: &str) {
-        self.tasks
-            .insert(id.to_string(), TaskRecord { state: TaskState::Done, finished_at: now_secs() });
+        self.tasks.insert(
+            id.to_string(),
+            TaskRecord {
+                state: TaskState::Done,
+                finished_at: now_secs(),
+            },
+        );
         self.dirty = true;
     }
 
@@ -153,14 +176,19 @@ impl RunState {
             tasks: self.tasks.clone(),
         };
         let json = serde_json::to_vec_pretty(&file).into_diagnostic()?;
-        let parent = path.parent().filter(|p| !p.as_os_str().is_empty()).map(Path::to_path_buf);
+        let parent = path
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .map(Path::to_path_buf);
         let mut tmp = match &parent {
             Some(dir) => tempfile::NamedTempFile::new_in(dir),
             None => tempfile::NamedTempFile::new(),
         }
         .into_diagnostic()
         .wrap_err("creating temporary run state file")?;
-        tmp.write_all(&json).into_diagnostic().wrap_err("writing run state")?;
+        tmp.write_all(&json)
+            .into_diagnostic()
+            .wrap_err("writing run state")?;
         tmp.persist(&path)
             .map_err(|e| miette::miette!("persisting run state {}: {e}", path.display()))?;
         self.dirty = false;
@@ -179,14 +207,23 @@ impl Drop for RunState {
 }
 
 fn now_secs() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 /// Keep cluster names path-safe: anything outside `[A-Za-z0-9._-]` becomes `_`.
 fn sanitize(cluster: &str) -> String {
     let mut out: String = cluster
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.') { c } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.') {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect();
     if out.is_empty() {
         out.push_str("cluster");

@@ -137,7 +137,9 @@ impl ArtifactSpec {
     /// Pinned sha256 for this spec's target (`sha256:` prefix stripped).
     /// `None` means the build cannot verify this artifact for this arch.
     pub fn expected_sha256(&self) -> Option<String> {
-        self.sha256.get(&self.target_key()).map(|v| normalize_hash(v))
+        self.sha256
+            .get(&self.target_key())
+            .map(|v| normalize_hash(v))
     }
 
     /// Rendered download URL (binary/manifest) or image reference (image).
@@ -205,10 +207,12 @@ impl ArtifactManifest {
 
     /// Resolve one artifact for a target arch.
     pub fn spec(&self, name: &str, arch: Arch) -> Result<ArtifactSpec, ArtifactError> {
-        let entry = self.get(name).ok_or_else(|| ArtifactError::UnknownArtifact {
-            name: name.to_string(),
-            known: self.names().join(", "),
-        })?;
+        let entry = self
+            .get(name)
+            .ok_or_else(|| ArtifactError::UnknownArtifact {
+                name: name.to_string(),
+                known: self.names().join(", "),
+            })?;
         Ok(ArtifactSpec {
             name: entry.name.clone(),
             kind: entry.kind,
@@ -223,7 +227,10 @@ impl ArtifactManifest {
     /// Resolve every artifact for a target arch — the planner's
     /// artifact requirement list.
     pub fn specs(&self, arch: Arch) -> Result<Vec<ArtifactSpec>, ArtifactError> {
-        self.artifacts.iter().map(|a| self.spec(&a.name, arch)).collect()
+        self.artifacts
+            .iter()
+            .map(|a| self.spec(&a.name, arch))
+            .collect()
     }
 
     /// Read an offline artifact directory against the embedded manifest:
@@ -237,14 +244,17 @@ impl ArtifactManifest {
     /// Like [`Self::from_dir`] but against an explicit manifest — used
     /// by `kurin artifact` when the source manifest was overridden, and
     /// by tests.
-    pub fn from_dir_with(path: &Path, manifest: &ArtifactManifest) -> Result<DirManifest, ArtifactError> {
+    pub fn from_dir_with(
+        path: &Path,
+        manifest: &ArtifactManifest,
+    ) -> Result<DirManifest, ArtifactError> {
         let mut artifacts = Vec::new();
         for entry in std::fs::read_dir(path)? {
             let dir = entry?.path();
             if !dir.is_dir() {
                 continue;
             }
-            let Some((name, version, arch)) = parse_artifact_dir_name(&dir, &manifest) else {
+            let Some((name, version, arch)) = parse_artifact_dir_name(&dir, manifest) else {
                 continue; // unrelated directory — ignored
             };
             let pinned = manifest.get(&name).filter(|e| e.version == version);
@@ -374,7 +384,7 @@ impl ArtifactStore {
         let home = std::env::var_os("HOME")
             .filter(|h| !h.is_empty())
             .map(PathBuf::from)
-            .ok_or_else(|| ArtifactError::NoCacheRoot {
+            .ok_or(ArtifactError::NoCacheRoot {
                 env_var: CACHE_DIR_ENV,
             })?;
         Ok(home.join(".cache").join("kurin").join("artifacts"))
@@ -423,11 +433,13 @@ impl ArtifactStore {
     pub async fn fetch(&self, spec: &ArtifactSpec) -> Result<PathBuf, ArtifactError> {
         let dir = self.artifact_dir(spec);
         std::fs::create_dir_all(&dir)?;
-        let expected = spec.expected_sha256().ok_or_else(|| ArtifactError::ChecksumNotPinned {
-            name: spec.name.clone(),
-            target: spec.target_key(),
-            pinned: spec.sha256.keys().cloned().collect::<Vec<_>>().join(", "),
-        })?;
+        let expected = spec
+            .expected_sha256()
+            .ok_or_else(|| ArtifactError::ChecksumNotPinned {
+                name: spec.name.clone(),
+                target: spec.target_key(),
+                pinned: spec.sha256.keys().cloned().collect::<Vec<_>>().join(", "),
+            })?;
 
         match spec.kind {
             ArtifactKind::Binary | ArtifactKind::Manifest => {
@@ -508,7 +520,9 @@ impl ArtifactStore {
         .await?;
         let manifest: OciManifest = serde_json::from_slice(&std::fs::read(&manifest_path)?)?;
 
-        for digest in std::iter::once(&manifest.config.digest).chain(manifest.layers.iter().map(|l| &l.digest)) {
+        for digest in std::iter::once(&manifest.config.digest)
+            .chain(manifest.layers.iter().map(|l| &l.digest))
+        {
             let hex = normalize_hash(digest);
             let blob_path = dir.join(&hex);
             download_verified(
@@ -564,7 +578,9 @@ fn verify_image_dir(dir: &Path, arch: Arch, expected_index: &str) -> Result<(), 
         });
     }
     let manifest: OciManifest = serde_json::from_slice(&manifest_raw)?;
-    for digest in std::iter::once(&manifest.config.digest).chain(manifest.layers.iter().map(|l| &l.digest)) {
+    for digest in
+        std::iter::once(&manifest.config.digest).chain(manifest.layers.iter().map(|l| &l.digest))
+    {
         let hex = normalize_hash(digest);
         let blob_path = dir.join(&hex);
         let actual = sha256_file(&blob_path)?;
@@ -733,7 +749,14 @@ async fn curl_download(url: &str, dest: &Path, headers: &[&str]) -> Result<(), A
     let result = tokio::task::spawn_blocking(move || {
         let mut cmd = std::process::Command::new("curl");
         cmd.arg("-fsSL")
-            .args(["--retry", "3", "--connect-timeout", "15", "--max-time", "1800"])
+            .args([
+                "--retry",
+                "3",
+                "--connect-timeout",
+                "15",
+                "--max-time",
+                "1800",
+            ])
             .stdin(Stdio::null())
             .stdout(Stdio::null());
         for header in &headers {
@@ -800,7 +823,9 @@ fn verify_sidecar(file: &Path) -> Result<String, ArtifactError> {
 /// Write the sidecar if absent or out of date.
 fn ensure_sidecar(file: &Path, digest: &str) -> Result<(), ArtifactError> {
     let sidecar = with_suffix(file, ".sha256");
-    let current = std::fs::read_to_string(&sidecar).ok().map(|s| normalize_hash(&s));
+    let current = std::fs::read_to_string(&sidecar)
+        .ok()
+        .map(|s| normalize_hash(&s));
     if current.as_deref() != Some(digest) {
         std::fs::write(&sidecar, format!("{digest}\n"))?;
     }
@@ -809,7 +834,10 @@ fn ensure_sidecar(file: &Path, digest: &str) -> Result<(), ArtifactError> {
 
 /// `<name>-<version>-<arch>` directory name → parts (name parsed from
 /// the right so names may contain `-`).
-fn parse_artifact_dir_name(dir: &Path, manifest: &ArtifactManifest) -> Option<(String, String, Arch)> {
+fn parse_artifact_dir_name(
+    dir: &Path,
+    manifest: &ArtifactManifest,
+) -> Option<(String, String, Arch)> {
     let leaf = dir.file_name()?.to_str()?;
     // Manifest-driven matching handles names and versions that contain
     // dashes (calico-node-driver-registrar, etcd 3.5.21-0).
@@ -846,14 +874,17 @@ fn is_sha256_hex(name: &str) -> bool {
 /// `map_err` helper that rewrites a generic checksum error's `name`.
 fn err_with_name(err: ArtifactError, name: &str) -> ArtifactError {
     match err {
-        ArtifactError::ChecksumMismatch { path, expected, actual, .. } => {
-            ArtifactError::ChecksumMismatch {
-                name: name.to_string(),
-                path,
-                expected,
-                actual,
-            }
-        }
+        ArtifactError::ChecksumMismatch {
+            path,
+            expected,
+            actual,
+            ..
+        } => ArtifactError::ChecksumMismatch {
+            name: name.to_string(),
+            path,
+            expected,
+            actual,
+        },
         other => other,
     }
 }
@@ -973,11 +1004,20 @@ pub enum ArtifactError {
     UnknownArtifact { name: String, known: String },
 
     #[error("artifact `{name}` has no pinned sha256 for {target} (pinned: {pinned})")]
-    ChecksumNotPinned { name: String, target: String, pinned: String },
+    ChecksumNotPinned {
+        name: String,
+        target: String,
+        pinned: String,
+    },
 
     #[error("artifact `{name}`: checksum mismatch at {}\n  expected: {expected}\n  actual:   {actual}", .path.display())]
     #[diagnostic(help("delete the cached artifact and re-run; kurin will re-fetch it"))]
-    ChecksumMismatch { name: String, path: PathBuf, expected: String, actual: String },
+    ChecksumMismatch {
+        name: String,
+        path: PathBuf,
+        expected: String,
+        actual: String,
+    },
 
     #[error("artifact `{name}` {version} ({target}) is incomplete in {}: `{file}` is missing (expected sha256 {expected})", .dir.display())]
     IncompleteArtifact {
@@ -1026,7 +1066,9 @@ impl From<std::io::Error> for ArtifactError {
 
 /// The offline bundle is missing required artifacts.
 #[derive(Debug, miette::Diagnostic)]
-#[diagnostic(help("re-run `kurin artifact export` on a connected host to rebuild the offline bundle"))]
+#[diagnostic(help(
+    "re-run `kurin artifact export` on a connected host to rebuild the offline bundle"
+))]
 pub struct MissingArtifacts {
     pub dir: PathBuf,
     /// One `  - <name> <version> (<target>): expected sha256 <hex>` per line.
@@ -1035,7 +1077,12 @@ pub struct MissingArtifacts {
 
 impl fmt::Display for MissingArtifacts {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "missing artifacts in {}:\n{}", self.dir.display(), self.detail)
+        write!(
+            f,
+            "missing artifacts in {}:\n{}",
+            self.dir.display(),
+            self.detail
+        )
     }
 }
 
@@ -1167,14 +1214,14 @@ mod tests {
         );
 
         let cni = manifest.spec("cni-plugins", Arch::Arm64).unwrap();
-        assert_eq!(
-            cni.file_name(),
-            "cni-plugins-linux-arm64-v1.7.1.tgz"
-        );
+        assert_eq!(cni.file_name(), "cni-plugins-linux-arm64-v1.7.1.tgz");
         assert!(cni.url().contains("cni-plugins-linux-arm64-v1.7.1.tgz"));
 
         let unknown = manifest.spec("kube-vip", Arch::Amd64);
-        assert!(matches!(unknown, Err(ArtifactError::UnknownArtifact { .. })));
+        assert!(matches!(
+            unknown,
+            Err(ArtifactError::UnknownArtifact { .. })
+        ));
     }
 
     #[test]
@@ -1216,7 +1263,10 @@ mod tests {
         assert!(msg.contains("kubelet 1.0.0 (linux-amd64)"), "{msg}");
         assert!(msg.contains("expected sha256"), "{msg}");
         assert!(msg.contains(&"aa".repeat(32)), "{msg}");
-        assert!(!msg.contains("kubeadm"), "present artifact listed as missing: {msg}");
+        assert!(
+            !msg.contains("kubeadm"),
+            "present artifact listed as missing: {msg}"
+        );
     }
 
     #[test]
@@ -1238,8 +1288,11 @@ mod tests {
         let tmp2 = tempfile::tempdir().unwrap();
         let mut entries2 = vec![entry("kubeadm", ArtifactKind::Binary, "kubeadm")];
         let (path, _) = write_payload(tmp2.path(), "kubeadm", "1.0.0", "kubeadm", b"real-bytes");
-        std::fs::write(with_suffix(&path, ".sha256"), format!("{} nonsense\n", "cc".repeat(32)))
-            .unwrap();
+        std::fs::write(
+            with_suffix(&path, ".sha256"),
+            format!("{} nonsense\n", "cc".repeat(32)),
+        )
+        .unwrap();
         let digest = sha256_file(&path).unwrap();
         pin(&mut entries2[0], &digest);
         let err = ArtifactManifest::from_dir_with(tmp2.path(), &manifest(entries2)).unwrap_err();
@@ -1327,7 +1380,11 @@ mod tests {
         for (name, contents) in &files {
             let path = root.join(name);
             std::fs::write(&path, contents).unwrap();
-            std::fs::write(with_suffix(&path, ".sha256"), format!("{}\n", sha256_hex(contents.as_bytes()))).unwrap();
+            std::fs::write(
+                with_suffix(&path, ".sha256"),
+                format!("{}\n", sha256_hex(contents.as_bytes())),
+            )
+            .unwrap();
         }
         for blob in [b"pause-config".as_slice(), b"pause-layer"] {
             let digest = sha256_hex(blob);

@@ -35,7 +35,11 @@ Details: [`docs/m1-spec.md`](docs/m1-spec.md), progress: [`docs/progress.md`](do
 ## Usage
 
 ```bash
-cargo build --release
+# install a release (musl static, x86_64/aarch64)
+curl -fsSL https://raw.githubusercontent.com/weironz/kurin/main/scripts/install.sh | bash
+
+# or build locally
+just build
 
 # generate an annotated example config
 ./target/release/kurin create config > cluster.toml
@@ -75,12 +79,46 @@ address = "192.168.10.11"
 role = "control-plane"
 ```
 
-## Testing
+## Air-gapped installs
 
 ```bash
-cargo test --workspace       # unit tests, no network
-make tier0 && make tier0-test && make tier0-down   # 3 systemd containers, real SSH apply
-make tier1                   # single-node multipass + real kubeadm (requires multipass)
+# on a machine with network: build the bundle (binaries + all 15 pinned images)
+kurin artifact --out /srv/kurin-bundle
+
+# on the target network: point the config at the bundle (or --offline <dir>)
+# [artifacts]
+# offline-dir = "/srv/kurin-bundle"
+kurin create cluster -f cluster.toml
+```
+
+Everything (binaries, control-plane images, CNI) comes from the bundle; the
+install makes zero network requests. Image digests are pinned by OCI index.
+
+## Adding, removing, tearing down
+
+```bash
+kurin add nodes   -f cluster.toml       # idempotent: joins only new nodes
+kurin delete node worker01 -f cluster.toml   # drain + reset + wipe artifacts
+kurin delete cluster -f cluster.toml
+```
+
+## Testing / CI
+
+[`just`](https://github.com/casey/just) is the local driver; the same recipes
+run in CI on a self-hosted runner (`.github/workflows/`).
+
+```bash
+just check            # fmt + clippy -D warnings + unit tests
+just tier0            # 3 systemd containers, real SSH apply
+just tier0-test       # two-pass idempotency assertions
+just tier0-down
+
+just tier1            # single-node multipass + real kubeadm
+just tier1-offline    # install with egress to artifact hosts blocked
+just tier2            # 1 control-plane + 1 worker (real join)
+just tier3            # 3 control-plane + kube-vip HA
+just ci-gate          # check + tier0 + tier0-test + down
+just release-musl     # static binaries both arches into release-dist/
 ```
 
 ## License

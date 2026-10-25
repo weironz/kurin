@@ -4,7 +4,10 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use kurin::{engine::{Drift, ExecOutput, Session}, Event, Outcome, Stage, Task};
+use kurin::{
+    engine::{Drift, ExecOutput, Session},
+    Event, Outcome, Stage, Task,
+};
 use miette::Result;
 
 struct MockSession {
@@ -33,16 +36,30 @@ impl Session for MockSession {
         } else {
             "0".into()
         };
-        Ok(ExecOutput { exit_code: 0, stdout, stderr: String::new() })
+        Ok(ExecOutput {
+            exit_code: 0,
+            stdout,
+            stderr: String::new(),
+        })
     }
 
     async fn write_file(&self, path: &str, contents: &[u8]) -> Result<()> {
-        self.state.lock().unwrap().files.insert(path.into(), contents.to_vec());
+        self.state
+            .lock()
+            .unwrap()
+            .files
+            .insert(path.into(), contents.to_vec());
         Ok(())
     }
 
     async fn file_sha256(&self, path: &str) -> Result<Option<String>> {
-        Ok(self.state.lock().unwrap().files.get(path).map(|_| "deadbeef".into()))
+        Ok(self
+            .state
+            .lock()
+            .unwrap()
+            .files
+            .get(path)
+            .map(|_| "deadbeef".into()))
     }
 
     async fn service_active(&self, _name: &str) -> Result<bool> {
@@ -54,18 +71,36 @@ struct ProbeTask;
 
 #[async_trait::async_trait]
 impl Task for ProbeTask {
-    fn id(&self) -> String { "x/probe@n".into() }
-    fn stage(&self) -> Stage { Stage::Prepare }
-    fn node(&self) -> &str { "n" }
-    fn describe(&self) -> String { "probe only".into() }
-    async fn check(&self, _s: &dyn Session) -> Result<Drift> { Ok(Drift::InSync) }
-    async fn apply(&self, _s: &dyn Session) -> Result<Outcome> { Ok(Outcome::Verified) }
+    fn id(&self) -> String {
+        "x/probe@n".into()
+    }
+    fn stage(&self) -> Stage {
+        Stage::Prepare
+    }
+    fn node(&self) -> &str {
+        "n"
+    }
+    fn describe(&self) -> String {
+        "probe only".into()
+    }
+    async fn check(&self, _s: &dyn Session) -> Result<Drift> {
+        Ok(Drift::InSync)
+    }
+    async fn apply(&self, _s: &dyn Session) -> Result<Outcome> {
+        Ok(Outcome::Verified)
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn unknown_after_apply_reprobes_and_reports() {
     let task = ProbeTask;
-    let session = MockSession { state: std::sync::Mutex::new(State { files: Default::default() }), disturb_after: 0, calls: AtomicUsize::new(0) };
+    let session = MockSession {
+        state: std::sync::Mutex::new(State {
+            files: Default::default(),
+        }),
+        disturb_after: 0,
+        calls: AtomicUsize::new(0),
+    };
     let drift = task.check(&session).await.unwrap();
     assert!(matches!(drift, Drift::InSync));
 }
@@ -110,6 +145,7 @@ fn version_table_is_pinned() {
 }
 
 #[derive(Default)]
+#[allow(dead_code)] // fixture kept for the pool-trait shape; no wire-up in unit tests
 struct Noop;
 #[async_trait::async_trait]
 impl kurin::SessionPool for Noop {
@@ -120,7 +156,11 @@ impl kurin::SessionPool for Noop {
 
 #[test]
 fn events_are_serde_representable() {
-    let ev = Event::TaskStart { id: "a".into(), node: "n".into(), stage: Stage::Prepare.label() };
+    let ev = Event::TaskStart {
+        id: "a".into(),
+        node: "n".into(),
+        stage: Stage::Prepare.label(),
+    };
     let js = serde_json::to_string(&ev).unwrap();
     assert!(js.contains("task-start"));
 }

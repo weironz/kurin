@@ -116,13 +116,37 @@ pub struct PlannedTask {
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum Event {
-    TaskStart { id: String, node: String, stage: &'static str },
-    TaskSkipped { id: String, node: String, stage: &'static str },
-    TaskDone { id: String, node: String, stage: &'static str, ms: u128 },
-    TaskFailed { id: String, node: String, stage: &'static str, reason: String },
+    TaskStart {
+        id: String,
+        node: String,
+        stage: &'static str,
+    },
+    TaskSkipped {
+        id: String,
+        node: String,
+        stage: &'static str,
+    },
+    TaskDone {
+        id: String,
+        node: String,
+        stage: &'static str,
+        ms: u128,
+    },
+    TaskFailed {
+        id: String,
+        node: String,
+        stage: &'static str,
+        reason: String,
+    },
     /// Unknown outcome re-probed as in-sync.
-    TaskReconciled { id: String, node: String, stage: &'static str },
-    StageDone { stage: &'static str },
+    TaskReconciled {
+        id: String,
+        node: String,
+        stage: &'static str,
+    },
+    StageDone {
+        stage: &'static str,
+    },
     ClusterReady,
 }
 

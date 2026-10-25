@@ -55,3 +55,5 @@ nodes:
     auth: null
     labels:
       node-role.kurin.io/pool: general
+artifacts:
+  offline-dir: null

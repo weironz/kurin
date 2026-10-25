@@ -1,4 +1,9 @@
 //! kurin-config: declarative, versioned cluster configuration.
+
+// See kurin's lib.rs for the project-wide `clippy::result_large_err` policy:
+// miette diagnostics need their spans; boxing them away buys nothing.
+#![allow(clippy::result_large_err)]
+
 //!
 //! Pipeline (`load`): parse (toml/yaml by extension) -> version gate ->
 //! defaults -> lower to internal `Cluster` -> business validation.
@@ -12,8 +17,8 @@ pub mod model;
 use std::path::Path;
 
 pub use config::{
-    ArtifactsConfig, ClusterConfig, CniConfig, HaConfig, KubernetesConfig, NetworkConfig, NodeConfig,
-    NodeRole, SshAuth, SshDefaults, CONFIG_VERSION,
+    ArtifactsConfig, ClusterConfig, CniConfig, HaConfig, KubernetesConfig, NetworkConfig,
+    NodeConfig, NodeRole, SshAuth, SshDefaults, CONFIG_VERSION,
 };
 pub use error::{ConfigError, Result};
 pub use model::{Cluster, Node, ResolvedSsh};
@@ -41,9 +46,7 @@ pub fn parse_str(path: &Path, src: &str) -> Result<Cluster> {
 /// Parse only, keeping span info for diagnostics.
 pub fn parse(path: &Path, src: &str) -> Result<ClusterConfig> {
     match path.extension().and_then(|e| e.to_str()) {
-        Some("toml") => {
-            toml::from_str(src).map_err(|e| ConfigError::toml(path, src, e))
-        }
+        Some("toml") => toml::from_str(src).map_err(|e| ConfigError::toml(path, src, e)),
         Some("yml" | "yaml") => {
             serde_yml::from_str(src).map_err(|e| ConfigError::yaml(path, src, e))
         }

@@ -101,7 +101,10 @@ fn snapshot_yaml_syntax_error_hint() {
 
 #[test]
 fn snapshot_missing_auth_hint() {
-    let noauth = GOOD.replace("[ssh.auth]\nmethod = \"password\"\npassword = \"s3cret\"\n", "");
+    let noauth = GOOD.replace(
+        "[ssh.auth]\nmethod = \"password\"\npassword = \"s3cret\"\n",
+        "",
+    );
     let err = parse_str(Path::new("x.toml"), &noauth).unwrap_err();
     insta::assert_snapshot!("error_missing_auth", reason(&err));
 }
@@ -110,7 +113,10 @@ fn snapshot_missing_auth_hint() {
 fn snapshot_example_roundtrips() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
     for (name, path) in [
-        ("example_roundtrip_toml", root.join("kurin/examples/cluster.example.toml")),
+        (
+            "example_roundtrip_toml",
+            root.join("kurin/examples/cluster.example.toml"),
+        ),
         (
             "example_roundtrip_yaml",
             root.join("kurin-config/examples/cluster.example.yaml"),

@@ -48,7 +48,10 @@ impl Task for KernelDeps {
         let missing: Vec<&str> = out.stdout.split_whitespace().collect();
         // Only hard requirements drift; recommended ones install opportunistically.
         if missing.iter().any(|m| REQUIRED.contains(m)) {
-            Ok(Drift::Drifted(format!("missing kernel tools: {}", missing.join(" "))))
+            Ok(Drift::Drifted(format!(
+                "missing kernel tools: {}",
+                missing.join(" ")
+            )))
         } else {
             Ok(Drift::InSync)
         }

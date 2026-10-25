@@ -53,14 +53,20 @@ fn unknown_field_rejected_with_span() {
     let typo = GOOD.replace("pod-cidr", "pod-cider");
     let err = parse_str(Path::new("x.toml"), &typo).unwrap_err();
     let msg = format!("{err:?}");
-    assert!(msg.contains("pod-cider") || msg.contains("unknown field"), "got: {msg}");
+    assert!(
+        msg.contains("pod-cider") || msg.contains("unknown field"),
+        "got: {msg}"
+    );
 }
 
 #[test]
 fn version_gate_rejects_unknown_version() {
     let old = GOOD.replace("v1alpha1", "v1alpha0");
     let err = parse_str(Path::new("x.toml"), &old).unwrap_err();
-    assert!(err.to_string().contains("invalid configuration"), "got: {err}");
+    assert!(
+        err.to_string().contains("invalid configuration"),
+        "got: {err}"
+    );
 }
 
 #[test]
@@ -74,8 +80,10 @@ fn vip_collides_with_node_address() {
 
 #[test]
 fn missing_auth_fails_clearly() {
-    let noauth = GOOD
-        .replace("[ssh.auth]\nmethod = \"password\"\npassword = \"s3cret\"\n", "");
+    let noauth = GOOD.replace(
+        "[ssh.auth]\nmethod = \"password\"\npassword = \"s3cret\"\n",
+        "",
+    );
     let err = parse_str(Path::new("x.toml"), &noauth).unwrap_err();
     let msg = format!("{err:?}");
     assert!(msg.contains("no ssh auth"), "got: {msg}");

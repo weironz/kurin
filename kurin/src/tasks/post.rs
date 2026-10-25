@@ -35,7 +35,10 @@ impl Task for KubeconfigPull {
         &self.node_name
     }
     fn describe(&self) -> String {
-        format!("fetch admin.conf -> merge kubeconfig (cluster {})", self.cluster_name)
+        format!(
+            "fetch admin.conf -> merge kubeconfig (cluster {})",
+            self.cluster_name
+        )
     }
 
     async fn check(&self, session: &dyn Session) -> Result<Drift> {
@@ -49,11 +52,16 @@ impl Task for KubeconfigPull {
 
     async fn apply(&self, session: &dyn Session) -> miette::Result<Outcome> {
         // W1: sftp read admin.conf + local kubeconfig merge (never overwrite).
-        let out = session.exec("stat -c %s /etc/kubernetes/admin.conf").await?;
+        let out = session
+            .exec("stat -c %s /etc/kubernetes/admin.conf")
+            .await?;
         if out.ok() {
             Ok(Outcome::Verified)
         } else {
-            Err(miette::miette!("admin.conf stat failed: {}", out.stderr.trim()))
+            Err(miette::miette!(
+                "admin.conf stat failed: {}",
+                out.stderr.trim()
+            ))
         }
     }
 }

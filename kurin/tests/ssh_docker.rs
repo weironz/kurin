@@ -6,17 +6,17 @@
 //!
 //!     cargo test -p kurin --test ssh_docker -- --ignored --nocapture
 
+use kurin::executor::SessionPool as _;
+use kurin::ssh::{SshSessionPool, SshTarget};
+use kurin::Session as _;
+use kurin_config::{ResolvedSsh, SshAuth};
+use sha2::{Digest, Sha256};
 use std::net::{IpAddr, Ipv4Addr};
 use std::path::PathBuf;
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::LazyLock;
 use std::time::{Duration, Instant};
-use kurin::executor::SessionPool as _;
-use kurin::ssh::{SshSessionPool, SshTarget};
-use kurin::Session as _;
-use kurin_config::{ResolvedSsh, SshAuth};
-use sha2::{Digest, Sha256};
 
 const IMAGE: &str = "kurin-sshd-t0:latest";
 const ROOT_PASSWORD: &str = "kurin-t0-pass";
@@ -55,7 +55,15 @@ impl TestNode {
         let key = workdir.path().join("id_ed25519");
         must(
             Command::new("ssh-keygen")
-                .args(["-t", "ed25519", "-N", KEY_PASSPHRASE, "-C", "kurin-t0", "-f"])
+                .args([
+                    "-t",
+                    "ed25519",
+                    "-N",
+                    KEY_PASSPHRASE,
+                    "-C",
+                    "kurin-t0",
+                    "-f",
+                ])
                 .arg(&key)
                 .output()
                 .expect("ssh-keygen missing"),
@@ -165,12 +173,7 @@ CMD ["/usr/sbin/sshd", "-D", "-E", "/var/log/sshd.log"]
     )
     .unwrap();
     must(
-        docker(&[
-            "build",
-            "-t",
-            IMAGE,
-            workdir.path().to_str().unwrap(),
-        ]),
+        docker(&["build", "-t", IMAGE, workdir.path().to_str().unwrap()]),
         "docker build",
     );
 }
@@ -206,7 +209,10 @@ fn must(out: Output, what: &str) -> String {
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
-    Sha256::digest(bytes).iter().map(|b| format!("{b:02x}")).collect()
+    Sha256::digest(bytes)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
 }
 
 #[tokio::test]
@@ -216,10 +222,7 @@ async fn password_auth_exec_write_checksum() {
     let pool = node.password_pool();
     let session = pool.session("t0").unwrap();
 
-    let out = session
-        .exec("echo hello && echo oops >&2")
-        .await
-        .unwrap();
+    let out = session.exec("echo hello && echo oops >&2").await.unwrap();
     assert!(out.ok(), "exec failed: {out:?}");
     assert_eq!(out.stdout.trim(), "hello");
     assert_eq!(out.stderr.trim(), "oops");
@@ -279,7 +282,10 @@ async fn private_key_with_passphrase_roundtrip() {
         .expect("blob must exist");
     assert_eq!(sum, sha256_hex(&blob));
 
-    let out = session.exec("wc -c < /tmp/kurin-t0/blob.bin").await.unwrap();
+    let out = session
+        .exec("wc -c < /tmp/kurin-t0/blob.bin")
+        .await
+        .unwrap();
     assert_eq!(out.stdout.trim(), blob.len().to_string());
 
     // No systemd in the container: service_active reports a transport-level
@@ -314,5 +320,8 @@ async fn connection_reused_across_concurrent_channels() {
         .await
         .unwrap();
     let accepted: u32 = out.stdout.trim().parse().unwrap_or(0);
-    assert_eq!(accepted, 1, "expected exactly one SSH login, got {accepted}");
+    assert_eq!(
+        accepted, 1,
+        "expected exactly one SSH login, got {accepted}"
+    );
 }

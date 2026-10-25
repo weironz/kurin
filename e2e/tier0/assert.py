@@ -87,7 +87,11 @@ def dry_run(bin_: pathlib.Path, config: pathlib.Path) -> str:
 
 def assert_plan(plan: str) -> None:
     order = stage_order(plan)
-    if order != ["preflight", "artifacts", "prepare", "bootstrap", "join", "cni", "post"]:
+    expected = [
+        "preflight", "artifacts", "prepare", "images", "vip",
+        "bootstrap", "api-ready", "join", "cni", "post",
+    ]
+    if order != expected:
         raise Fail(f"unexpected stage sequence: {order}")
 
     missing = [s for s in STAGES if f"stage: {s}" not in plan]

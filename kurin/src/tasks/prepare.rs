@@ -86,10 +86,7 @@ impl Task for Sysctl {
 }
 
 fn sysctl_unit(pairs: &[(&str, &str)]) -> String {
-    pairs
-        .iter()
-        .map(|(k, v)| format!("{k} = {v}\n"))
-        .collect()
+    pairs.iter().map(|(k, v)| format!("{k} = {v}\n")).collect()
 }
 
 pub struct ContainerdConfig {
@@ -99,7 +96,10 @@ pub struct ContainerdConfig {
 
 impl ContainerdConfig {
     pub fn new(node: &Node, pause_image: &str) -> Self {
-        Self { node: node.clone(), pause_image: pause_image.to_string() }
+        Self {
+            node: node.clone(),
+            pause_image: pause_image.to_string(),
+        }
     }
 
     fn rendered(&self) -> String {
@@ -130,19 +130,27 @@ impl Task for ContainerdConfig {
         let want = sha256_hex(self.rendered().as_bytes());
         match session.file_sha256("/etc/containerd/config.toml").await? {
             Some(have) if have == want => Ok(Drift::InSync),
-            _ => Ok(Drift::Drifted("/etc/containerd/config.toml differs from rendered config".into())),
+            _ => Ok(Drift::Drifted(
+                "/etc/containerd/config.toml differs from rendered config".into(),
+            )),
         }
     }
 
     async fn apply(&self, session: &dyn Session) -> miette::Result<Outcome> {
-        session.write_file("/etc/containerd/config.toml", self.rendered().as_bytes()).await?;
+        session
+            .write_file("/etc/containerd/config.toml", self.rendered().as_bytes())
+            .await?;
         let out = session
             .exec("systemctl restart containerd && systemctl is-active containerd")
             .await?;
         if out.ok() {
             Ok(Outcome::Verified)
         } else {
-            Err(miette::miette!("containerd restart failed on {}: {}", self.node.name, out.stderr.trim()))
+            Err(miette::miette!(
+                "containerd restart failed on {}: {}",
+                self.node.name,
+                out.stderr.trim()
+            ))
         }
     }
 }
@@ -167,7 +175,10 @@ impl ContainerdUnit {
             },
         )
         .expect("embedded containerd unit template renders");
-        Self { node: node.clone(), rendered }
+        Self {
+            node: node.clone(),
+            rendered,
+        }
     }
 }
 
@@ -189,7 +200,9 @@ impl Task for ContainerdUnit {
     async fn check(&self, session: &dyn Session) -> Result<Drift> {
         let want = sha256_hex(self.rendered.as_bytes());
         if session.file_sha256(CONTAINERD_UNIT_PATH).await? != Some(want) {
-            return Ok(Drift::Drifted("containerd.service unit differs from rendered".into()));
+            return Ok(Drift::Drifted(
+                "containerd.service unit differs from rendered".into(),
+            ));
         }
         if !session.service_active("containerd").await? {
             return Ok(Drift::Drifted("containerd.service not active".into()));
@@ -234,7 +247,10 @@ impl KubeletUnit {
             },
         )
         .expect("embedded kubelet unit template renders");
-        Self { node: node.clone(), rendered }
+        Self {
+            node: node.clone(),
+            rendered,
+        }
     }
 }
 
@@ -256,7 +272,9 @@ impl Task for KubeletUnit {
     async fn check(&self, session: &dyn Session) -> Result<Drift> {
         let want = sha256_hex(self.rendered.as_bytes());
         if session.file_sha256(KUBELET_UNIT_PATH).await? != Some(want) {
-            return Ok(Drift::Drifted("kubelet.service unit differs from rendered".into()));
+            return Ok(Drift::Drifted(
+                "kubelet.service unit differs from rendered".into(),
+            ));
         }
         let out = session.exec("systemctl is-enabled kubelet.service").await?;
         if !out.ok() {
@@ -307,7 +325,9 @@ mod tests {
             ssh: ResolvedSsh {
                 user: "root".into(),
                 port: 22,
-                auth: kurin_config::SshAuth::Password { password: "x".into() },
+                auth: kurin_config::SshAuth::Password {
+                    password: "x".into(),
+                },
             },
             labels: BTreeMap::new(),
         }
@@ -316,7 +336,10 @@ mod tests {
     #[test]
     fn containerd_unit_has_xurl_restart_and_environment() {
         let unit = ContainerdUnit::new(&node("m1")).rendered;
-        assert!(unit.contains("X-URL="), "unit documents artifact source: {unit}");
+        assert!(
+            unit.contains("X-URL="),
+            "unit documents artifact source: {unit}"
+        );
         assert!(unit.contains(crate::version::CONTAINERD_VERSION));
         assert!(unit.contains("Restart=always"));
         assert!(unit.contains("Environment="));
@@ -325,10 +348,16 @@ mod tests {
 
     #[test]
     fn kubelet_unit_uses_pause_image_and_restarts() {
-        let unit =
-            KubeletUnit::new(&node("m1"), crate::version::PAUSE_IMAGE, crate::version::KUBERNETES_VERSION)
-                .rendered;
-        assert!(unit.contains(crate::version::PAUSE_IMAGE), "pause image rendered: {unit}");
+        let unit = KubeletUnit::new(
+            &node("m1"),
+            crate::version::PAUSE_IMAGE,
+            crate::version::KUBERNETES_VERSION,
+        )
+        .rendered;
+        assert!(
+            unit.contains(crate::version::PAUSE_IMAGE),
+            "pause image rendered: {unit}"
+        );
         assert!(unit.contains("Restart=always"));
         assert!(unit.contains("EnvironmentFile=-/var/lib/kubelet/kubeadm-flags.env"));
         assert!(unit.contains(crate::version::KUBERNETES_VERSION));

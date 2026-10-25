@@ -1,9 +1,9 @@
 pub mod bootstrap;
+pub mod cni;
 pub mod images;
 pub mod install;
-pub mod kernel_deps;
-pub mod cni;
 pub mod join;
+pub mod kernel_deps;
 pub mod post;
 pub mod preflight;
 pub mod prepare;

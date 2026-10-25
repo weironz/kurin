@@ -5,7 +5,11 @@ use clap::{Parser, Subcommand};
 use miette::{IntoDiagnostic, Result};
 
 #[derive(Parser)]
-#[command(name = "kurin", about = "Declarative Kubernetes cluster installer", version)]
+#[command(
+    name = "kurin",
+    about = "Declarative Kubernetes cluster installer",
+    version
+)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -120,8 +124,7 @@ async fn main() -> ExitCode {
         Err(e) => {
             eprintln!("{e:?}");
             ExitCode::FAILURE
-        }
-        // `load`'s ConfigError is Diagnostic, so `?` keeps the fancy render.
+        } // `load`'s ConfigError is Diagnostic, so `?` keeps the fancy render.
     }
 }
 
@@ -129,7 +132,11 @@ async fn run(cli: Cli) -> Result<()> {
     match cli.command {
         Commands::Artifact { out, arch } => build_artifacts(out, arch).await,
         Commands::Add(args) => match args.what {
-            AddWhat::Nodes { file, json, offline } => add_nodes(file, json, offline).await,
+            AddWhat::Nodes {
+                file,
+                json,
+                offline,
+            } => add_nodes(file, json, offline).await,
         },
         Commands::Delete(args) => match args.what {
             DeleteWhat::Node { name, file } => delete_node_cmd(name, file).await,
@@ -146,7 +153,14 @@ async fn run(cli: Cli) -> Result<()> {
                 print!("{}", EXAMPLE_CONFIG);
                 Ok(())
             }
-            CreateWhat::Cluster { file, dry_run, check, json, resume, offline } => {
+            CreateWhat::Cluster {
+                file,
+                dry_run,
+                check,
+                json,
+                resume,
+                offline,
+            } => {
                 let mut cluster = kurin_config::load(&file)?;
                 if let Some(dir) = offline {
                     cluster.offline_dir = Some(dir);
@@ -175,8 +189,8 @@ async fn run(cli: Cli) -> Result<()> {
                     return Ok(());
                 }
 
-                let mut opts = kurin::executor::RunOptions::default()
-                    .with_default_state(&cluster.name);
+                let mut opts =
+                    kurin::executor::RunOptions::default().with_default_state(&cluster.name);
                 opts.resume = resume;
                 let mut emit = |event: kurin::Event| {
                     if json {
@@ -202,7 +216,6 @@ async fn run(cli: Cli) -> Result<()> {
         },
     }
 }
-
 
 async fn build_artifacts(out: PathBuf, arch: Option<String>) -> Result<()> {
     let arch = match arch.as_deref() {

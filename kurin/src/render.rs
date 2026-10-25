@@ -64,10 +64,27 @@ mod tests {
     #[test]
     fn every_event_kind_matches_kebab_type_tag() {
         let events = [
-            Event::TaskStart { id: "a".into(), node: "n".into(), stage: "prepare" },
-            Event::TaskSkipped { id: "a".into(), node: "n".into(), stage: "prepare" },
-            Event::TaskFailed { id: "a".into(), node: "n".into(), stage: "prepare", reason: "x".into() },
-            Event::TaskReconciled { id: "a".into(), node: "n".into(), stage: "prepare" },
+            Event::TaskStart {
+                id: "a".into(),
+                node: "n".into(),
+                stage: "prepare",
+            },
+            Event::TaskSkipped {
+                id: "a".into(),
+                node: "n".into(),
+                stage: "prepare",
+            },
+            Event::TaskFailed {
+                id: "a".into(),
+                node: "n".into(),
+                stage: "prepare",
+                reason: "x".into(),
+            },
+            Event::TaskReconciled {
+                id: "a".into(),
+                node: "n".into(),
+                stage: "prepare",
+            },
             Event::StageDone { stage: "prepare" },
             Event::ClusterReady,
         ];

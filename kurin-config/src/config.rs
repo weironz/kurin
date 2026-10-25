@@ -121,7 +121,9 @@ pub enum NodeRole {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(tag = "method", rename_all = "snake_case", deny_unknown_fields)]
 pub enum SshAuth {
-    Password { password: String },
+    Password {
+        password: String,
+    },
     #[serde(rename_all = "kebab-case")]
     PrivateKey {
         key_path: PathBuf,
@@ -136,9 +138,18 @@ pub fn with_defaults(mut cfg: ClusterConfig) -> ClusterConfig {
         .kubernetes
         .version
         .or_else(|| Version::parse(crate::model::DEFAULT_KUBERNETES_VERSION).ok());
-    cfg.network.pod_cidr = cfg.network.pod_cidr.or_else(|| "10.233.64.0/18".parse().ok());
-    cfg.network.service_cidr = cfg.network.service_cidr.or_else(|| "10.233.0.0/18".parse().ok());
-    cfg.network.dns_domain = cfg.network.dns_domain.or_else(|| Some("cluster.local".into()));
+    cfg.network.pod_cidr = cfg
+        .network
+        .pod_cidr
+        .or_else(|| "10.233.64.0/18".parse().ok());
+    cfg.network.service_cidr = cfg
+        .network
+        .service_cidr
+        .or_else(|| "10.233.0.0/18".parse().ok());
+    cfg.network.dns_domain = cfg
+        .network
+        .dns_domain
+        .or_else(|| Some("cluster.local".into()));
     cfg.ssh.port = cfg.ssh.port.or(Some(22));
     cfg
 }

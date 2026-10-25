@@ -1,0 +1,33 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  release:
+    runs-on: self-hosted
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: musl static build (x86_64 native + aarch64 zig cross)
+        run: |
+          export PATH="$HOME/.cargo/bin:/usr/local/bin:$PATH"
+          just release-musl
+      - name: upload artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$TAG" \
+            --verify-tag || true
+          gh release upload "$TAG" \
+            release-dist/kurin-x86_64-linux-musl.tar.gz \
+            release-dist/kurin-x86_64-linux-musl.tar.gz.sha256 \
+            release-dist/kurin-aarch64-linux-musl.tar.gz \
+            release-dist/kurin-aarch64-linux-musl.tar.gz.sha256 \
+            --repo "$GITHUB_REPOSITORY" --clobber

@@ -49,7 +49,9 @@ pub struct Cluster {
 
 impl Cluster {
     pub fn control_plane(&self) -> impl Iterator<Item = &Node> {
-        self.nodes.iter().filter(|n| n.role == NodeRole::ControlPlane)
+        self.nodes
+            .iter()
+            .filter(|n| n.role == NodeRole::ControlPlane)
     }
     pub fn workers(&self) -> impl Iterator<Item = &Node> {
         self.nodes.iter().filter(|n| n.role == NodeRole::Worker)
@@ -148,9 +150,10 @@ impl Cluster {
         // nodes claiming one IP breaks etcd/API-server bootstrap.
         let mut seen: HashMap<IpAddr, (&str, &str)> = HashMap::new();
         for n in &self.nodes {
-            for (field, addr) in
-                [("address", n.address), ("internal_address", n.internal_address)]
-            {
+            for (field, addr) in [
+                ("address", n.address),
+                ("internal_address", n.internal_address),
+            ] {
                 // internal_address defaults to address; a node's own pair is not a duplicate.
                 let is_default = field == "internal_address" && addr == n.address;
                 if is_default {
@@ -172,7 +175,9 @@ impl Cluster {
         }
         let cp = self.control_plane().count();
         if cp == 0 {
-            return Err(invalid("at least one control-plane node is required".into()));
+            return Err(invalid(
+                "at least one control-plane node is required".into(),
+            ));
         }
         match (cp, self.vip) {
             (0, _) => unreachable!(),
@@ -192,7 +197,9 @@ impl Cluster {
                     .iter()
                     .any(|n| n.address == vip || n.internal_address == vip) =>
             {
-                return Err(invalid("ha.vip must not collide with any node address".into()))
+                return Err(invalid(
+                    "ha.vip must not collide with any node address".into(),
+                ))
             }
             _ => {}
         }
@@ -203,8 +210,8 @@ impl Cluster {
                 "network.pod-cidr and network.service-cidr must not overlap".into(),
             ));
         }
-        if let Some(vip) = self.vip {
-            if let IpAddr::V4(v4) = vip {
+        if let Some(IpAddr::V4(v4)) = self.vip {
+            {
                 if self.pod_cidr.contains(&v4) {
                     return Err(invalid(format!(
                         "ha.vip {v4} falls inside network.pod-cidr {}; pick a VIP outside the \

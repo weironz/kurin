@@ -19,7 +19,11 @@ pub struct ImagesImport {
 
 impl ImagesImport {
     pub fn new(node: &Node, arch: Arch, offline: Option<PathBuf>) -> Self {
-        Self { node: node.clone(), arch, offline }
+        Self {
+            node: node.clone(),
+            arch,
+            offline,
+        }
     }
 
     /// Where this node's payload directory lives.
@@ -27,9 +31,9 @@ impl ImagesImport {
         match &self.offline {
             Some(dir) => {
                 let dm = ArtifactManifest::from_dir(dir)?;
-                let found = dm
-                    .find(&spec.name, self.arch)
-                    .ok_or_else(|| miette::miette!("offline bundle lacks {} ({})", spec.name, self.arch))?;
+                let found = dm.find(&spec.name, self.arch).ok_or_else(|| {
+                    miette::miette!("offline bundle lacks {} ({})", spec.name, self.arch)
+                })?;
                 // DirArtifact.file is the primary payload (index.json);
                 // the blobs live next to it.
                 Ok(found.file.parent().unwrap_or(Path::new("")).to_path_buf())
@@ -52,7 +56,10 @@ impl Task for ImagesImport {
     }
     fn describe(&self) -> String {
         if self.offline.is_some() {
-            format!("import pinned images into containerd k8s.io ({})", self.arch.as_str())
+            format!(
+                "import pinned images into containerd k8s.io ({})",
+                self.arch.as_str()
+            )
         } else {
             "no-op online (kubelet pulls from registries)".into()
         }
@@ -66,7 +73,11 @@ impl Task for ImagesImport {
         // tell which one is missing, and ctr lists registry pulls too.
         let manifest = ArtifactManifest::embedded()?;
         let mut refs = Vec::new();
-        for e in manifest.artifacts().iter().filter(|e| e.kind == ArtifactKind::Image) {
+        for e in manifest
+            .artifacts()
+            .iter()
+            .filter(|e| e.kind == ArtifactKind::Image)
+        {
             let spec = manifest.spec(&e.name, self.arch)?;
             refs.push(spec.url());
         }
@@ -93,7 +104,11 @@ impl Task for ImagesImport {
             return Ok(Outcome::Verified);
         };
         let manifest = ArtifactManifest::embedded()?;
-        for entry in manifest.artifacts().iter().filter(|e| e.kind == ArtifactKind::Image) {
+        for entry in manifest
+            .artifacts()
+            .iter()
+            .filter(|e| e.kind == ArtifactKind::Image)
+        {
             let spec = manifest.spec(&entry.name, self.arch)?;
             let dir = self.payload_dir(&spec).await?;
             let tarball = docker_archive(&dir, &spec)?;
@@ -103,7 +118,9 @@ impl Task for ImagesImport {
             let _ = std::fs::remove_file(&tarball);
             session.write_file(&remote, &bytes).await?;
             let out = session
-                .exec(&format!("ctr -n k8s.io images import {remote} 2>&1 && rm -f {remote}"))
+                .exec(&format!(
+                    "ctr -n k8s.io images import {remote} 2>&1 && rm -f {remote}"
+                ))
                 .await?;
             if !out.ok() {
                 return Err(miette::miette!(
@@ -163,11 +180,11 @@ impl Ustar {
         self.data.extend_from_slice(&header);
         self.data.extend_from_slice(content);
         let pad = (512 - content.len() % 512) % 512;
-        self.data.extend(std::iter::repeat(0u8).take(pad));
+        self.data.extend(std::iter::repeat_n(0u8, pad));
     }
 
     fn finish(mut self) -> Vec<u8> {
-        self.data.extend(std::iter::repeat(0u8).take(1024));
+        self.data.extend(std::iter::repeat_n(0u8, 1024));
         self.data
     }
 }
@@ -190,11 +207,11 @@ fn hex(digest: &str) -> &str {
 /// Build a docker-archive tar from an OCI layout directory (index.json +
 /// manifest.json + hex-named blobs). Written next to the payload dir.
 fn docker_archive(oci_dir: &Path, spec: &ArtifactSpec) -> miette::Result<PathBuf> {
-    let manifest: OciManifest = serde_json::from_slice(
-        &std::fs::read(oci_dir.join("manifest.json"))
-            .map_err(|e| miette::miette!("read {}: {e}", oci_dir.join("manifest.json").display()))?,
-    )
-    .map_err(|e| miette::miette!("parse image manifest: {e}"))?;
+    let manifest: OciManifest =
+        serde_json::from_slice(&std::fs::read(oci_dir.join("manifest.json")).map_err(|e| {
+            miette::miette!("read {}: {e}", oci_dir.join("manifest.json").display())
+        })?)
+        .map_err(|e| miette::miette!("parse image manifest: {e}"))?;
 
     let blob = |d: &str| oci_dir.join(hex(d));
     let config_digest = manifest.config.digest.clone();
@@ -224,7 +241,12 @@ fn docker_archive(oci_dir: &Path, spec: &ArtifactSpec) -> miette::Result<PathBuf
             .map_err(|e| miette::miette!("read layer {}: {e}", hex(&l.digest)))?;
         tar.add(&format!("{}.tar", hex(&l.digest)), &content);
     }
-    let out = std::env::temp_dir().join(format!("kurin-{}-{}.docker.tar", spec.name, spec.arch.as_str()));
-    std::fs::write(&out, tar.finish()).map_err(|e| miette::miette!("write {}: {e}", out.display()))?;
+    let out = std::env::temp_dir().join(format!(
+        "kurin-{}-{}.docker.tar",
+        spec.name,
+        spec.arch.as_str()
+    ));
+    std::fs::write(&out, tar.finish())
+        .map_err(|e| miette::miette!("write {}: {e}", out.display()))?;
     Ok(out)
 }

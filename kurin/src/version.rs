@@ -41,32 +41,127 @@ pub struct ArtifactSha256 {
 /// URLs are derived from the version consts by the `*_url` constructors below.
 pub const ARTIFACT_SHA256: &[ArtifactSha256] = &[
     // kubernetes 1.33.1 — dl.k8s.io/release/v1.33.1/bin/linux/<arch>/<bin>.sha256
-    ArtifactSha256 { name: "kubeadm", version: KUBERNETES_VERSION, arch: "amd64", sha256: "9a481b0a5f1cee1e071bc9a0867ca0aad5524408c2580596c00767ba1a7df0bd" },
-    ArtifactSha256 { name: "kubeadm", version: KUBERNETES_VERSION, arch: "arm64", sha256: "5b3e3a1e18d43522fdee0e15be13a42cee316e07ddcf47ef718104836edebb3e" },
-    ArtifactSha256 { name: "kubelet", version: KUBERNETES_VERSION, arch: "amd64", sha256: "f7224648451dd4f9f2c4f79416f9874223c286ce41727788965fd0341ddb59c4" },
-    ArtifactSha256 { name: "kubelet", version: KUBERNETES_VERSION, arch: "arm64", sha256: "10540261c311ae005b9af514d83c02694e12614406a8524fd2d0bad75296f70d" },
-    ArtifactSha256 { name: "kubectl", version: KUBERNETES_VERSION, arch: "amd64", sha256: "5de4e9f2266738fd112b721265a0c1cd7f4e5208b670f811861f699474a100a3" },
-    ArtifactSha256 { name: "kubectl", version: KUBERNETES_VERSION, arch: "arm64", sha256: "d595d1a26b7444e0beb122e25750ee4524e74414bbde070b672b423139295ce6" },
+    ArtifactSha256 {
+        name: "kubeadm",
+        version: KUBERNETES_VERSION,
+        arch: "amd64",
+        sha256: "9a481b0a5f1cee1e071bc9a0867ca0aad5524408c2580596c00767ba1a7df0bd",
+    },
+    ArtifactSha256 {
+        name: "kubeadm",
+        version: KUBERNETES_VERSION,
+        arch: "arm64",
+        sha256: "5b3e3a1e18d43522fdee0e15be13a42cee316e07ddcf47ef718104836edebb3e",
+    },
+    ArtifactSha256 {
+        name: "kubelet",
+        version: KUBERNETES_VERSION,
+        arch: "amd64",
+        sha256: "f7224648451dd4f9f2c4f79416f9874223c286ce41727788965fd0341ddb59c4",
+    },
+    ArtifactSha256 {
+        name: "kubelet",
+        version: KUBERNETES_VERSION,
+        arch: "arm64",
+        sha256: "10540261c311ae005b9af514d83c02694e12614406a8524fd2d0bad75296f70d",
+    },
+    ArtifactSha256 {
+        name: "kubectl",
+        version: KUBERNETES_VERSION,
+        arch: "amd64",
+        sha256: "5de4e9f2266738fd112b721265a0c1cd7f4e5208b670f811861f699474a100a3",
+    },
+    ArtifactSha256 {
+        name: "kubectl",
+        version: KUBERNETES_VERSION,
+        arch: "arm64",
+        sha256: "d595d1a26b7444e0beb122e25750ee4524e74414bbde070b672b423139295ce6",
+    },
     // containerd 2.1.4 — release asset containerd-2.1.4-linux-<arch>.tar.gz.sha256sum
-    ArtifactSha256 { name: "containerd", version: CONTAINERD_VERSION, arch: "amd64", sha256: "316d510a0428276d931023f72c09fdff1a6ba81d6cc36f31805fea6a3c88f515" },
-    ArtifactSha256 { name: "containerd", version: CONTAINERD_VERSION, arch: "arm64", sha256: "846d13bc2bf1c01ae2f20d13beb9b3a1e50b52c86e955b4ac7d658f5847f2b0e" },
+    ArtifactSha256 {
+        name: "containerd",
+        version: CONTAINERD_VERSION,
+        arch: "amd64",
+        sha256: "316d510a0428276d931023f72c09fdff1a6ba81d6cc36f31805fea6a3c88f515",
+    },
+    ArtifactSha256 {
+        name: "containerd",
+        version: CONTAINERD_VERSION,
+        arch: "arm64",
+        sha256: "846d13bc2bf1c01ae2f20d13beb9b3a1e50b52c86e955b4ac7d658f5847f2b0e",
+    },
     // runc 1.3.2 — release asset runc.sha256sum
-    ArtifactSha256 { name: "runc", version: RUNC_VERSION, arch: "amd64", sha256: "e7a8e30bd6d248f494aae9163521ff4eb112a30602ac56ada0871e3531269c2d" },
-    ArtifactSha256 { name: "runc", version: RUNC_VERSION, arch: "arm64", sha256: "06fbccb4528ecd490f3f333d6dcf22c876bd72a024813a0c0a46312121f4c5fd" },
+    ArtifactSha256 {
+        name: "runc",
+        version: RUNC_VERSION,
+        arch: "amd64",
+        sha256: "e7a8e30bd6d248f494aae9163521ff4eb112a30602ac56ada0871e3531269c2d",
+    },
+    ArtifactSha256 {
+        name: "runc",
+        version: RUNC_VERSION,
+        arch: "arm64",
+        sha256: "06fbccb4528ecd490f3f333d6dcf22c876bd72a024813a0c0a46312121f4c5fd",
+    },
     // crictl 1.33.0 — release asset crictl-v1.33.0-linux-<arch>.tar.gz.sha256
-    ArtifactSha256 { name: "crictl", version: CRICTL_VERSION, arch: "amd64", sha256: "8307399e714626e69d1213a4cd18c8dec3d0201ecdac009b1802115df8973f0f" },
-    ArtifactSha256 { name: "crictl", version: CRICTL_VERSION, arch: "arm64", sha256: "e1f34918d77d5b4be85d48f5d713ca617698a371b049ea1486000a5e86ab1ff3" },
+    ArtifactSha256 {
+        name: "crictl",
+        version: CRICTL_VERSION,
+        arch: "amd64",
+        sha256: "8307399e714626e69d1213a4cd18c8dec3d0201ecdac009b1802115df8973f0f",
+    },
+    ArtifactSha256 {
+        name: "crictl",
+        version: CRICTL_VERSION,
+        arch: "arm64",
+        sha256: "e1f34918d77d5b4be85d48f5d713ca617698a371b049ea1486000a5e86ab1ff3",
+    },
     // cni-plugins 1.7.1 — release asset cni-plugins-linux-<arch>-v1.7.1.tgz.sha256
-    ArtifactSha256 { name: "cni-plugins", version: CNI_PLUGINS_VERSION, arch: "amd64", sha256: "1a28a0506bfe5bcdc981caf1a49eeab7e72da8321f1119b7be85f22621013098" },
-    ArtifactSha256 { name: "cni-plugins", version: CNI_PLUGINS_VERSION, arch: "arm64", sha256: "119fcb508d1ac2149e49a550752f9cd64d023a1d70e189b59c476e4d2bf7c497" },
+    ArtifactSha256 {
+        name: "cni-plugins",
+        version: CNI_PLUGINS_VERSION,
+        arch: "amd64",
+        sha256: "1a28a0506bfe5bcdc981caf1a49eeab7e72da8321f1119b7be85f22621013098",
+    },
+    ArtifactSha256 {
+        name: "cni-plugins",
+        version: CNI_PLUGINS_VERSION,
+        arch: "arm64",
+        sha256: "119fcb508d1ac2149e49a550752f9cd64d023a1d70e189b59c476e4d2bf7c497",
+    },
     // calico v3.30.2 — sha256 of the tag-pinned tigera-operator.yaml
-    ArtifactSha256 { name: "calico-manifest", version: CALICO_VERSION, arch: "all", sha256: "47d48a4a4283f320ea4340724d1afae419fb23e734f5b641bec646c25c7b19b6" },
+    ArtifactSha256 {
+        name: "calico-manifest",
+        version: CALICO_VERSION,
+        arch: "all",
+        sha256: "47d48a4a4283f320ea4340724d1afae419fb23e734f5b641bec646c25c7b19b6",
+    },
     // kube-vip v0.8.8 — per-arch manifest digest from the ghcr.io index
-    ArtifactSha256 { name: "kube-vip-image", version: KUBE_VIP_VERSION, arch: "amd64", sha256: "5a2d3e8f8a96de429707308673549585bf2db984d1449e1107b4f6ab7129707f" },
-    ArtifactSha256 { name: "kube-vip-image", version: KUBE_VIP_VERSION, arch: "arm64", sha256: "092558748b7187f6ff6bcb49fd2568aa7314f739d7d47ead5107ebfd9ad1f410" },
+    ArtifactSha256 {
+        name: "kube-vip-image",
+        version: KUBE_VIP_VERSION,
+        arch: "amd64",
+        sha256: "5a2d3e8f8a96de429707308673549585bf2db984d1449e1107b4f6ab7129707f",
+    },
+    ArtifactSha256 {
+        name: "kube-vip-image",
+        version: KUBE_VIP_VERSION,
+        arch: "arm64",
+        sha256: "092558748b7187f6ff6bcb49fd2568aa7314f739d7d47ead5107ebfd9ad1f410",
+    },
     // pause 3.10 — per-arch manifest digest from the registry.k8s.io index
-    ArtifactSha256 { name: "pause-image", version: "3.10", arch: "amd64", sha256: "7c38f24774e3cbd906d2d33c38354ccf787635581c122965132c9bd309754d4a" },
-    ArtifactSha256 { name: "pause-image", version: "3.10", arch: "arm64", sha256: "e50b7059b633caf3c1449b8da680d11845cda4506b513ee7a2de00725f0a34a7" },
+    ArtifactSha256 {
+        name: "pause-image",
+        version: "3.10",
+        arch: "amd64",
+        sha256: "7c38f24774e3cbd906d2d33c38354ccf787635581c122965132c9bd309754d4a",
+    },
+    ArtifactSha256 {
+        name: "pause-image",
+        version: "3.10",
+        arch: "arm64",
+        sha256: "e50b7059b633caf3c1449b8da680d11845cda4506b513ee7a2de00725f0a34a7",
+    },
 ];
 
 /// Component versions actually used, printed after install and by
@@ -85,9 +180,7 @@ pub fn component_versions() -> Vec<(&'static str, &'static str)> {
 
 /// URL of a kubernetes binary (`kubeadm` / `kubelet` / `kubectl`).
 pub fn kubernetes_bin_url(binary: &str, arch: &str) -> String {
-    format!(
-        "https://dl.k8s.io/release/v{KUBERNETES_VERSION}/bin/linux/{arch}/{binary}"
-    )
+    format!("https://dl.k8s.io/release/v{KUBERNETES_VERSION}/bin/linux/{arch}/{binary}")
 }
 
 pub fn containerd_url(arch: &str) -> String {
@@ -97,9 +190,7 @@ pub fn containerd_url(arch: &str) -> String {
 }
 
 pub fn runc_url(arch: &str) -> String {
-    format!(
-        "https://github.com/opencontainers/runc/releases/download/v{RUNC_VERSION}/runc.{arch}"
-    )
+    format!("https://github.com/opencontainers/runc/releases/download/v{RUNC_VERSION}/runc.{arch}")
 }
 
 pub fn crictl_url(arch: &str) -> String {
