@@ -1,0 +1,18 @@
+# Calico Installation CR consumed by the tigera-operator. Only an inline CR
+# here; the operator itself is applied from its pinned upstream manifest in
+# the cni/calico-operator task.
+apiVersion: operator.tigera.io/v1
+kind: Installation
+metadata:
+  name: default
+  labels:
+    app.kubernetes.io/managed-by: kurin
+spec:
+  cni:
+    type: Calico
+  calicoNetwork:
+    ipPools:
+    - cidr: {{ pod_cidr }}
+      encapsulation: VXLANCrossSubnet
+      natOutgoing: Enabled
+      nodeSelector: all()

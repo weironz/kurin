@@ -1,0 +1,18 @@
+# kubeadm JoinConfiguration for an additional control-plane node. The
+# bootstrap token, CA cert hashes and the encryption certificate-key are
+# runtime secrets: the executor supplies them via
+# `kubeadm join --control-plane --token ... --certificate-key ...` flags,
+# which override this file. This template never contains a token.
+apiVersion: kubeadm.k8s.io/v1beta4
+kind: JoinConfiguration
+discovery:
+  bootstrapToken:
+    apiServerEndpoint: {{ api_server_endpoint }}
+    unsafeSkipCAVerification: false
+controlPlane:
+  localAPIEndpoint:
+    advertiseAddress: {{ advertise_address }}
+    bindPort: 6443
+nodeRegistration:
+  name: {{ node_name }}
+  criSocket: unix:///run/containerd/containerd.sock

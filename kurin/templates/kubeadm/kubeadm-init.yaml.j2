@@ -1,6 +1,6 @@
-//! Minimal sysctl shipping units + containerd config. Version pins come from
-//! the compile-time artifact table (W1 track C); templates only interpolate.
-
+# kubeadm init configuration for the first control-plane node. Networking,
+# cluster name and versions come from the validated internal model; version
+# pins come from the compile-time artifact table.
 apiVersion: kubeadm.k8s.io/v1beta4
 kind: InitConfiguration
 localAPIEndpoint:

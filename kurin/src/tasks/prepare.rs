@@ -147,9 +147,197 @@ impl Task for ContainerdConfig {
     }
 }
 
-fn sha256_hex(data: &[u8]) -> String {
+const CONTAINERD_UNIT_PATH: &str = "/etc/systemd/system/containerd.service";
+const KUBELET_UNIT_PATH: &str = "/etc/systemd/system/kubelet.service";
+
+/// Renders, ships and enables the containerd systemd unit. The binary is
+/// delivered by the artifact model; this task owns the unit file and its
+/// service activation.
+pub struct ContainerdUnit {
+    node: Node,
+    rendered: String,
+}
+
+impl ContainerdUnit {
+    pub fn new(node: &Node) -> Self {
+        let rendered = templates::render(
+            "systemd/containerd.service.j2",
+            minijinja::context! {
+                containerd_version => crate::version::CONTAINERD_VERSION,
+            },
+        )
+        .expect("embedded containerd unit template renders");
+        Self { node: node.clone(), rendered }
+    }
+}
+
+#[async_trait::async_trait]
+impl Task for ContainerdUnit {
+    fn id(&self) -> String {
+        format!("prepare/containerd-unit@{}", self.node.name)
+    }
+    fn stage(&self) -> Stage {
+        Stage::Prepare
+    }
+    fn node(&self) -> &str {
+        &self.node.name
+    }
+    fn describe(&self) -> String {
+        format!("render + install {CONTAINERD_UNIT_PATH}, enable --now")
+    }
+
+    async fn check(&self, session: &dyn Session) -> Result<Drift> {
+        let want = sha256_hex(self.rendered.as_bytes());
+        if session.file_sha256(CONTAINERD_UNIT_PATH).await? != Some(want) {
+            return Ok(Drift::Drifted("containerd.service unit differs from rendered".into()));
+        }
+        if !session.service_active("containerd").await? {
+            return Ok(Drift::Drifted("containerd.service not active".into()));
+        }
+        Ok(Drift::InSync)
+    }
+
+    async fn apply(&self, session: &dyn Session) -> miette::Result<Outcome> {
+        session
+            .write_file(CONTAINERD_UNIT_PATH, self.rendered.as_bytes())
+            .await?;
+        let out = session
+            .exec("systemctl daemon-reload && systemctl enable --now containerd.service")
+            .await?;
+        if out.ok() {
+            Ok(Outcome::Verified)
+        } else {
+            Err(miette::miette!(
+                "containerd unit install failed on {}: {}",
+                self.node.name,
+                out.stderr.trim()
+            ))
+        }
+    }
+}
+
+/// Renders, ships and enables the kubelet systemd unit. Kubelet is enabled
+/// but NOT started here: kubeadm's kubelet-start phase is the activation
+/// point once kubeconfig exists.
+pub struct KubeletUnit {
+    node: Node,
+    rendered: String,
+}
+
+impl KubeletUnit {
+    pub fn new(node: &Node, pause_image: &str, kubernetes_version: &str) -> Self {
+        let rendered = templates::render(
+            "systemd/kubelet.service.j2",
+            minijinja::context! {
+                pause_image => pause_image,
+                kubernetes_version => kubernetes_version.to_string(),
+            },
+        )
+        .expect("embedded kubelet unit template renders");
+        Self { node: node.clone(), rendered }
+    }
+}
+
+#[async_trait::async_trait]
+impl Task for KubeletUnit {
+    fn id(&self) -> String {
+        format!("prepare/kubelet-unit@{}", self.node.name)
+    }
+    fn stage(&self) -> Stage {
+        Stage::Prepare
+    }
+    fn node(&self) -> &str {
+        &self.node.name
+    }
+    fn describe(&self) -> String {
+        format!("render + install {KUBELET_UNIT_PATH}, enable (start deferred to kubeadm)")
+    }
+
+    async fn check(&self, session: &dyn Session) -> Result<Drift> {
+        let want = sha256_hex(self.rendered.as_bytes());
+        if session.file_sha256(KUBELET_UNIT_PATH).await? != Some(want) {
+            return Ok(Drift::Drifted("kubelet.service unit differs from rendered".into()));
+        }
+        let out = session.exec("systemctl is-enabled kubelet.service").await?;
+        if !out.ok() {
+            return Ok(Drift::Drifted("kubelet.service not enabled".into()));
+        }
+        Ok(Drift::InSync)
+    }
+
+    async fn apply(&self, session: &dyn Session) -> miette::Result<Outcome> {
+        session
+            .write_file(KUBELET_UNIT_PATH, self.rendered.as_bytes())
+            .await?;
+        let out = session
+            .exec("systemctl daemon-reload && systemctl enable kubelet.service")
+            .await?;
+        if out.ok() {
+            Ok(Outcome::Verified)
+        } else {
+            Err(miette::miette!(
+                "kubelet unit install failed on {}: {}",
+                self.node.name,
+                out.stderr.trim()
+            ))
+        }
+    }
+}
+
+pub(crate) fn sha256_hex(data: &[u8]) -> String {
     use sha2::{Digest, Sha256};
     let mut h = Sha256::new();
     h.update(data);
     h.finalize().iter().map(|b| format!("{b:02x}")).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use kurin_config::ResolvedSsh;
+
+    use std::collections::BTreeMap;
+
+    fn node(name: &str) -> Node {
+        Node {
+            name: name.into(),
+            role: kurin_config::NodeRole::ControlPlane,
+            address: "192.168.10.11".parse().unwrap(),
+            internal_address: "192.168.10.11".parse().unwrap(),
+            ssh: ResolvedSsh {
+                user: "root".into(),
+                port: 22,
+                auth: kurin_config::SshAuth::Password { password: "x".into() },
+            },
+            labels: BTreeMap::new(),
+        }
+    }
+
+    #[test]
+    fn containerd_unit_has_xurl_restart_and_environment() {
+        let unit = ContainerdUnit::new(&node("m1")).rendered;
+        assert!(unit.contains("X-URL="), "unit documents artifact source: {unit}");
+        assert!(unit.contains(crate::version::CONTAINERD_VERSION));
+        assert!(unit.contains("Restart=always"));
+        assert!(unit.contains("Environment="));
+        assert!(unit.contains("ExecStart=/usr/local/bin/containerd"));
+    }
+
+    #[test]
+    fn kubelet_unit_uses_pause_image_and_restarts() {
+        let unit =
+            KubeletUnit::new(&node("m1"), crate::version::PAUSE_IMAGE, crate::version::KUBERNETES_VERSION)
+                .rendered;
+        assert!(unit.contains(crate::version::PAUSE_IMAGE), "pause image rendered: {unit}");
+        assert!(unit.contains("Restart=always"));
+        assert!(unit.contains("EnvironmentFile=-/var/lib/kubelet/kubeadm-flags.env"));
+        assert!(unit.contains(crate::version::KUBERNETES_VERSION));
+    }
+
+    #[test]
+    fn containerd_config_toml_uses_pause_image() {
+        let cfg = ContainerdConfig::new(&node("m1"), crate::version::PAUSE_IMAGE).rendered();
+        assert!(cfg.contains(crate::version::PAUSE_IMAGE));
+        assert!(cfg.contains("SystemdCgroup = true"));
+    }
 }

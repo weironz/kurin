@@ -1,0 +1,13 @@
+# kubeadm JoinConfiguration for a worker node. The bootstrap token and CA
+# cert hashes are runtime secrets: the executor supplies them via
+# `kubeadm join --token ... --discovery-token-ca-cert-hash sha256:...`
+# flags, which override this file. This template never contains a token.
+apiVersion: kubeadm.k8s.io/v1beta4
+kind: JoinConfiguration
+discovery:
+  bootstrapToken:
+    apiServerEndpoint: {{ api_server_endpoint }}
+    unsafeSkipCAVerification: false
+nodeRegistration:
+  name: {{ node_name }}
+  criSocket: unix:///run/containerd/containerd.sock

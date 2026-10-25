@@ -1,0 +1,54 @@
+# kube-vip static pod: control-plane VIP manager (ARP + leader election,
+# no external LB). Rendered to /etc/kubernetes/manifests/kube-vip.yaml on
+# every control-plane node; kubelet picks static pods up automatically.
+# Tolerations let it run before the CNI (pod network {{ pod_cidr }}) is up.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: kube-vip
+  namespace: kube-system
+  labels:
+    component: kube-vip
+    tier: control-plane
+  annotations:
+    kurin.io/pod-cidr: "{{ pod_cidr }}"
+spec:
+  hostNetwork: true
+  priorityClassName: system-node-critical
+  containers:
+  - name: kube-vip
+    image: ghcr.io/kube-vip/kube-vip:{{ image }}
+    imagePullPolicy: IfNotPresent
+    args:
+    - manager
+    env:
+    - { name: vip_interface, value: "{{ vip_interface }}" }
+    - { name: vip_leasename, value: "plndr-cp-lock" }
+    - { name: vip_leaderelection, value: "true" }
+    - { name: vip_leaseduration, value: "15" }
+    - { name: vip_renewdeadline, value: "10" }
+    - { name: vip_retryperiod, value: "2" }
+    - { name: address, value: "{{ vip }}" }
+    - { name: vip_subnet, value: "32" }
+    - { name: vip_arp, value: "true" }
+    - { name: vip_retryforever, value: "true" }
+    - { name: cp_enable, value: "true" }
+    - { name: cp_insecure, value: "false" }
+    - { name: cp_detect, value: "true" }
+    - { name: svc_enable, value: "false" }
+    - { name: prometheus_server, value: ":2112" }
+    securityContext:
+      capabilities:
+        add: [NET_ADMIN, NET_RAW]
+        drop: [ALL]
+    volumeMounts:
+    - name: kubeconfig
+      mountPath: /etc/kubernetes/admin.conf
+      readOnly: true
+  tolerations:
+  - { operator: Exists, effect: NoSchedule }
+  - { operator: Exists, effect: NoExecute }
+  volumes:
+  - name: kubeconfig
+    hostPath:
+      path: /etc/kubernetes/admin.conf
