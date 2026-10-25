@@ -1,0 +1,167 @@
+//! prepare/artifacts: fetch the pinned artifact set into the local cache,
+//! upload payloads to the node, and install them under /usr/local (or
+//! /opt/cni/bin). This is the binary-first distribution path; apt/yum is
+//! not used for the Kubernetes stack.
+//!
+//! Runs in its own stage before Prepare: the systemd unit tasks require
+//! the binaries to exist.
+
+use std::collections::BTreeMap;
+use std::path::PathBuf;
+use std::sync::LazyLock;
+use tokio::sync::Mutex;
+
+use kurin_config::Node;
+use miette::Result;
+
+use crate::artifact::{Arch, ArtifactKind, ArtifactManifest, ArtifactStore};
+use crate::engine::{Drift, Outcome, Session, Stage, Task};
+
+/// name -> (install method, remote target path)
+/// Binary tarballs install with tar; plain binaries are written directly.
+enum Install {
+    /// Plain payload -> exact path.
+    Direct(&'static str),
+    /// tar.gz -> extract member(s) into dir, stripping leading components.
+    Tar { dir: &'static str, strip: u16 },
+}
+
+/// Bump when any Install mapping changes: marker values embed this so a
+/// recipe fix (like the containerd strip-level bug) invalidates old state.
+pub const INSTALL_RECIPE: u32 = 2;
+
+fn install_for(name: &str) -> Option<Install> {
+    Some(match name {
+        "kubeadm" => Install::Direct("/usr/local/bin/kubeadm"),
+        "kubelet" => Install::Direct("/usr/local/bin/kubelet"),
+        "kubectl" => Install::Direct("/usr/local/bin/kubectl"),
+        "runc" => Install::Direct("/usr/local/bin/runc"),
+        // containerd tgz layout: bin/containerd, bin/containerd-shim-* (no strip)
+        "containerd" => Install::Tar { dir: "/usr/local", strip: 0 },
+        "crictl" => Install::Tar { dir: "/usr/local/bin", strip: 0 },
+        "cni-plugins" => Install::Tar { dir: "/opt/cni/bin", strip: 0 },
+        _ => return None, // images / manifests are not node-level installs
+    })
+}
+
+pub struct ArtifactsInstall {
+    node: Node,
+    arch: Arch,
+    // Payload list is resolved from the embedded manifest in apply; the
+    // marker keeps check cheap and offline-safe.
+}
+
+impl ArtifactsInstall {
+    pub fn new(node: &Node, arch: Arch) -> Self {
+        Self { node: node.clone(), arch }
+    }
+
+    async fn marker(&self, session: &dyn Session) -> Result<BTreeMap<String, String>> {
+        let out = session
+            .exec("cat /etc/kurin/artifacts.marker 2>/dev/null || true")
+            .await?;
+        let mut m = BTreeMap::new();
+        for line in out.stdout.lines() {
+            if let Some((k, v)) = line.split_once('=') {
+                m.insert(k.trim().to_string(), v.trim().to_string());
+            }
+        }
+        Ok(m)
+    }
+}
+
+#[async_trait::async_trait]
+impl Task for ArtifactsInstall {
+    fn id(&self) -> String {
+        format!("artifacts/install@{}", self.node.name)
+    }
+    fn stage(&self) -> Stage {
+        Stage::Artifacts
+    }
+    fn node(&self) -> &str {
+        &self.node.name
+    }
+    fn describe(&self) -> String {
+        format!("fetch+install pinned binaries ({})", self.arch.as_str())
+    }
+
+    async fn check(&self, session: &dyn Session) -> Result<Drift> {
+        let manifest = crate::artifact::ArtifactManifest::embedded()?;
+        let marker = self.marker(session).await?;
+        for entry in manifest.artifacts() {
+            if install_for(&entry.name).is_none() {
+                continue; // images/manifests don't install to the node
+            }
+            let spec = manifest.spec(&entry.name, self.arch)?;
+            let expected = spec.expected_sha256();
+            let want = expected.map(|e| format!("{e}@r{INSTALL_RECIPE}"));
+            if marker.get(&entry.name).map(String::as_str) != want.as_deref() {
+                return Ok(Drift::Drifted(format!(
+                    "artifact {} ({}) not installed or stale",
+                    entry.name,
+                    self.arch.as_str()
+                )));
+            }
+        }
+        Ok(Drift::InSync)
+    }
+
+    async fn apply(&self, session: &dyn Session) -> miette::Result<Outcome> {
+        // Parallel node tasks share the local cache: serialize downloads so
+        // concurrent fetches of the same artifact never race on .part files.
+        static FETCH_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+        let _guard = FETCH_LOCK.lock().await;
+        let store = ArtifactStore::open_default()?;
+        let manifest = ArtifactManifest::embedded()?;
+
+        session.exec("mkdir -p /usr/local/bin /opt/cni/bin /etc/kurin").await?;
+
+        for entry in manifest.artifacts() {
+            let Some(install) = install_for(&entry.name) else { continue };
+            let spec = manifest.spec(&entry.name, self.arch)?;
+            let local: PathBuf = store.fetch(&spec).await?;
+            let bytes = std::fs::read(&local)
+                .map_err(|e| miette::miette!("read cached artifact {}: {e}", spec.name))?;
+
+            match install {
+                Install::Direct(dest) => {
+                    session.write_file(dest, &bytes).await?;
+                    session.exec(&format!("chmod 0755 {dest}")).await?;
+                }
+                Install::Tar { dir, strip } => {
+                    let remote_tmp = format!("/tmp/kurin-{}.tgz", spec.name);
+                    session.write_file(&remote_tmp, &bytes).await?;
+                    let strip_flag = if strip > 0 { format!("--strip-components={strip}") } else { String::new() };
+                    let out = session
+                        .exec(&format!("tar -xzf {remote_tmp} -C {dir} {strip_flag} && rm -f {remote_tmp}"))
+                        .await?;
+                    if !out.ok() {
+                        return Err(miette::miette!(
+                            "extract {} on {} failed ({}): {}",
+                            spec.name,
+                            self.node.name,
+                            out.exit_code,
+                            out.stderr.lines().last().unwrap_or("")
+                        ));
+                    }
+                }
+            }
+        }
+
+        // Marker records what is installed; check compares to the manifest.
+        let mut lines = String::new();
+        for entry in manifest.artifacts() {
+            if install_for(&entry.name).is_none() {
+                continue;
+            }
+            let spec = manifest.spec(&entry.name, self.arch)?;
+            let sha = spec.expected_sha256().unwrap_or_default();
+            lines.push_str(&format!("{}={sha}@r{INSTALL_RECIPE}\n", entry.name));
+        }
+        session.write_file("/etc/kurin/artifacts.marker", lines.as_bytes()).await?;
+        Ok(Outcome::Verified)
+    }
+}
+
+// Silence unused warnings for kinds only used in install_for decisions.
+const _: Option<ArtifactKind> = None;

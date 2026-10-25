@@ -29,6 +29,8 @@ pub enum Outcome {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 pub enum Stage {
     Preflight,
+    /// Binary-first distribution: fetch + install pinned binaries.
+    Artifacts,
     Prepare,
     Bootstrap,
     Join,
@@ -40,6 +42,7 @@ impl Stage {
     pub fn label(self) -> &'static str {
         match self {
             Stage::Preflight => "preflight",
+            Stage::Artifacts => "artifacts",
             Stage::Prepare => "prepare",
             Stage::Bootstrap => "bootstrap",
             Stage::Join => "join",

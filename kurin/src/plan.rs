@@ -26,6 +26,7 @@ impl Plan {
     pub fn build(cluster: &Cluster) -> Plan {
         let stages = [
             Stage::Preflight,
+            Stage::Artifacts,
             Stage::Prepare,
             Stage::Bootstrap,
             Stage::Join,
@@ -43,18 +44,40 @@ impl Plan {
 
         let mut push = |i: usize, t: Arc<dyn Task>| graph[idx[i]].tasks.push(PlannedTask { task: t, drift: None });
 
-        // Preflight & Prepare: every node.
+        // Preflight, Artifacts & Prepare: every node.
+        // Rust's ARCH names differ from Go-style artifact arch names.
+        let arch = match std::env::consts::ARCH {
+            "x86_64" => crate::artifact::Arch::Amd64,
+            "aarch64" => crate::artifact::Arch::Arm64,
+            other => panic!("unsupported build architecture: {other}"),
+        };
         for node in &cluster.nodes {
             push(0, Arc::new(tasks::preflight::Preflight::new(node)));
-            push(1, Arc::new(tasks::prepare::Sysctl::new(node)));
+            push(1, Arc::new(tasks::install::ArtifactsInstall::new(node, arch)));
+            push(2, Arc::new(tasks::prepare::Sysctl::new(node)));
             push(
-                1,
+                2,
                 Arc::new(tasks::prepare::ContainerdConfig::new(node, crate::version::PAUSE_IMAGE)),
             );
+            push(2, Arc::new(tasks::prepare::ContainerdUnit::new(node)));
+            push(
+                2,
+                Arc::new(tasks::prepare::KubeletUnit::new(
+                    node,
+                    crate::version::PAUSE_IMAGE,
+                    &cluster.kubernetes_version.to_string(),
+                )),
+            );
         }
-        // Bootstrap: control-plane only (kubeadm init on the first, in stage order).
+        // Bootstrap: kube-vip on every control-plane node (VIP only), then
+        // kubeadm init on the first. Stage order keeps init after vip.
+        for node in cluster.control_plane() {
+            if let Some(kubevip) = tasks::bootstrap::KubeVip::new(cluster, node) {
+                push(3, Arc::new(kubevip));
+            }
+        }
         if let Some(first) = cluster.control_plane().next() {
-            push(2, Arc::new(tasks::bootstrap::KubeadmInit::new(cluster, first)));
+            push(3, Arc::new(tasks::bootstrap::KubeadmInit::new(cluster, first)));
         }
         // Join: workers and additional control-plane members.
         for node in cluster.nodes.iter().skip(0) {
@@ -65,11 +88,11 @@ impl Plan {
             if is_first_cp {
                 continue;
             }
-            push(3, Arc::new(tasks::join::KubeadmJoin::new(cluster, node)));
+            push(4, Arc::new(tasks::join::KubeadmJoin::new(cluster, node)));
         }
         // CNI + post.
-        push(4, Arc::new(tasks::cni::CalicoOperator::new(cluster)));
-        push(5, Arc::new(tasks::post::KubeconfigPull::new(cluster)));
+        push(5, Arc::new(tasks::cni::CalicoOperator::new(cluster)));
+        push(6, Arc::new(tasks::post::KubeconfigPull::new(cluster)));
 
         Plan { graph, stages: idx }
     }

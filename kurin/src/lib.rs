@@ -1,10 +1,12 @@
 //! kurin library: everything the CLI and future API layer calls.
 //! The thin binary in `main.rs` only parses argv and picks an output sink.
 
+pub mod artifact;
 pub mod engine;
 pub mod executor;
 pub mod plan;
 pub mod render;
+pub mod ssh;
 pub mod state;
 pub mod tasks;
 pub mod templates;

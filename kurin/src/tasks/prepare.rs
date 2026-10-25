@@ -55,7 +55,7 @@ impl Task for Sysctl {
             .exec("cat /etc/sysctl.d/99-kurin.conf 2>/dev/null || true")
             .await?;
         let expected = sysctl_unit(K8S_SYSCTL);
-        if out.stdout.trim() != expected {
+        if out.stdout.trim() != expected.trim() {
             drift = drift.or_else(|| Some("/etc/sysctl.d/99-kurin.conf out of date".into()));
         }
         Ok(match drift {

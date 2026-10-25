@@ -39,6 +39,9 @@ enum CreateWhat {
         /// Emit machine-readable JSON events.
         #[arg(long)]
         json: bool,
+        /// Resume from the run-state file (skips already-done tasks).
+        #[arg(long)]
+        resume: bool,
     },
     /// Print an annotated example config.
     Config {
@@ -75,31 +78,54 @@ async fn run(cli: Cli) -> Result<()> {
                 print!("{}", EXAMPLE_CONFIG);
                 Ok(())
             }
-            CreateWhat::Cluster { file, dry_run, check, json } => {
+            CreateWhat::Cluster { file, dry_run, check, json, resume } => {
                 let cluster = kurin_config::load(&file)?;
-                let warn = cluster.control_plane().count();
-                if warn % 2 == 0 && warn > 1 && !json {
-                    eprintln!("warn: even control-plane count ({warn}); etcd quorum prefers odd");
+                let cp = cluster.control_plane().count();
+                if cp % 2 == 0 && cp > 1 && !json {
+                    eprintln!("warn: even control-plane count ({cp}); etcd quorum prefers odd");
                 }
                 let mut plan = kurin::Plan::build(&cluster);
+
+                let pool: std::sync::Arc<dyn kurin::SessionPool> =
+                    std::sync::Arc::new(kurin::ssh::SshSessionPool::from_cluster(&cluster)?);
                 if check {
-                    // Live probe requires SSH sessions; W1 wires russh.
-                    // Dry-run --check stays offline until then.
+                    kurin::executor::probe(&mut plan, &pool).await?;
                 }
                 if dry_run || !check {
                     let tree = kurin::render::render_tree(&plan);
                     if json {
-                        println!("{}", serde_json::to_string_pretty(&serde_json::json!({ "plan": tree })).into_diagnostic()?);
+                        let plan = serde_json::json!({ "plan": tree });
+                        println!("{}", serde_json::to_string_pretty(&plan).into_diagnostic()?);
                     } else {
                         print!("{tree}");
                     }
                 }
-                if !dry_run {
-                    return Err(miette::miette!(
-                        "execution requires SSH sessions; land --dry-run first (W1 wires russh executor)"
-                    ));
+                if dry_run {
+                    return Ok(());
                 }
-                let _ = &mut plan;
+
+                let mut opts = kurin::executor::RunOptions::default()
+                    .with_default_state(&cluster.name);
+                opts.resume = resume;
+                let mut emit = |event: kurin::Event| {
+                    if json {
+                        println!("{}", kurin::render::event_json_line(&event));
+                    } else {
+                        use kurin::Event::*;
+                        match &event {
+                            TaskSkipped { id, .. } => eprintln!("skip  {id}"),
+                            TaskDone { id, ms, .. } => eprintln!("done  {id} ({ms}ms)"),
+                            TaskReconciled { id, .. } => eprintln!("ok    {id} (reconciled)"),
+                            TaskFailed { id, reason, .. } => eprintln!("FAIL  {id}: {reason}"),
+                            StageDone { stage } => eprintln!("-- stage {stage} complete"),
+                            _ => {}
+                        }
+                    }
+                };
+                kurin::executor::run_with(&mut plan, &pool, &mut emit, opts).await?;
+                if !json {
+                    eprintln!("cluster {} ready", cluster.name);
+                }
                 Ok(())
             }
         },
