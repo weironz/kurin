@@ -1,0 +1,104 @@
+{
+  "version": 1,
+  "artifacts": [
+    {
+      "name": "kubeadm",
+      "kind": "binary",
+      "version": "1.33.1",
+      "file": "kubeadm",
+      "url_template": "https://dl.k8s.io/release/v{version}/bin/{os}/{arch}/kubeadm",
+      "sha256": {
+        "linux-amd64": "9a481b0a5f1cee1e071bc9a0867ca0aad5524408c2580596c00767ba1a7df0bd",
+        "linux-arm64": "5b3e3a1e18d43522fdee0e15be13a42cee316e07ddcf47ef718104836edebb3e"
+      }
+    },
+    {
+      "name": "kubelet",
+      "kind": "binary",
+      "version": "1.33.1",
+      "file": "kubelet",
+      "url_template": "https://dl.k8s.io/release/v{version}/bin/{os}/{arch}/kubelet",
+      "sha256": {
+        "linux-amd64": "f7224648451dd4f9f2c4f79416f9874223c286ce41727788965fd0341ddb59c4",
+        "linux-arm64": "10540261c311ae005b9af514d83c02694e12614406a8524fd2d0bad75296f70d"
+      }
+    },
+    {
+      "name": "kubectl",
+      "kind": "binary",
+      "version": "1.33.1",
+      "file": "kubectl",
+      "url_template": "https://dl.k8s.io/release/v{version}/bin/{os}/{arch}/kubectl",
+      "sha256": {
+        "linux-amd64": "5de4e9f2266738fd112b721265a0c1cd7f4e5208b670f811861f699474a100a3",
+        "linux-arm64": "d595d1a26b7444e0beb122e25750ee4524e74414bbde070b672b423139295ce6"
+      }
+    },
+    {
+      "name": "containerd",
+      "kind": "binary",
+      "version": "2.1.4",
+      "file": "containerd-{version}-linux-{arch}.tar.gz",
+      "url_template": "https://github.com/containerd/containerd/releases/download/v{version}/containerd-{version}-linux-{arch}.tar.gz",
+      "sha256": {
+        "linux-amd64": "316d510a0428276d931023f72c09fdff1a6ba81d6cc36f31805fea6a3c88f515",
+        "linux-arm64": "846d13bc2bf1c01ae2f20d13beb9b3a1e50b52c86e955b4ac7d658f5847f2b0e"
+      }
+    },
+    {
+      "name": "runc",
+      "kind": "binary",
+      "version": "1.3.2",
+      "file": "runc.{arch}",
+      "url_template": "https://github.com/opencontainers/runc/releases/download/v{version}/runc.{arch}",
+      "sha256": {
+        "linux-amd64": "e7a8e30bd6d248f494aae9163521ff4eb112a30602ac56ada0871e3531269c2d",
+        "linux-arm64": "06fbccb4528ecd490f3f333d6dcf22c876bd72a024813a0c0a46312121f4c5fd"
+      }
+    },
+    {
+      "name": "crictl",
+      "kind": "binary",
+      "version": "1.33.0",
+      "file": "crictl-v{version}-linux-{arch}.tar.gz",
+      "url_template": "https://github.com/kubernetes-sigs/cri-tools/releases/download/v{version}/crictl-v{version}-linux-{arch}.tar.gz",
+      "sha256": {
+        "linux-amd64": "8307399e714626e69d1213a4cd18c8dec3d0201ecdac009b1802115df8973f0f",
+        "linux-arm64": "e1f34918d77d5b4be85d48f5d713ca617698a371b049ea1486000a5e86ab1ff3"
+      }
+    },
+    {
+      "name": "cni-plugins",
+      "kind": "binary",
+      "version": "1.7.1",
+      "file": "cni-plugins-linux-{arch}-v{version}.tgz",
+      "url_template": "https://github.com/containernetworking/plugins/releases/download/v{version}/cni-plugins-linux-{arch}-v{version}.tgz",
+      "sha256": {
+        "linux-amd64": "1a28a0506bfe5bcdc981caf1a49eeab7e72da8321f1119b7be85f22621013098",
+        "linux-arm64": "119fcb508d1ac2149e49a550752f9cd64d023a1d70e189b59c476e4d2bf7c497"
+      }
+    },
+    {
+      "name": "pause",
+      "kind": "image",
+      "version": "3.10",
+      "file": "index.json",
+      "url_template": "registry.k8s.io/pause:{version}",
+      "sha256": {
+        "linux-amd64": "ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a",
+        "linux-arm64": "ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a"
+      }
+    },
+    {
+      "name": "calico-operator",
+      "kind": "manifest",
+      "version": "3.30.2",
+      "file": "tigera-operator.yaml",
+      "url_template": "https://raw.githubusercontent.com/projectcalico/calico/v{version}/manifests/tigera-operator.yaml",
+      "sha256": {
+        "linux-amd64": "47d48a4a4283f320ea4340724d1afae419fb23e734f5b641bec646c25c7b19b6",
+        "linux-arm64": "47d48a4a4283f320ea4340724d1afae419fb23e734f5b641bec646c25c7b19b6"
+      }
+    }
+  ]
+}
