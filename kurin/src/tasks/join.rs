@@ -8,14 +8,16 @@ use miette::Result;
 
 use crate::engine::{Drift, Outcome, Session, Stage, Task};
 use crate::templates;
-use crate::tasks::bootstrap::KUBEADM_DIR;
+use crate::tasks::bootstrap::{read_join_material, KUBEADM_DIR};
 
 const JOIN_CONFIG_NAME: &str = "kubeadm-join.yaml";
 
 pub struct KubeadmJoin {
     node_name: String,
+    cluster_name: String,
     is_control_plane: bool,
     api_server_endpoint: String,
+    advertise_address: String,
     rendered: String,
 }
 
@@ -52,8 +54,10 @@ impl KubeadmJoin {
         let rendered = templates::render(path, ctx).expect("embedded kubeadm join template renders");
         Self {
             node_name: node.name.clone(),
+            cluster_name: cluster.name.clone(),
             is_control_plane,
             api_server_endpoint,
+            advertise_address: node.internal_address.to_string(),
             rendered,
         }
     }
@@ -88,32 +92,51 @@ impl Task for KubeadmJoin {
     }
 
     async fn apply(&self, session: &dyn Session) -> miette::Result<Outcome> {
-        // Ship the rendered JoinConfiguration first; it contains no secret
-        // material. The token / CA hash / certificate-key are produced by
-        // the control plane at runtime and passed as `kubeadm join` flags by
-        // the executor (SessionPool fan-in wiring lands in W1).
-        // Contract: any transport error after kubeadm starts => Unknown.
+        // kubeadm refuses --config mixed with discovery flags, so the
+        // rendered JoinConfiguration ships for audit only; the actual join
+        // is built from the harvested join command + flags.
+        let material = match read_join_material(&self.cluster_name) {
+            Some(m) => m,
+            // Init said it harvested; a missing file here means a stale
+            // state dir or a newer kurin never harvested. Unknown -> the
+            // engine re-probes (init InSync) and harvests again.
+            None => {
+                return Ok(Outcome::Unknown(format!(
+                    "join material for cluster {} not harvested yet",
+                    self.cluster_name
+                )))
+            }
+        };
+        let mut cmd = material.join_command.clone();
+        cmd.push_str(&format!(" --node-name {}", self.node_name));
+        cmd.push_str(&format!(" --apiserver-advertise-address {}", self.advertise_address));
+        if self.is_control_plane {
+            if material.certificate_key.is_empty() {
+                return Ok(Outcome::Unknown(
+                    "control-plane join needs a certificate key that was not harvested".into(),
+                ));
+            }
+            cmd.push_str(&format!(" --control-plane --certificate-key {}", material.certificate_key));
+        }
         session.exec(&format!("mkdir -p {KUBEADM_DIR}")).await?;
         session
             .write_file(&Self::config_path(), self.rendered.as_bytes())
             .await?;
-        let out = session
-            .exec(&format!(
-                "kubeadm join --config {} --dry-run >/dev/null 2>&1 || true",
-                Self::config_path()
-            ))
-            .await?;
-        if out.ok() {
-            Ok(Outcome::Unknown(
-                "join config shipped; the bootstrap token from the control-plane session \
-                 and the final kubeadm join run are wired by the executor"
-                    .into(),
-            ))
-        } else {
-            Ok(Outcome::Unknown(format!(
-                "join probe failed on {}",
-                self.node_name
-            )))
+
+        let run = session.exec(&cmd).await;
+        let run = match run {
+            Ok(o) => o,
+            // Transport loss mid-join: the node may have already joined.
+            Err(e) => return Ok(Outcome::Unknown(format!("join exec lost: {e}"))),
+        };
+        match session.file_sha256("/etc/kubernetes/kubelet.conf").await? {
+            Some(_) => Ok(Outcome::Verified),
+            None => Err(miette::miette!(
+                "kubeadm join on {} left no kubelet.conf (exit {}): {}",
+                self.node_name,
+                run.exit_code,
+                run.stderr.lines().last().unwrap_or("")
+            )),
         }
     }
 }

@@ -1,0 +1,27 @@
+version = "v1alpha1"
+name = "tier2"
+
+[kubernetes]
+version = "1.33.1"
+
+[network]
+pod-cidr = "10.233.64.0/18"
+service-cidr = "10.233.0.0/18"
+
+[ssh]
+user = "root"
+port = 22
+
+[ssh.auth]
+method = "private_key"
+key-path = "/home/gsops/data/repos/kurin/e2e/tier2/.keys/id_ed25519"
+
+[nodes.master01]
+address = "10.97.0.50"
+internal-address = "10.97.0.50"
+role = "control-plane"
+
+[nodes.worker01]
+address = "10.97.0.170"
+internal-address = "10.97.0.170"
+role = "worker"

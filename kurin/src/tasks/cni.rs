@@ -96,16 +96,20 @@ impl Task for CalicoOperator {
             .write_file(OPERATOR_STAGING_PATH, &Self::operator_manifest().await?)
             .await?;
         // The operator creates its own CRDs at startup (Calico >=3.26), so a
-        // bare `wait` right after apply races the operator pod: poll instead.
+        // bare `wait` right after apply races both the CRD creation and the
+        // .status.conditions population (kubectl errors on nil conditions).
+        // Tolerant poll-with-timeout for every readiness step.
         let script = format!(
             "set -e\n\
              {KUBECTL} apply -f {op}\n\
-             for i in $(seq 1 90); do\n\
-               {KUBECTL} get crd installations.operator.tigera.io >/dev/null 2>&1 && break\n\
+             n=0; until {KUBECTL} wait --for=condition=Established crd/installations.operator.tigera.io --timeout=30s 2>/dev/null; do\n\
+               n=$((n+1)); [ $n -ge 30 ] && {{ echo 'CRD never Established' >&2; exit 1; }}\n\
                sleep 2\n\
              done\n\
-             {KUBECTL} wait --for=condition=Established crd/installations.operator.tigera.io --timeout=60s\n\
-             {KUBECTL} -n tigera-operator wait --for=condition=Available deployment/tigera-operator --timeout=180s\n\
+             n=0; until {KUBECTL} -n tigera-operator wait --for=condition=Available deployment/tigera-operator --timeout=60s 2>/dev/null; do\n\
+               n=$((n+1)); [ $n -ge 10 ] && {{ echo 'tigera-operator never Available' >&2; exit 1; }}\n\
+               sleep 5\n\
+             done\n\
              {KUBECTL} apply -f {cr}\n\
              rm -f {op} {cr}",
             op = OPERATOR_STAGING_PATH,
@@ -167,9 +171,15 @@ mod tests {
     }
 
     #[test]
-    fn operator_url_is_version_pinned() {
-        let url = CalicoOperator::operator_url();
-        assert!(url.contains(crate::version::CALICO_VERSION));
-        assert!(url.ends_with("/manifests/tigera-operator.yaml"));
+    fn operator_manifest_is_pinned_in_artifact_table() {
+        // The CNI stage now stages the manifest from the artifact store;
+        // its version/sha256 live in the same table as the binaries.
+        let manifest = crate::artifact::ArtifactManifest::embedded().unwrap();
+        let spec = manifest
+            .spec("calico-operator", crate::artifact::Arch::Amd64)
+            .unwrap();
+        assert!(spec.url().contains(crate::version::CALICO_VERSION));
+        assert!(spec.url().ends_with("/manifests/tigera-operator.yaml"));
+        assert!(spec.expected_sha256().is_some(), "manifest must be checksum-pinned");
     }
 }

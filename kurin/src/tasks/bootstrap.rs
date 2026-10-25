@@ -1,5 +1,9 @@
-//! bootstrap/*: kubeadm init on the first control-plane node, with the
-//! rendered ClusterConfiguration shipped to /etc/kurin/kubeadm-init.yaml.
+//! bootstrap/*: kubeadm init on the first control-plane node, producing
+//! join material (full join command + fresh certificate key) for the Join
+//! stage. Kept in the local kurin cache; never rendered into the
+//! JoinConfiguration (secrets stay out of templates).
+
+use std::path::PathBuf;
 
 use kurin_config::{Cluster, Node};
 use miette::Result;
@@ -10,8 +14,65 @@ use crate::tasks::prepare::sha256_hex;
 
 pub const KUBEADM_DIR: &str = "/etc/kurin";
 
+/// Local rendezvous for downstream stages. Lives under
+/// $XDG_CACHE_HOME/kurin (fallback ~/.cache); deliberately not remote.
+pub fn join_material_path(cluster: &str) -> PathBuf {
+    let base = std::env::var_os("XDG_CACHE_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache")))
+        .unwrap_or_else(|| PathBuf::from("/tmp"));
+    base.join("kurin").join("clusters").join(cluster)
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct JoinMaterial {
+    /// Full `kubeadm join <endpoint> --token ... --discovery-token-ca-cert-hash ...`.
+    pub join_command: String,
+    /// `--certificate-key` for control-plane joins (upload-certs, 2h TTL).
+    pub certificate_key: String,
+}
+
+pub fn read_join_material(cluster: &str) -> Option<JoinMaterial> {
+    let path = join_material_path(cluster).join("join.env");
+    let raw = std::fs::read_to_string(path).ok()?;
+    let mut m = JoinMaterial::default();
+    for line in raw.lines() {
+        if let Some(v) = line.strip_prefix("join_command=") {
+            m.join_command = v.trim().to_string();
+        } else if let Some(v) = line.strip_prefix("certificate_key=") {
+            m.certificate_key = v.trim().to_string();
+        }
+    }
+    if m.join_command.is_empty() { None } else { Some(m) }
+}
+
+async fn write_join_material(session: &dyn Session, cluster: &str) -> Result<()> {
+    let out = session
+        .exec("kubeadm token create --print-join-command")
+        .await?;
+    let join_cmd = out.stdout.trim().to_string();
+    if join_cmd.is_empty() {
+        return Err(miette::miette!("kubeadm token create returned empty join command"));
+    }
+    // Fresh certificate key (2h TTL). Never persisted on the node.
+    let out = session
+        .exec("kubeadm init phase upload-certs --upload-certs | tail -n1")
+        .await?;
+    let key = out.stdout.trim().to_string();
+    if key.len() != 64 || !key.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()) {
+        return Err(miette::miette!("upload-certs returned unexpected key: {key}"));
+    }
+    let dir = join_material_path(cluster);
+    std::fs::create_dir_all(&dir).map_err(|e| miette::miette!("mkdir {dir:?}: {e}"))?;
+    let body = format!("join_command={join_cmd}\ncertificate_key={key}\n");
+    std::fs::write(dir.join("join.env"), body)
+        .map_err(|e| miette::miette!("write join.env: {e}"))?;
+    Ok(())
+}
+
 pub struct KubeadmInit {
     node_name: String,
+    cluster_name: String,
     rendered: String,
 }
 
@@ -38,6 +99,7 @@ impl KubeadmInit {
         .expect("kubeadm init template renders");
         Self {
             node_name: first.name.clone(),
+            cluster_name: cluster.name.clone(),
             rendered,
         }
     }
@@ -69,7 +131,12 @@ impl Task for KubeadmInit {
     async fn check(&self, session: &dyn Session) -> Result<Drift> {
         // kubeadm's marker: admin.conf exists => init already ran successfully.
         match session.file_sha256("/etc/kubernetes/admin.conf").await? {
-            Some(_) => Ok(Drift::InSync),
+            Some(_) => match read_join_material(&self.cluster_name) {
+                Some(_) => Ok(Drift::InSync),
+                None => Ok(Drift::Drifted(
+                    "cluster initialized by an older kurin; join.env missing".into(),
+                )),
+            },
             None => Ok(Drift::Drifted(
                 "node has not been initialized (no /etc/kubernetes/admin.conf)".into(),
             )),
@@ -82,27 +149,39 @@ impl Task for KubeadmInit {
         session
             .write_file(&Self::config_path(), self.rendered.as_bytes())
             .await?;
-        // Upload-phase succeeded; init itself is the risky network operation.
-        // kubeadm is rerun-safe on the same inputs; the dry run documents
-        // this as the one task where an Unknown outcome re-checks admin.conf.
-        let out = session
-            .exec(&format!(
-                "kubeadm init --config {} --upload-certs",
-                Self::config_path()
-            ))
-            .await?;
-        match session.file_sha256("/etc/kubernetes/admin.conf").await {
-            Err(e) => {
-                // Probe failed right after apply; the op outcome is unknown.
-                return Ok(Outcome::Unknown(format!(
-                    "init exited, but admin.conf probe errored: {e}"
-                )));
+        // Only run init when the cluster isn't ready; a converged node that
+        // merely lacks join.env (older kurin) skips the expensive init.
+        let already = matches!(
+            session.file_sha256("/etc/kubernetes/admin.conf").await?,
+            Some(_)
+        );
+        if !already {
+            let out = session
+                .exec(&format!(
+                    "kubeadm init --config {} --upload-certs",
+                    Self::config_path()
+                ))
+                .await?;
+            match session.file_sha256("/etc/kubernetes/admin.conf").await {
+                Err(e) => {
+                    return Ok(Outcome::Unknown(format!(
+                        "init exited, but admin.conf probe errored: {e}"
+                    )));
+                }
+                Ok(None) => {
+                    return Err(init_failure(&out, &self.node_name));
+                }
+                Ok(Some(_)) => {}
             }
-            Ok(None) => {
-                return Err(init_failure(&out, &self.node_name));
-            }
-            Ok(Some(_)) => return Ok(Outcome::Verified),
-        };
+        }
+
+        // Harvest join material for the Join stage. A failure here doesn't
+        // mean the cluster is broken: report Unknown so the next pass
+        // re-checks (init InSync) and retries the harvest.
+        if let Err(e) = write_join_material(session, &self.cluster_name).await {
+            return Ok(Outcome::Unknown(format!("harvest join material: {e}")));
+        }
+        Ok(Outcome::Verified)
     }
 }
 

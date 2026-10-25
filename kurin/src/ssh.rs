@@ -72,6 +72,9 @@ struct HostKeyPolicy {
     host: String,
     port: u16,
     known_hosts: PathBuf,
+    /// Set when a recorded key mismatches, so callers can surface the
+    /// actionable cause instead of a generic "connection failed".
+    mismatch: Arc<std::sync::Mutex<Option<String>>>,
 }
 
 impl HostKeyPolicy {
@@ -83,7 +86,16 @@ impl HostKeyPolicy {
                 learn_known_hosts_path(&self.host, self.port, key, &self.known_hosts).is_ok()
             }
             // Recorded key mismatch (or unreadable store): never trust.
-            Err(_) => false,
+            Err(e) => {
+                *self.mismatch.lock().unwrap() = Some(format!(
+                    "host key for {}:{} does not match the recorded key ({e}); \
+                     if the node was rebuilt, remove the stale entry from {}",
+                    self.host,
+                    self.port,
+                    self.known_hosts.display()
+                ));
+                false
+            }
         }
     }
 }
@@ -140,12 +152,14 @@ impl NodeConn {
 
     /// One connection attempt: TCP + key exchange + auth, all timeout-bounded.
     async fn connect_once(&self) -> Result<Handle<HostKeyPolicy>> {
+        let mismatch = Arc::new(std::sync::Mutex::new(None));
         let policy = HostKeyPolicy {
             host: self.target.address.to_string(),
             port: self.target.ssh.port,
             known_hosts: self.known_hosts.clone(),
+            mismatch: Arc::clone(&mismatch),
         };
-        let mut handle = tokio::time::timeout(
+        let mut handle = match tokio::time::timeout(
             CONNECT_TIMEOUT,
             client::connect(
                 self.config.clone(),
@@ -154,8 +168,18 @@ impl NodeConn {
             ),
         )
         .await
-        .map_err(|_| miette!("ssh {}: connect timed out", self.label()))?
-        .map_err(|e| miette!("ssh {}: connect failed: {e}", self.label()))?;
+        {
+            Err(_) => return Err(miette!("ssh {}: connect timed out", self.label())),
+            Ok(Err(e)) => {
+                let reason = mismatch
+                    .lock()
+                    .unwrap()
+                    .clone()
+                    .unwrap_or_else(|| format!("connect failed: {e}"));
+                return Err(miette!("ssh {}: {reason}", self.label()));
+            }
+            Ok(Ok(handle)) => handle,
+        };
 
         let user = &self.target.ssh.user;
         match &self.target.ssh.auth {
@@ -219,17 +243,24 @@ impl NodeConn {
             .with_min_delay(Duration::from_millis(500))
             .with_max_delay(Duration::from_secs(8))
             .with_max_times(CONNECT_RETRIES);
-        (|| async { self.connect_once().await })
-            .retry(backoff)
-            .await
-            .map(Arc::new)
-            .wrap_err_with(|| {
-                format!(
-                    "ssh {}: giving up after {} retries",
-                    self.label(),
-                    CONNECT_RETRIES
-                )
-            })
+        (|| async {
+            match self.connect_once().await {
+                Ok(h) => Ok(h),
+                Err(e) => Err(e),
+            }
+        })
+        .retry(backoff)
+        // Never retry a recorded host key mismatch: it cannot heal itself.
+        .when(|e| !format!("{e}").contains("does not match the recorded key"))
+        .await
+        .map(Arc::new)
+        .wrap_err_with(|| {
+            format!(
+                "ssh {}: giving up after {} retries",
+                self.label(),
+                CONNECT_RETRIES
+            )
+        })
     }
 
     /// Reuse the live connection, or open a new one. The write lock

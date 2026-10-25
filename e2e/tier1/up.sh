@@ -21,6 +21,9 @@ IP=$(multipass info "$NAME" --format yaml | awk '/^    ipv4:/{getline; print $2;
 [ -n "$IP" ] || { echo "[tier1] no ipv4 found" >&2; exit 1; }
 
 echo "[tier1] $NAME at $IP; enabling root key auth"
+# VM rebuilds keep recycled IPs: purge the stale host key so kurin's TOFU
+# store doesn't reject the new VM.
+ssh-keygen -R "$IP" -f ~/.cache/kurin/known_hosts >/dev/null 2>&1 || true
 multipass exec "$NAME" -- sudo mkdir -p /root/.ssh
 multipass exec "$NAME" -- sudo bash -c "echo '$PUB' > /root/.ssh/authorized_keys && chmod 700 /root/.ssh && chmod 600 /root/.ssh/authorized_keys"
 multipass exec "$NAME" -- sudo bash -c "grep -q '^PermitRootLogin' /etc/ssh/sshd_config && sed -i 's/^PermitRootLogin.*/PermitRootLogin prohibit-password/' /etc/ssh/sshd_config || echo 'PermitRootLogin prohibit-password' >> /etc/ssh/sshd_config; systemctl restart ssh"

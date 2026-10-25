@@ -27,6 +27,13 @@
 - **tier-0 全量 PASS（干净环境）**：3 systemd 容器，dry-run 确定性 + 阶段序列 + 首遍 18/18 settle（17 applied，1 因镜像自带状态 skip）+ 二遍 18/18 全 skip（幂等）。
 - e2e 暴露并修复的 4 个真缺陷：containerd tgz `--strip-components` 剥错目录 → unit 指向消失的二进制；marker 不含安装配方版本 → 配方修复无法生效（marker 现为 `sha@r<N>`）；sysctl check 用 `stdout.trim()` 比带尾换行的 expected → 永久漂移；任务 id 前缀与 stage 不一致（`prepare/artifacts@` → `artifacts/install@`）。
 
+## M1 步骤 4 — 多节点 ✅（2026-10-26）
+
+- **join 真正接线**：bootstrap 在 init 后收割 `kubeadm token create --print-join-command` + `upload-certs` key，写入本地 `~/.cache/kurin/clusters/<name>/join.env`（密钥不进模板、不持久化到节点）；join 任务读取后以 flags 形式（`--node-name`/`--apiserver-advertise-address`/CP 的 `--control-plane --certificate-key`）执行——kubeadm 禁止 `--config` 与 discovery flags 混用。
+- **host key 语义**：TOFU 记录失配时不再盲目重试 3 次，改为 fail-fast 并给出「VM 重建需删除 ~/.cache/kurin/known_hosts 对应条目」指引；harness 在自己管理的 IP 上主动清理旧条目。
+- **CNI 竞态**：Calico ≥3.26 的 CRD 由 operator 运行时创建，`kubectl wait` 会撞上 nil conditions；两个 readiness wait 改为带超时的容错轮询。
+- **tier-2 干净循环 PASS**（新 VM×2 → 安装 → 断言 → 幂等，exit 0，296s）：worker join 事件出现、双节点 Ready、worker podCIDR、全 pod Running、二遍 0 重跑。
+
 ## 下一步（M1 实施顺序）
 
 1. ✅ Planner + dry-run + Task 引擎骨架（tier-0 PASS）
@@ -36,6 +43,6 @@
    - 修复并验证：cni kubectl 显式 `--kubeconfig`；CRD 由 operator 自建需轮询（Calico ≥3.26 operator manifest 不含 CRD）；exec 超时 120s→900s（kubeadm init ~55s + 镜像拉取）；kernel-deps 任务（apt/dnf 兜底 conntrack/socat/ebtables/ipset/ipvsadm）；kubeadm 节点名取自配置（`nodeRegistration.name`，缺省会用 hostname）。
    - tier-1 断言：cluster-ready 事件零 task-failed、node01 Ready（轮询）、podCIDR 为集群 /18 的 /24 切片、全部 pod Running（含 calico-system）、第二遍全 skip 幂等。
    - **干净环境全流程证明**（新 VM→create cluster→断言→销毁，exit 0，225s）：`make tier1-down && make tier1 && make tier1-test`。
-4. 多节点；5. HA/kube-vip；6. add/delete nodes；7. 离线验收
+4. ✅ 多节点（tier-2 PASS）；5. ⏳ HA/kube-vip；6. add/delete nodes；7. 离线验收
 
 已知留白：join 任务需要控制面 bootstrap token 的跨节点协作（kubeadm token create → worker join flag 注入，M1 步骤 3 接线）；`delete cluster` 命令未实现。
