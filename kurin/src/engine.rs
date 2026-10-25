@@ -112,3 +112,18 @@ pub enum Event {
     StageDone { stage: &'static str },
     ClusterReady,
 }
+
+impl Event {
+    /// Stable kebab-case discriminant, matching the JSON `type` field.
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Event::TaskStart { .. } => "task-start",
+            Event::TaskSkipped { .. } => "task-skipped",
+            Event::TaskDone { .. } => "task-done",
+            Event::TaskFailed { .. } => "task-failed",
+            Event::TaskReconciled { .. } => "task-reconciled",
+            Event::StageDone { .. } => "stage-done",
+            Event::ClusterReady => "cluster-ready",
+        }
+    }
+}
