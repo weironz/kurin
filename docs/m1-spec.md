@@ -6,7 +6,7 @@ Rust 重写的 Kubernetes 集群安装器，对标 [kubekey](https://github.com/
 
 在满足以下环境的机器上，用一条命令装出生产可用集群，并支持增删节点与销毁：
 
-- Linux amd64 / arm64 控制机；目标节点 Ubuntu 22.04+ / Debian 12 / Rocky Linux 9，amd64 或 arm64
+- Linux amd64 / arm64 控制机；目标节点 Ubuntu 24.04+ / Debian 12 / Rocky Linux 9，amd64 或 arm64
 - containerd（唯一运行时，CRI-O 仅留枚举扩展位）、Calico（唯一 CNI，tigera-operator 安装）
 - K8s ≥ v1.30，版本表内嵌于编译期
 - 单控制面 与 HA 控制面（kube-vip，非外部 LB）
