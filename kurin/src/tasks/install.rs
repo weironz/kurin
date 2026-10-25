@@ -14,7 +14,7 @@ use tokio::sync::Mutex;
 use kurin_config::Node;
 use miette::Result;
 
-use crate::artifact::{Arch, ArtifactKind, ArtifactManifest, ArtifactStore};
+use crate::artifact::{Arch, ArtifactKind, ArtifactManifest, ArtifactSpec, ArtifactStore};
 use crate::engine::{Drift, Outcome, Session, Stage, Task};
 
 /// name -> (install method, remote target path)
@@ -47,13 +47,30 @@ fn install_for(name: &str) -> Option<Install> {
 pub struct ArtifactsInstall {
     node: Node,
     arch: Arch,
-    // Payload list is resolved from the embedded manifest in apply; the
-    // marker keeps check cheap and offline-safe.
+    /// Offline bundle directory; None fetches into the local cache.
+    offline: Option<std::path::PathBuf>,
 }
 
 impl ArtifactsInstall {
-    pub fn new(node: &Node, arch: Arch) -> Self {
-        Self { node: node.clone(), arch }
+    pub fn new(node: &Node, arch: Arch, offline: Option<std::path::PathBuf>) -> Self {
+        Self { node: node.clone(), arch, offline }
+    }
+
+    /// Resolve the local payload for one artifact, online or offline.
+    async fn payload(&self, spec: &ArtifactSpec) -> miette::Result<PathBuf> {
+        match &self.offline {
+            Some(dir) => {
+                let dm = ArtifactManifest::from_dir(dir)?;
+                let found = dm
+                    .find(&spec.name, self.arch)
+                    .ok_or_else(|| miette::miette!("offline bundle lacks {} ({})", spec.name, self.arch))?;
+                Ok(found.file.clone())
+            }
+            None => {
+                let store = ArtifactStore::open_default()?;
+                Ok(store.fetch(spec).await?)
+            }
+        }
     }
 
     async fn marker(&self, session: &dyn Session) -> Result<BTreeMap<String, String>> {
@@ -110,8 +127,13 @@ impl Task for ArtifactsInstall {
         // Parallel node tasks share the local cache: serialize downloads so
         // concurrent fetches of the same artifact never race on .part files.
         static FETCH_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
-        let _guard = FETCH_LOCK.lock().await;
-        let store = ArtifactStore::open_default()?;
+        // Offline installs never touch the network: the fetch lock only
+        // matters for online downloads.
+        let _guard = if self.offline.is_none() {
+            Some(FETCH_LOCK.lock().await)
+        } else {
+            None
+        };
         let manifest = ArtifactManifest::embedded()?;
 
         session.exec("mkdir -p /usr/local/bin /opt/cni/bin /etc/kurin").await?;
@@ -119,7 +141,7 @@ impl Task for ArtifactsInstall {
         for entry in manifest.artifacts() {
             let Some(install) = install_for(&entry.name) else { continue };
             let spec = manifest.spec(&entry.name, self.arch)?;
-            let local: PathBuf = store.fetch(&spec).await?;
+            let local: PathBuf = self.payload(&spec).await?;
             let bytes = std::fs::read(&local)
                 .map_err(|e| miette::miette!("read cached artifact {}: {e}", spec.name))?;
 

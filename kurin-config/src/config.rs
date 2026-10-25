@@ -31,6 +31,17 @@ pub struct ClusterConfig {
     /// Nodes keyed by node name. Names are globally unique by construction.
     #[serde(default)]
     pub nodes: BTreeMap<String, NodeConfig>,
+    #[serde(default)]
+    pub artifacts: ArtifactsConfig,
+}
+
+/// Where node payloads come from: online (download) or a prepared
+/// offline bundle directory.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case")]
+pub struct ArtifactsConfig {
+    /// Prebuilt offline artifact directory (see `kurin artifact build`).
+    pub offline_dir: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]

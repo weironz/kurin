@@ -12,8 +12,8 @@ pub mod model;
 use std::path::Path;
 
 pub use config::{
-    ClusterConfig, CniConfig, HaConfig, KubernetesConfig, NetworkConfig, NodeConfig, NodeRole,
-    SshAuth, SshDefaults, CONFIG_VERSION,
+    ArtifactsConfig, ClusterConfig, CniConfig, HaConfig, KubernetesConfig, NetworkConfig, NodeConfig,
+    NodeRole, SshAuth, SshDefaults, CONFIG_VERSION,
 };
 pub use error::{ConfigError, Result};
 pub use model::{Cluster, Node, ResolvedSsh};

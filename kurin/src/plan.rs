@@ -28,6 +28,7 @@ impl Plan {
             Stage::Preflight,
             Stage::Artifacts,
             Stage::Prepare,
+            Stage::Images,
             Stage::Vip,
             Stage::Bootstrap,
             Stage::ApiReady,
@@ -55,7 +56,7 @@ impl Plan {
         };
         for node in &cluster.nodes {
             push(0, Arc::new(tasks::preflight::Preflight::new(node)));
-            push(1, Arc::new(tasks::install::ArtifactsInstall::new(node, arch)));
+            push(1, Arc::new(tasks::install::ArtifactsInstall::new(node, arch, cluster.offline_dir.clone())));
             push(2, Arc::new(tasks::prepare::Sysctl::new(node)));
             push(2, Arc::new(tasks::kernel_deps::KernelDeps::new(node)));
             push(
@@ -72,11 +73,24 @@ impl Plan {
                 )),
             );
         }
+        // Images: seed containerd from the bundle (offline only; the task
+        // reports InSync when online since kubelet pulls from registries).
+        for node in &cluster.nodes {
+            push(
+                3,
+                Arc::new(tasks::images::ImagesImport::new(
+                    node,
+                    arch,
+                    cluster.offline_dir.clone(),
+                )),
+            );
+        }
+
         // Vip: kube-vip static pod on every control-plane node (VIP only).
         // Must be written before init binds the VIP as controlPlaneEndpoint.
         for node in cluster.control_plane() {
             if let Some(kubevip) = tasks::bootstrap::KubeVip::new(cluster, node) {
-                push(3, Arc::new(kubevip));
+                push(4, Arc::new(kubevip));
             }
         }
         if let Some(first) = cluster.control_plane().next() {
@@ -98,8 +112,8 @@ impl Plan {
             push(6, Arc::new(tasks::join::KubeadmJoin::new(cluster, node)));
         }
         // CNI + post.
-        push(7, Arc::new(tasks::cni::CalicoOperator::new(cluster)));
-        push(8, Arc::new(tasks::post::KubeconfigPull::new(cluster)));
+        push(8, Arc::new(tasks::cni::CalicoOperator::new(cluster)));
+        push(9, Arc::new(tasks::post::KubeconfigPull::new(cluster)));
 
         Plan { graph, stages: idx }
     }

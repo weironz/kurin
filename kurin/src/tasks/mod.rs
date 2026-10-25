@@ -1,4 +1,5 @@
 pub mod bootstrap;
+pub mod images;
 pub mod install;
 pub mod kernel_deps;
 pub mod cni;

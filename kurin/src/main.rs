@@ -15,6 +15,15 @@ struct Cli {
 enum Commands {
     /// Create resources.
     Create(CreateArgs),
+    /// Build an offline artifact bundle for air-gapped installs.
+    Artifact {
+        /// Output directory (created if missing).
+        #[arg(short, long)]
+        out: PathBuf,
+        /// Architecture to build for (default: this machine's).
+        #[arg(long)]
+        arch: Option<String>,
+    },
     /// Add nodes from an updated config to an existing cluster.
     Add(AddArgs),
     /// Delete a node or the whole cluster.
@@ -37,6 +46,9 @@ enum AddWhat {
         /// Emit machine-readable JSON events.
         #[arg(long)]
         json: bool,
+        /// Offline artifact bundle directory.
+        #[arg(long)]
+        offline: Option<PathBuf>,
     },
 }
 
@@ -87,6 +99,9 @@ enum CreateWhat {
         /// Resume from the run-state file (skips already-done tasks).
         #[arg(long)]
         resume: bool,
+        /// Offline artifact bundle directory (overrides [artifacts].offline-dir).
+        #[arg(long)]
+        offline: Option<PathBuf>,
     },
     /// Print an annotated example config.
     Config {
@@ -112,8 +127,9 @@ async fn main() -> ExitCode {
 
 async fn run(cli: Cli) -> Result<()> {
     match cli.command {
+        Commands::Artifact { out, arch } => build_artifacts(out, arch).await,
         Commands::Add(args) => match args.what {
-            AddWhat::Nodes { file, json } => add_nodes(file, json).await,
+            AddWhat::Nodes { file, json, offline } => add_nodes(file, json, offline).await,
         },
         Commands::Delete(args) => match args.what {
             DeleteWhat::Node { name, file } => delete_node_cmd(name, file).await,
@@ -130,8 +146,11 @@ async fn run(cli: Cli) -> Result<()> {
                 print!("{}", EXAMPLE_CONFIG);
                 Ok(())
             }
-            CreateWhat::Cluster { file, dry_run, check, json, resume } => {
-                let cluster = kurin_config::load(&file)?;
+            CreateWhat::Cluster { file, dry_run, check, json, resume, offline } => {
+                let mut cluster = kurin_config::load(&file)?;
+                if let Some(dir) = offline {
+                    cluster.offline_dir = Some(dir);
+                }
                 let cp = cluster.control_plane().count();
                 if cp % 2 == 0 && cp > 1 && !json {
                     eprintln!("warn: even control-plane count ({cp}); etcd quorum prefers odd");
@@ -185,8 +204,50 @@ async fn run(cli: Cli) -> Result<()> {
 }
 
 
-async fn add_nodes(file: PathBuf, json: bool) -> Result<()> {
-    let cluster = kurin_config::load(&file)?;
+async fn build_artifacts(out: PathBuf, arch: Option<String>) -> Result<()> {
+    let arch = match arch.as_deref() {
+        Some("amd64" | "x86_64") => kurin::artifact::Arch::Amd64,
+        Some("arm64" | "aarch64") => kurin::artifact::Arch::Arm64,
+        Some(other) => return Err(miette::miette!("unknown arch {other:?} (amd64|arm64)")),
+        None => match std::env::consts::ARCH {
+            "x86_64" => kurin::artifact::Arch::Amd64,
+            "aarch64" => kurin::artifact::Arch::Arm64,
+            other => return Err(miette::miette!("unsupported host arch {other}")),
+        },
+    };
+    let manifest = kurin::artifact::ArtifactManifest::embedded()?;
+    let store = kurin::artifact::ArtifactStore::open_default()?;
+    std::fs::create_dir_all(&out).into_diagnostic()?;
+    for entry in manifest.artifacts() {
+        let spec = manifest.spec(&entry.name, arch)?;
+        let dir = store.artifact_dir(&spec);
+        std::fs::create_dir_all(&dir).into_diagnostic()?;
+        let dest = store.fetch(&spec).await?;
+        // Copy the artifact directory into the bundle layout.
+        let target = out.join(format!("{}-{}-{}", spec.name, spec.version, arch.as_str()));
+        std::fs::create_dir_all(&target).into_diagnostic()?;
+        for f in std::fs::read_dir(&dir).into_diagnostic()? {
+            let f = f.into_diagnostic()?;
+            let name = f.file_name();
+            if name.to_string_lossy().ends_with(".part") {
+                continue;
+            }
+            std::fs::copy(f.path(), target.join(&name)).into_diagnostic()?;
+        }
+        eprintln!("bundled {} {} ({})", spec.name, spec.version, arch.as_str());
+        let _ = &dest;
+    }
+    // Sidecar checksums are included by the copy above; the dir name layout
+    // is exactly what ArtifactManifest::from_dir expects.
+    eprintln!("offline bundle written to {}", out.display());
+    Ok(())
+}
+
+async fn add_nodes(file: PathBuf, json: bool, offline: Option<PathBuf>) -> Result<()> {
+    let mut cluster = kurin_config::load(&file)?;
+    if let Some(dir) = offline {
+        cluster.offline_dir = Some(dir);
+    }
     let pool: std::sync::Arc<dyn kurin::SessionPool> =
         std::sync::Arc::new(kurin::ssh::SshSessionPool::from_cluster(&cluster)?);
 

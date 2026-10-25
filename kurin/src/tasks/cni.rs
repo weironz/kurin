@@ -21,11 +21,14 @@ const KUBECTL: &str = "kubectl --kubeconfig /etc/kubernetes/admin.conf";
 pub struct CalicoOperator {
     node_name: String,
     pod_cidr: String,
+    /// Offline bundle: read the pinned manifest from there, no downloads.
+    offline: Option<std::path::PathBuf>,
 }
 
 impl CalicoOperator {
     pub fn new(cluster: &Cluster) -> Self {
         Self {
+            offline: cluster.offline_dir.clone(),
             // Applied through the first control-plane session.
             node_name: cluster
                 .control_plane()
@@ -44,10 +47,9 @@ impl CalicoOperator {
         .expect("embedded calico Installation template renders")
     }
 
-    /// Operator manifest comes from the artifact store so online and
-    /// offline installs share one verified source.
-    async fn operator_manifest() -> miette::Result<Vec<u8>> {
-        let store = ArtifactStore::open_default()?;
+    /// Operator manifest comes from the artifact store (online) or the
+    /// offline bundle, so both share one verified source.
+    async fn operator_manifest(&self) -> miette::Result<Vec<u8>> {
         let manifest = ArtifactManifest::embedded()?;
         let arch = match std::env::consts::ARCH {
             "x86_64" => Arch::Amd64,
@@ -55,9 +57,15 @@ impl CalicoOperator {
             other => return Err(miette::miette!("unsupported arch: {other}")),
         };
         let spec = manifest.spec("calico-operator", arch)?;
-        // Manifest artifacts are not node-installed; presence in the cache is
-        // enough, and the CNI stage runs after staged downloads elsewhere.
-        let path = store.fetch(&spec).await?;
+        let path = match &self.offline {
+            Some(dir) => {
+                let dm = ArtifactManifest::from_dir(dir)?;
+                dm.find("calico-operator", arch)
+                    .map(|a| a.file.clone())
+                    .ok_or_else(|| miette::miette!("offline bundle lacks calico-operator manifest"))?
+            }
+            None => ArtifactStore::open_default()?.fetch(&spec).await?,
+        };
         Ok(std::fs::read(path).map_err(|e| miette::miette!("read operator manifest: {e}"))?)
     }
 }
@@ -93,7 +101,7 @@ impl Task for CalicoOperator {
             .write_file(INSTALLATION_STAGING_PATH, self.installation_cr().as_bytes())
             .await?;
         session
-            .write_file(OPERATOR_STAGING_PATH, &Self::operator_manifest().await?)
+            .write_file(OPERATOR_STAGING_PATH, &self.operator_manifest().await?)
             .await?;
         // The operator creates its own CRDs at startup (Calico >=3.26), so a
         // bare `wait` right after apply races both the CRD creation and the
@@ -149,6 +157,7 @@ mod tests {
         };
         Cluster {
             name: "test".into(),
+            offline_dir: None,
             kubernetes_version: "1.33.1".parse().unwrap(),
             pod_cidr: pod_cidr.parse().unwrap(),
             service_cidr: "10.233.0.0/18".parse().unwrap(),

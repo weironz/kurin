@@ -99,6 +99,160 @@
         "linux-amd64": "47d48a4a4283f320ea4340724d1afae419fb23e734f5b641bec646c25c7b19b6",
         "linux-arm64": "47d48a4a4283f320ea4340724d1afae419fb23e734f5b641bec646c25c7b19b6"
       }
+    },
+    {
+      "name": "kube-apiserver",
+      "kind": "image",
+      "version": "1.33.1",
+      "file": "index.json",
+      "url_template": "registry.k8s.io/kube-apiserver:v{version}",
+      "sha256": {
+        "linux-amd64": "d8ae2fb01c39aa1c7add84f3d54425cf081c24c11e3946830292a8cfa4293548",
+        "linux-arm64": "d8ae2fb01c39aa1c7add84f3d54425cf081c24c11e3946830292a8cfa4293548"
+      }
+    },
+    {
+      "name": "kube-controller-manager",
+      "kind": "image",
+      "version": "1.33.1",
+      "file": "index.json",
+      "url_template": "registry.k8s.io/kube-controller-manager:v{version}",
+      "sha256": {
+        "linux-amd64": "7c9bea694e3a3c01ed6a5ee02d55a6124cc08e0b2eec6caa33f2c396b8cbc3f8",
+        "linux-arm64": "7c9bea694e3a3c01ed6a5ee02d55a6124cc08e0b2eec6caa33f2c396b8cbc3f8"
+      }
+    },
+    {
+      "name": "kube-scheduler",
+      "kind": "image",
+      "version": "1.33.1",
+      "file": "index.json",
+      "url_template": "registry.k8s.io/kube-scheduler:v{version}",
+      "sha256": {
+        "linux-amd64": "395b7de7cdbdcc3c3a3db270844a3f71d757e2447a1e4db76b4cce46fba7fd55",
+        "linux-arm64": "395b7de7cdbdcc3c3a3db270844a3f71d757e2447a1e4db76b4cce46fba7fd55"
+      }
+    },
+    {
+      "name": "kube-proxy",
+      "kind": "image",
+      "version": "1.33.1",
+      "file": "index.json",
+      "url_template": "registry.k8s.io/kube-proxy:v{version}",
+      "sha256": {
+        "linux-amd64": "7ddf379897139ae8ade8b33cb9373b70c632a4d5491da6e234f5d830e0a50807",
+        "linux-arm64": "7ddf379897139ae8ade8b33cb9373b70c632a4d5491da6e234f5d830e0a50807"
+      }
+    },
+    {
+      "name": "coredns",
+      "kind": "image",
+      "version": "1.12.0",
+      "file": "index.json",
+      "url_template": "registry.k8s.io/coredns/coredns:v{version}",
+      "sha256": {
+        "linux-amd64": "40384aa1f5ea6bfdc77997d243aec73da05f27aed0c5e9d65bfa98933c519d97",
+        "linux-arm64": "40384aa1f5ea6bfdc77997d243aec73da05f27aed0c5e9d65bfa98933c519d97"
+      }
+    },
+    {
+      "name": "etcd",
+      "kind": "image",
+      "version": "3.5.21-0",
+      "file": "index.json",
+      "url_template": "registry.k8s.io/etcd:{version}",
+      "sha256": {
+        "linux-amd64": "d58c035df557080a27387d687092e3fc2b64c6d0e3162dc51453a115f847d121",
+        "linux-arm64": "d58c035df557080a27387d687092e3fc2b64c6d0e3162dc51453a115f847d121"
+      }
+    },
+    {
+      "name": "calico-node",
+      "kind": "image",
+      "version": "3.30.2",
+      "file": "index.json",
+      "url_template": "quay.io/calico/node:v{version}",
+      "sha256": {
+        "linux-amd64": "9858cdf8fd0ad2f262c41c1945b8e05797c022c907d5472725ca2067d7d08543",
+        "linux-arm64": "9858cdf8fd0ad2f262c41c1945b8e05797c022c907d5472725ca2067d7d08543"
+      }
+    },
+    {
+      "name": "calico-cni",
+      "kind": "image",
+      "version": "3.30.2",
+      "file": "index.json",
+      "url_template": "quay.io/calico/cni:v{version}",
+      "sha256": {
+        "linux-amd64": "343c5df3ee57acaf3ee47dfb4b13ff4a8fbb68fd3c60c592d89d4961a3a1a7ac",
+        "linux-arm64": "343c5df3ee57acaf3ee47dfb4b13ff4a8fbb68fd3c60c592d89d4961a3a1a7ac"
+      }
+    },
+    {
+      "name": "calico-pod2daemon-flexvol",
+      "kind": "image",
+      "version": "3.30.2",
+      "file": "index.json",
+      "url_template": "quay.io/calico/pod2daemon-flexvol:v{version}",
+      "sha256": {
+        "linux-amd64": "45b3857c59188a59ec8b4706a2c6b00453a69b7d6c3660656672f16292ec75a6",
+        "linux-arm64": "45b3857c59188a59ec8b4706a2c6b00453a69b7d6c3660656672f16292ec75a6"
+      }
+    },
+    {
+      "name": "calico-kube-controllers",
+      "kind": "image",
+      "version": "3.30.2",
+      "file": "index.json",
+      "url_template": "quay.io/calico/kube-controllers:v{version}",
+      "sha256": {
+        "linux-amd64": "907e5da55888fee0fed863cce1aac8ea3a02c013a62ecabd752c2dbcd325d97b",
+        "linux-arm64": "907e5da55888fee0fed863cce1aac8ea3a02c013a62ecabd752c2dbcd325d97b"
+      }
+    },
+    {
+      "name": "calico-typha",
+      "kind": "image",
+      "version": "3.30.2",
+      "file": "index.json",
+      "url_template": "quay.io/calico/typha:v{version}",
+      "sha256": {
+        "linux-amd64": "f423cb7326686944a1e3d165f9670ad337d913d9acb631252be8a8a091eaa1a6",
+        "linux-arm64": "f423cb7326686944a1e3d165f9670ad337d913d9acb631252be8a8a091eaa1a6"
+      }
+    },
+    {
+      "name": "calico-csi",
+      "kind": "image",
+      "version": "3.30.2",
+      "file": "index.json",
+      "url_template": "quay.io/calico/csi:v{version}",
+      "sha256": {
+        "linux-amd64": "49bc8d3f56d9dd8e7de525ed10f43e2c59150805e5f2b8545b9297bf399123d2",
+        "linux-arm64": "49bc8d3f56d9dd8e7de525ed10f43e2c59150805e5f2b8545b9297bf399123d2"
+      }
+    },
+    {
+      "name": "calico-node-driver-registrar",
+      "kind": "image",
+      "version": "3.30.2",
+      "file": "index.json",
+      "url_template": "quay.io/calico/node-driver-registrar:v{version}",
+      "sha256": {
+        "linux-amd64": "361a2c7739a8469406ac324024d21128fb23b85a75b9682b597d54a426c2cf29",
+        "linux-arm64": "361a2c7739a8469406ac324024d21128fb23b85a75b9682b597d54a426c2cf29"
+      }
+    },
+    {
+      "name": "tigera-operator",
+      "kind": "image",
+      "version": "1.38.3",
+      "file": "index.json",
+      "url_template": "quay.io/tigera/operator:v{version}",
+      "sha256": {
+        "linux-amd64": "dbf1bad0def7b5955dc8e4aeee96e23ead0bc5822f6872518e685cd0ed484121",
+        "linux-arm64": "dbf1bad0def7b5955dc8e4aeee96e23ead0bc5822f6872518e685cd0ed484121"
+      }
     }
   ]
 }

@@ -34,6 +34,8 @@ pub struct ResolvedSsh {
 #[derive(Debug, Clone)]
 pub struct Cluster {
     pub name: String,
+    /// Offline artifact bundle directory (None = online install).
+    pub offline_dir: Option<std::path::PathBuf>,
     pub kubernetes_version: Version,
     pub pod_cidr: Ipv4Net,
     pub service_cidr: Ipv4Net,
@@ -96,8 +98,10 @@ impl Cluster {
             });
         }
         nodes.sort_by(|a, b| a.name.cmp(&b.name));
+        let offline_dir = cfg.artifacts.offline_dir.map(|p| p.to_path_buf());
         Ok(Cluster {
             name: cfg.name,
+            offline_dir,
             kubernetes_version,
             pod_cidr,
             service_cidr,
@@ -112,6 +116,14 @@ impl Cluster {
     pub fn validate(&self) -> Result<()> {
         let invalid = |hint: String| ConfigError::invalid(self.source.clone(), hint);
 
+        if let Some(d) = &self.offline_dir {
+            if !d.is_dir() {
+                return Err(invalid(format!(
+                    "artifacts.offline-dir {:?} does not exist or is not a directory (build one with `kurin artifact build --help`)",
+                    d
+                )));
+            }
+        }
         if self.nodes.is_empty() {
             return Err(invalid("at least one node is required in [nodes]".into()));
         }

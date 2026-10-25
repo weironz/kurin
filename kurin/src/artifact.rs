@@ -244,7 +244,7 @@ impl ArtifactManifest {
             if !dir.is_dir() {
                 continue;
             }
-            let Some((name, version, arch)) = parse_artifact_dir_name(&dir) else {
+            let Some((name, version, arch)) = parse_artifact_dir_name(&dir, &manifest) else {
                 continue; // unrelated directory — ignored
             };
             let pinned = manifest.get(&name).filter(|e| e.version == version);
@@ -809,15 +809,26 @@ fn ensure_sidecar(file: &Path, digest: &str) -> Result<(), ArtifactError> {
 
 /// `<name>-<version>-<arch>` directory name → parts (name parsed from
 /// the right so names may contain `-`).
-fn parse_artifact_dir_name(dir: &Path) -> Option<(String, String, Arch)> {
+fn parse_artifact_dir_name(dir: &Path, manifest: &ArtifactManifest) -> Option<(String, String, Arch)> {
     let leaf = dir.file_name()?.to_str()?;
-    let (rest, arch) = leaf.rsplit_once('-')?;
-    let arch = Arch::parse(arch)?;
-    let (name, version) = rest.rsplit_once('-')?;
-    if name.is_empty() || version.is_empty() {
-        return None;
+    // Manifest-driven matching handles names and versions that contain
+    // dashes (calico-node-driver-registrar, etcd 3.5.21-0).
+    for arch in [Arch::Amd64, Arch::Arm64] {
+        if let Some(rest) = leaf.strip_suffix(&format!("-{}", arch.as_str())) {
+            for entry in manifest.artifacts() {
+                if rest == format!("{}-{}", entry.name, entry.version) {
+                    return Some((entry.name.clone(), entry.version.clone(), arch));
+                }
+            }
+            // Unknown artifact (not in the embedded manifest): fall back to
+            // splitting on the last two dashes.
+            let (name, version) = rest.rsplit_once('-')?;
+            if !name.is_empty() && !version.is_empty() {
+                return Some((name.to_string(), version.to_string(), arch));
+            }
+        }
     }
-    Some((name.to_string(), version.to_string(), arch))
+    None
 }
 
 fn is_sidecar(path: &Path) -> bool {
@@ -1385,6 +1396,8 @@ mod tests {
                 "/tmp/kurin-cache-test/containerd-2.1.4-arm64/containerd-2.1.4-linux-arm64.tar.gz"
             )
         );
-        assert_eq!(manifest.specs(Arch::Amd64).unwrap().len(), 9);
+        assert!(manifest.specs(Arch::Amd64).unwrap().len() >= 9);
+        assert!(manifest.get("pause").is_some());
+        assert!(manifest.get("kubeadm").is_some());
     }
 }

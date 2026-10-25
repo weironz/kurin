@@ -32,6 +32,8 @@ pub enum Stage {
     /// Binary-first distribution: fetch + install pinned binaries.
     Artifacts,
     Prepare,
+    /// Seed container images (offline installs only; online pulls them).
+    Images,
     /// kube-vip static pod manifests on every control-plane node
     /// (must precede init: kubeadm binds the VIP as controlPlaneEndpoint).
     Vip,
@@ -49,6 +51,7 @@ impl Stage {
             Stage::Preflight => "preflight",
             Stage::Artifacts => "artifacts",
             Stage::Prepare => "prepare",
+            Stage::Images => "images",
             Stage::Vip => "vip",
             Stage::Bootstrap => "bootstrap",
             Stage::ApiReady => "api-ready",

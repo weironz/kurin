@@ -8,6 +8,9 @@ metadata:
   labels:
     app.kubernetes.io/managed-by: kurin
 spec:
+  # quay.io carries the same digests as Docker Hub but allows anonymous
+  # pulls, which the artifact shard downloader relies on.
+  registry: quay.io
   cni:
     type: Calico
   calicoNetwork:

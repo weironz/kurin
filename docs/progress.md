@@ -64,6 +64,25 @@ tier-3 干净循环 PASS（新 3 VM → 安装 → 断言 → 幂等，exit 0，
    - 修复并验证：cni kubectl 显式 `--kubeconfig`；CRD 由 operator 自建需轮询（Calico ≥3.26 operator manifest 不含 CRD）；exec 超时 120s→900s（kubeadm init ~55s + 镜像拉取）；kernel-deps 任务（apt/dnf 兜底 conntrack/socat/ebtables/ipset/ipvsadm）；kubeadm 节点名取自配置（`nodeRegistration.name`，缺省会用 hostname）。
    - tier-1 断言：cluster-ready 事件零 task-failed、node01 Ready（轮询）、podCIDR 为集群 /18 的 /24 切片、全部 pod Running（含 calico-system）、第二遍全 skip 幂等。
    - **干净环境全流程证明**（新 VM→create cluster→断言→销毁，exit 0，225s）：`make tier1-down && make tier1 && make tier1-test`。
-4. ✅ 多节点（tier-2 PASS）；5. ✅ HA/kube-vip（tier-3 PASS）；6. ✅ add/delete nodes；7. ⏳ 离线验收
+4. ✅ 多节点（tier-2 PASS）；5. ✅ HA/kube-vip（tier-3 PASS）；6. ✅ add/delete nodes；7. ✅ 离线验收（tier-1-offline PASS）
+
+## M1 步骤 7 — 离线部署 ✅（2026-10-26）
+
+- **制品清单扩容到 23 项**：二进制 7 + calico-operator manifest + 镜像 15（kube-apiserver/controller-manager/scheduler/proxy、etcd、coredns、pause、calico 全家桶、tigera operator）。镜像以 OCI index digest 锁定，下载走 registry v2 API（quay.io 匿名可拉，Docker Hub 需 token 故统一 quay；Installation CR 设 `registry: quay.io` 使引用一致）。
+- **`kurin artifact --out <dir>`**：经 sha256 校验抓取全部制品为离线 bundle（目录布局与在线缓存一致）。
+- **`create cluster --offline <dir>` / `[artifacts] offline-dir`**：安装全程零下载——制品读 bundle、镜像以 docker-archive（内存 ustar 构造）经 `ctr -n k8s.io images import` 播入。
+- 修复：bundle 目录名解析改为清单驱动（`etcd 3.5.21-0` 带连字符的版本曾致 naive split 错位）。
+- **tier-1-offline PASS**：VM 出站到全部制品源 IP 被 iptables REJECT 的前提下，单命令装出 Ready 集群、全部 pod 健康、二遍全 skip（镜像导入幂等按参考集合核对）。
+
+## M1 交付总结（全部 7 步完成）
+
+| 验收 | 结果 |
+|---|---|
+| tier-0（systemd 容器，幂等双遍） | PASS |
+| tier-1（单节点 all-in-one，干净循环 225s） | PASS |
+| tier-2（1CP+1worker，join+幂等，296s） | PASS |
+| tier-3（3CP+kube-vip HA，干净循环） | PASS |
+| tier-1-offline（断网安装+幂等） | PASS |
+| 单元测试 | 71 全绿 |
 
 已知留白：join 任务需要控制面 bootstrap token 的跨节点协作（kubeadm token create → worker join flag 注入，M1 步骤 3 接线）；`delete cluster` 命令未实现。
