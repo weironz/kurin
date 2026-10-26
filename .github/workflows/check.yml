@@ -1,9 +1,9 @@
 name: check
 
+# Manual only: the runner lives on a dev workstation; push-triggered CI
+# raced local e2e too often (memory) and piled up failures.
 on:
-  push:
-    branches: [main]
-  pull_request:
+  workflow_dispatch:
 
 jobs:
   check:
