@@ -125,11 +125,26 @@ async fn table_marks_aged_cluster_certs() {
         table.contains("3 node(s): 2 control-plane, 1 worker"),
         "{table}"
     );
-    // Healthy control plane: bare count, no mark.
-    assert!(table.contains("master01"), "{table}");
-    assert!(table.contains("360d"), "{table}");
+    let cols = |name: &str| -> Vec<&str> {
+        table
+            .lines()
+            .find(|l| l.starts_with(name))
+            .unwrap_or_else(|| panic!("no row for {name}: {table}"))
+            .split_whitespace()
+            .collect()
+    };
+    // Healthy control plane: no mark.
+    assert_eq!(
+        cols("master01"),
+        ["master01", "control-plane", "v1.33.1", "v1.33.1", "360d"],
+        "{table}"
+    );
     // master02 is below the 30-day threshold.
-    assert!(table.contains("29d WARN"), "{table}");
+    assert_eq!(
+        cols("master02"),
+        ["master02", "control-plane", "v1.33.1", "v1.33.1", "29d", "WARN"],
+        "{table}"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
