@@ -1,0 +1,59 @@
+# kube-vip static pod for k3s control planes: same manager shape as the
+# kubeadm track's kubevip/kube-vip.yaml.j2, but landed in k3s's own pod
+# manifest dir (/var/lib/rancher/k3s/agent/pod-manifests/ — there is no
+# kubelet /etc/kubernetes/manifests dir here) and mounting the k3s
+# kubeconfig instead of the kubeadm one. k3s picks static pods up from
+# dir automatically. Tolerations let it run before the CNI (pod network
+# {{ pod_cidr }}) is up.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: kube-vip
+  namespace: kube-system
+  labels:
+    component: kube-vip
+    tier: control-plane
+  annotations:
+    kurin.io/pod-cidr: "{{ pod_cidr }}"
+spec:
+  hostNetwork: true
+  priorityClassName: system-node-critical
+  containers:
+  - name: kube-vip
+    image: ghcr.io/kube-vip/kube-vip:{{ image }}
+    imagePullPolicy: IfNotPresent
+    args:
+    - manager
+    env:
+    - { name: vip_interface, value: "{{ vip_interface }}" }
+    - { name: vip_leasename, value: "plndr-cp-lock" }
+    - { name: vip_leaderelection, value: "true" }
+    - { name: vip_leaseduration, value: "15" }
+    - { name: vip_renewdeadline, value: "10" }
+    - { name: vip_retryperiod, value: "2" }
+    # kube-vip v0.8 parses `address + vip_subnet` as one CIDR string, so the
+    # slash lives in vip_subnet and address stays a bare IP.
+    - { name: address, value: "{{ vip }}" }
+    - { name: vip_subnet, value: "/32" }
+    - { name: vip_arp, value: "true" }
+    - { name: vip_retryforever, value: "true" }
+    - { name: cp_enable, value: "true" }
+    - { name: cp_insecure, value: "false" }
+    - { name: cp_detect, value: "true" }
+    - { name: svc_enable, value: "false" }
+    - { name: prometheus_server, value: ":2112" }
+    securityContext:
+      capabilities:
+        add: [NET_ADMIN, NET_RAW]
+        drop: [ALL]
+    volumeMounts:
+    - name: kubeconfig
+      mountPath: /etc/rancher/k3s/k3s.yaml
+      readOnly: true
+  tolerations:
+  - { operator: Exists, effect: NoSchedule }
+  - { operator: Exists, effect: NoExecute }
+  volumes:
+  - name: kubeconfig
+    hostPath:
+      path: /etc/rancher/k3s/k3s.yaml

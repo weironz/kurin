@@ -1,0 +1,19 @@
+# k3s server config, rendered by kurin for the first control-plane node.
+# k3s.service always loads this file (`k3s server --config ...`); every
+# flag lives here so the unit stays role-only. The k3s single binary
+# ships its own containerd, flannel and metrics plumbing.
+{% if cluster_init -%}
+cluster-init: true
+{% endif -%}
+{% if flannel_disabled -%}
+flannel-backend: none
+disable-network-policy: true
+{% endif -%}
+disable:
+  - traefik
+  - servicelb
+write-kubeconfig-mode: "0644"
+tls-san:
+{% for san in tls_sans -%}
+  - {{ san }}
+{% endfor %}

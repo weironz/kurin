@@ -1,0 +1,29 @@
+# k3s systemd unit, rendered by kurin. The k3s binary itself is distributed
+# by the kurin artifact model (never via apt/yum); this unit only points at
+# it. All flags live in /etc/rancher/k3s/config.yaml so the unit stays a
+# stable, role-only template. The unit is enabled by the Prepare stage but
+# never started there: Bootstrap (first server) / Join (everything else)
+# own activation once the node's config.yaml exists.
+[Unit]
+Description=k3s (Lightweight Kubernetes)
+Documentation=https://k3s.io
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=notify
+Environment="PATH=/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin"
+ExecStartPre=-/sbin/modprobe overlay
+ExecStartPre=-/sbin/modprobe nf_conntrack
+ExecStart=/usr/local/bin/k3s {{ role }} --config /etc/rancher/k3s/config.yaml
+KillMode=process
+Delegate=yes
+Restart=always
+RestartSec=5s
+LimitNOFILE=infinity
+LimitCORE=infinity
+TasksMax=infinity
+TimeoutStartSec=0
+
+[Install]
+WantedBy=multi-user.target

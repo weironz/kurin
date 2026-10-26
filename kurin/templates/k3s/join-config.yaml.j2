@@ -1,0 +1,6 @@
+# k3s join config, rendered by kurin at apply time for servers and agents
+# joining an initialized cluster. The node token is live data read from the
+# first server: it is never stored in a plan artifact or on disk locally
+# beyond kurin's private cache.
+server: {{ server }}
+token: {{ token }}
