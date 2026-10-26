@@ -354,6 +354,7 @@ kind: Config
             zone: None,
             distribution: kurin_config::Distribution::K8s,
             ha_mode: kurin_config::HaMode::KubeVip,
+            runtime: kurin_config::RuntimeKind::Containerd,
             source: String::new(),
         }
     }

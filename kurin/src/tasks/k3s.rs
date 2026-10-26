@@ -786,6 +786,7 @@ mod tests {
             zone: None,
             distribution: kurin_config::Distribution::K3s,
             ha_mode: kurin_config::HaMode::KubeVip,
+            runtime: kurin_config::RuntimeKind::Containerd,
             kubernetes_version: "1.33.1".parse().unwrap(),
             pod_cidr: "10.42.0.0/16".parse().unwrap(),
             service_cidr: "10.43.0.0/16".parse().unwrap(),

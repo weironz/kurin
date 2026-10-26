@@ -9,7 +9,7 @@ use ipnet::Ipv4Net;
 use semver::Version;
 
 use crate::config::{
-    ClusterConfig, CniConfig, Distribution, HaMode, NodeRole, SshAuth, CONFIG_VERSION,
+    ClusterConfig, CniConfig, Distribution, HaMode, NodeRole, RuntimeKind, SshAuth, CONFIG_VERSION,
 };
 use crate::error::{ConfigError, Result};
 
@@ -44,6 +44,8 @@ pub struct Cluster {
     pub distribution: Distribution,
     /// HA mode resolved from [ha] (kube-vip by default).
     pub ha_mode: HaMode,
+    /// Container runtime (containerd by default; k3s embeds its own).
+    pub runtime: RuntimeKind,
     pub kubernetes_version: Version,
     pub pod_cidr: Ipv4Net,
     pub service_cidr: Ipv4Net,
@@ -120,12 +122,14 @@ impl Cluster {
         let zone = cfg.artifacts.zone;
         let distribution = cfg.kubernetes.distribution;
         let ha_mode = cfg.ha.mode;
+        let runtime = cfg.kubernetes.runtime;
         Ok(Cluster {
             name: cfg.name,
             offline_dir,
             zone,
             distribution,
             ha_mode,
+            runtime,
             kubernetes_version,
             pod_cidr,
             service_cidr,
@@ -140,6 +144,12 @@ impl Cluster {
     pub fn validate(&self) -> Result<()> {
         let invalid = |hint: String| ConfigError::invalid(self.source.clone(), hint);
 
+        if self.distribution == Distribution::K3s && self.runtime == RuntimeKind::Crio {
+            return Err(invalid(
+                "k3s embeds containerd; kubernetes.runtime = \"crio\" needs distribution = \"k8s\""
+                    .into(),
+            ));
+        }
         if self.distribution == Distribution::K3s {
             // K3s embeds containerd and (in this build) ships its own
             // flannel. Calico/Cilium with k3s needs --flannel-backend=none

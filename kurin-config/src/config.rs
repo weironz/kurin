@@ -56,6 +56,9 @@ pub struct KubernetesConfig {
     /// `k3s` = Rancher K3s (embedded containerd/etcd, no kubeadm).
     #[serde(default)]
     pub distribution: Distribution,
+    /// Container runtime for the kubeadm track. k3s embeds its own.
+    #[serde(default)]
+    pub runtime: RuntimeKind,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
@@ -64,6 +67,15 @@ pub enum Distribution {
     #[default]
     K8s,
     K3s,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum RuntimeKind {
+    #[default]
+    Containerd,
+    #[serde(rename = "crio")]
+    Crio,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]

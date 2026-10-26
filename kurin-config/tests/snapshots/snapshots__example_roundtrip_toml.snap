@@ -8,6 +8,7 @@ name = "prod"
 [kubernetes]
 version = "1.33.1"
 distribution = "k8s"
+runtime = "containerd"
 
 [network]
 pod-cidr = "10.233.64.0/18"
