@@ -101,10 +101,85 @@ join 时 CLI 显式警告）。
   （含控制面镜像、CNI manifest）从 bundle 读取，零网络请求。
 - `zone = "cn"`：`KURIN_ZONE=cn` 环境变量优先于本字段。
 
-### `[ssh.auth]` / 节点级 `[nodes.<n>.auth]`
+### `[ssh.auth]` / 节点级 `[nodes.<n>.auth]`（含不同密码示例）
 
-password 与 private_key 互斥（tagged enum，不可能同时表达）。鉴权解析顺序：
-节点 auth > 集群 `[ssh.auth]`；两者都没有 → 报错（每个节点都必须能解析出鉴权）。
+password 与 private_key 互斥（同一对 `[ssh.auth]` 不可能同时写两个）。鉴权解析
+顺序：**节点 auth > 集群 `[ssh.auth]`**；两者都没有 → 报错
+"`no ssh auth and no default [ssh] auth`"。
+
+**每个节点一个不同密码**（不配全局 `[ssh.auth]`）：
+
+```toml
+version = "v1alpha1"
+name = "pw-demo"
+
+[ssh]
+user = "root"
+# 故意不写 [ssh.auth]
+
+[nodes.master01]
+address = "192.168.10.11"
+role = "control-plane"
+
+[nodes.master01.auth]
+method = "password"
+password = "M@ster01-pass"
+
+[nodes.worker01]
+address = "192.168.10.21"
+role = "worker"
+
+[nodes.worker01.auth]
+method = "password"
+password = "W0rker01-pass!"
+
+[nodes.worker02]
+address = "192.168.10.22"
+role = "worker"
+
+[nodes.worker02.auth]
+method = "password"
+password = "An0ther-different"
+```
+
+**全局默认密码 + 个别节点覆盖 + 混用密钥：**
+
+```toml
+[ssh]
+user = "ubuntu"
+
+[ssh.auth]                 # 大多数节点的默认
+method = "password"
+password = "common-pass"
+
+[nodes.master01]
+address = "192.168.10.11"
+role = "control-plane"    # 继承 common-pass
+
+[nodes.worker01]
+address = "192.168.10.21"
+role = "worker"           # 继承 common-pass
+
+[nodes.worker02]
+address = "192.168.10.22"
+role = "worker"           # 覆盖
+
+[nodes.worker02.auth]
+method = "password"
+password = "special-pass"
+
+[nodes.worker03]
+address = "192.168.10.23"
+role = "worker"           # 鉴权方式可混用
+
+[nodes.worker03.auth]
+method = "private_key"
+key-path = "/home/ubuntu/.ssh/id_ed25519"
+```
+
+两种写法都实测 `--dry-run` 解析与规划通过（2026-10-26）。
+
+### 节点名
 
 ### `labels`（节点标签）
 
