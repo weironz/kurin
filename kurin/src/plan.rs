@@ -63,6 +63,32 @@ impl Plan {
             "aarch64" => crate::artifact::Arch::Arm64,
             other => panic!("unsupported build architecture: {other}"),
         };
+        // K3s: same preflight/artifacts, then the distribution task set.
+        // containerd/kubelet units and kubeadm tasks do not apply.
+        if cluster.distribution == kurin_config::Distribution::K3s {
+            for node in &cluster.nodes {
+                push(0, Arc::new(tasks::preflight::Preflight::new(node)));
+                push(
+                    1,
+                    Arc::new(tasks::install::ArtifactsInstall::new(
+                        node,
+                        arch,
+                        cluster.offline_dir.clone(),
+                    )),
+                );
+                push(2, Arc::new(tasks::prepare::Sysctl::new(node)));
+                push(2, Arc::new(tasks::kernel_deps::KernelDeps::new(node)));
+            }
+            for (stage, task) in tasks::k3s::stage_tasks(cluster)? {
+                let i = idx[stages
+                    .iter()
+                    .position(|x| *x == stage)
+                    .expect("k3s stage is one of the plan stages")];
+                graph[i].tasks.push(PlannedTask { task, drift: None });
+            }
+            return Ok(Plan { graph, stages: idx });
+        }
+
         for node in &cluster.nodes {
             push(0, Arc::new(tasks::preflight::Preflight::new(node)));
             push(

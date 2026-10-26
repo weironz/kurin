@@ -21,7 +21,7 @@ use std::process::Command;
 use miette::Result;
 use semver::Version;
 
-use crate::artifact::{ArtifactManifest, Arch, ArtifactStore};
+use crate::artifact::{Arch, ArtifactManifest, ArtifactStore};
 
 /// Kubernetes binaries re-pinned to the target release.
 const KUBE_BINS: [&str; 3] = ["kubeadm", "kubelet", "kubectl"];
@@ -294,9 +294,7 @@ fn apply_image_pins(
             .artifacts
             .iter_mut()
             .find(|e| e.name == image.name)
-            .ok_or_else(|| {
-                miette::miette!("embedded manifest has no `{}` entry", image.name)
-            })?;
+            .ok_or_else(|| miette::miette!("embedded manifest has no `{}` entry", image.name))?;
         if entry.kind != crate::artifact::ArtifactKind::Image {
             return Err(miette::miette!(
                 "embedded manifest entry `{}` is not an image artifact",
@@ -396,7 +394,8 @@ fn registry_manifest_url(reference: &str) -> Result<String> {
 
 /// `registry.k8s.io/pause:3.10` -> (`registry.k8s.io/pause`, `3.10`).
 fn split_image_ref(reference: &str) -> Result<(String, String)> {
-    let bad = || miette::miette!("invalid image reference `{reference}` (expected registry/repo:tag)");
+    let bad =
+        || miette::miette!("invalid image reference `{reference}` (expected registry/repo:tag)");
     let (repository, tag) = reference.rsplit_once(':').ok_or_else(bad)?;
     if repository.is_empty() || tag.is_empty() || tag.contains('/') {
         return Err(bad());

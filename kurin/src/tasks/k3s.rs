@@ -173,7 +173,9 @@ impl Task for K3sUnit {
     }
 
     async fn apply(&self, session: &dyn Session) -> Result<Outcome> {
-        session.write_file(K3S_UNIT, self.rendered.as_bytes()).await?;
+        session
+            .write_file(K3S_UNIT, self.rendered.as_bytes())
+            .await?;
         // Enable only — no `--now`. Activation belongs to Bootstrap/Join.
         let out = session
             .exec("systemctl daemon-reload && systemctl enable k3s.service")
@@ -258,7 +260,9 @@ impl Task for K3sKubeVip {
     async fn apply(&self, session: &dyn Session) -> Result<Outcome> {
         // write_file mkdir -p's {K3S_POD_MANIFEST_DIR}; the dir does not
         // exist on a fresh k3s node until the server first starts.
-        session.write_file(KUBEVIP_MANIFEST, self.rendered.as_bytes()).await?;
+        session
+            .write_file(KUBEVIP_MANIFEST, self.rendered.as_bytes())
+            .await?;
         let want = sha256_hex(self.rendered.as_bytes());
         match session.file_sha256(KUBEVIP_MANIFEST).await? {
             Some(have) if have == want => Ok(Outcome::Verified),
@@ -397,7 +401,9 @@ impl Task for K3sServerInit {
         let want = sha256_hex(self.rendered.as_bytes());
         let changed = session.file_sha256(K3S_CONFIG).await?.as_deref() != Some(want.as_str());
         if changed {
-            session.write_file(K3S_CONFIG, self.rendered.as_bytes()).await?;
+            session
+                .write_file(K3S_CONFIG, self.rendered.as_bytes())
+                .await?;
         }
         // Idempotency: never restart an already-serving server whose
         // config we did not just change.
@@ -549,14 +555,11 @@ pub struct K3sJoin {
 impl K3sJoin {
     pub fn new(cluster: &Cluster, node: &Node) -> Self {
         let first_cp = cluster.control_plane().next();
-        let endpoint = cluster
-            .vip
-            .map(|v| v.to_string())
-            .unwrap_or_else(|| {
-                first_cp
-                    .map(|n| n.internal_address.to_string())
-                    .unwrap_or_default()
-            });
+        let endpoint = cluster.vip.map(|v| v.to_string()).unwrap_or_else(|| {
+            first_cp
+                .map(|n| n.internal_address.to_string())
+                .unwrap_or_default()
+        });
         Self {
             node_name: node.name.clone(),
             cluster_name: cluster.name.clone(),
@@ -633,10 +636,7 @@ impl Task for K3sJoin {
                 self.cluster_name
             )));
         };
-        let rendered = join_config_yaml(
-            &format!("https://{}:6443", self.endpoint),
-            &token,
-        );
+        let rendered = join_config_yaml(&format!("https://{}:6443", self.endpoint), &token);
         let want = sha256_hex(rendered.as_bytes());
         let changed = session.file_sha256(K3S_CONFIG).await?.as_deref() != Some(want.as_str());
         if changed {
@@ -768,12 +768,7 @@ mod tests {
         }
     }
 
-    fn cluster(
-        name: &str,
-        nodes: Vec<Node>,
-        vip: Option<&str>,
-        cni: CniConfig,
-    ) -> Cluster {
+    fn cluster(name: &str, nodes: Vec<Node>, vip: Option<&str>, cni: CniConfig) -> Cluster {
         Cluster {
             name: name.into(),
             offline_dir: None,
@@ -827,7 +822,6 @@ mod tests {
         active: Mutex<bool>,
     }
 
-
     impl MockSession {
         fn active() -> Self {
             Self {
@@ -850,7 +844,13 @@ mod tests {
     impl Session for MockSession {
         async fn exec(&self, command: &str) -> Result<ExecOutput> {
             self.commands.lock().unwrap().push(command.to_string());
-            if self.fail_on.lock().unwrap().iter().any(|p| command.contains(p)) {
+            if self
+                .fail_on
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|p| command.contains(p))
+            {
                 return Ok(ExecOutput {
                     exit_code: 1,
                     stdout: String::new(),
@@ -879,12 +879,7 @@ mod tests {
             Ok(())
         }
         async fn file_sha256(&self, path: &str) -> Result<Option<String>> {
-            Ok(self
-                .files
-                .lock()
-                .unwrap()
-                .get(path)
-                .map(|b| sha256_hex(b)))
+            Ok(self.files.lock().unwrap().get(path).map(|b| sha256_hex(b)))
         }
         async fn service_active(&self, _name: &str) -> Result<bool> {
             Ok(*self.active.lock().unwrap())
@@ -919,7 +914,12 @@ mod tests {
         assert!(t.rendered.contains("- traefik"));
         assert!(t.rendered.contains("- servicelb"));
         assert!(t.rendered.contains("tls-san:"));
-        for san in ["192.168.10.100", "192.168.10.11", "192.168.10.12", "192.168.10.13"] {
+        for san in [
+            "192.168.10.100",
+            "192.168.10.11",
+            "192.168.10.12",
+            "192.168.10.13",
+        ] {
             assert!(t.rendered.contains(&format!("- {san}")));
         }
         // The worker is never a tls-san target.
@@ -970,10 +970,15 @@ mod tests {
     #[test]
     fn stage_tasks_covers_all_stages_and_nodes() {
         let tasks = stage_tasks(&ha()).unwrap();
-        let ids: Vec<String> = tasks.iter().map(|(s, t)| format!("{}:{}", s.label(), t.id())).collect();
+        let ids: Vec<String> = tasks
+            .iter()
+            .map(|(s, t)| format!("{}:{}", s.label(), t.id()))
+            .collect();
         // Prepare on every node.
         for n in ["cp1", "cp2", "cp3", "w1"] {
-            assert!(ids.iter().any(|i| i == &format!("prepare:prepare/k3s-unit@{n}")));
+            assert!(ids
+                .iter()
+                .any(|i| i == &format!("prepare:prepare/k3s-unit@{n}")));
         }
         // Vip on every control plane, never on workers.
         for n in ["cp1", "cp2", "cp3"] {
@@ -984,7 +989,10 @@ mod tests {
             ids.iter().filter(|i| i.starts_with("bootstrap:")).count(),
             1
         );
-        assert_eq!(ids.iter().filter(|i| i.starts_with("api-ready:")).count(), 1);
+        assert_eq!(
+            ids.iter().filter(|i| i.starts_with("api-ready:")).count(),
+            1
+        );
         assert_eq!(ids.iter().filter(|i| i.starts_with("post:")).count(), 1);
         for n in ["cp2", "cp3", "w1"] {
             assert!(ids.iter().any(|i| i == &format!("join:join/k3s@{n}")));
@@ -1008,7 +1016,9 @@ mod tests {
     fn join_probe_uses_role_kubeconfig() {
         let c = ha();
         let cp = K3sJoin::new(&c, &c.nodes[1]);
-        assert!(cp.get_self().contains("--kubeconfig /etc/rancher/k3s/k3s.yaml"));
+        assert!(cp
+            .get_self()
+            .contains("--kubeconfig /etc/rancher/k3s/k3s.yaml"));
         assert!(cp.get_self().contains("get node cp2"));
         let w = K3sJoin::new(&c, &c.nodes[3]);
         assert!(w
@@ -1056,9 +1066,14 @@ mod tests {
         s.says(K3S_NODE_TOKEN, "K10SECRET::node:abc");
         // Pre-seed the exact rendered config: nothing to change.
         let t = K3sServerInit::new(&c, &c.nodes[0]);
-        s.write_file(K3S_CONFIG, t.rendered.as_bytes()).await.unwrap();
+        s.write_file(K3S_CONFIG, t.rendered.as_bytes())
+            .await
+            .unwrap();
         assert!(matches!(t.apply(&s).await.unwrap(), Outcome::Verified));
-        assert!(!s.commands().iter().any(|cmd| cmd.contains("systemctl restart")));
+        assert!(!s
+            .commands()
+            .iter()
+            .any(|cmd| cmd.contains("systemctl restart")));
         assert!(read_token(&c.name).as_deref() == Some("K10SECRET::node:abc"));
     }
 
@@ -1165,7 +1180,8 @@ mod tests {
         assert!(matches!(cp.apply(&s).await.unwrap(), Outcome::Verified));
         let cmds = s.commands().join("\n");
         assert!(cmds.contains("systemctl restart k3s"));
-        let cfg = String::from_utf8(s.files.lock().unwrap().get(K3S_CONFIG).cloned().unwrap()).unwrap();
+        let cfg =
+            String::from_utf8(s.files.lock().unwrap().get(K3S_CONFIG).cloned().unwrap()).unwrap();
         assert!(cfg.contains("server: https://192.168.10.100:6443"));
         assert!(cfg.contains("token: K10SECRET::node:abc"));
         // Servers never re-issue cluster-init from a join config.
@@ -1196,7 +1212,10 @@ mod tests {
         let rendered = join_config_yaml("https://192.168.10.11:6443", "K10SECRET::node:abc");
         s.write_file(K3S_CONFIG, rendered.as_bytes()).await.unwrap();
         assert!(matches!(w.apply(&s).await.unwrap(), Outcome::Verified));
-        assert!(!s.commands().iter().any(|cmd| cmd.contains("systemctl restart")));
+        assert!(!s
+            .commands()
+            .iter()
+            .any(|cmd| cmd.contains("systemctl restart")));
     }
 
     #[tokio::test]
@@ -1210,9 +1229,13 @@ mod tests {
         let t = K3sKubeconfig::new(&c.nodes[0]);
         let s = MockSession::active();
         assert!(matches!(t.check(&s).await.unwrap(), Drift::Drifted(_)));
-        s.write_file(K3S_KUBECONFIG, b"kubeconfig-bytes").await.unwrap();
+        s.write_file(K3S_KUBECONFIG, b"kubeconfig-bytes")
+            .await
+            .unwrap();
         assert!(matches!(t.check(&s).await.unwrap(), Drift::Drifted(_)));
-        s.write_file(ROOT_KUBECONFIG, b"kubeconfig-bytes").await.unwrap();
+        s.write_file(ROOT_KUBECONFIG, b"kubeconfig-bytes")
+            .await
+            .unwrap();
         assert!(matches!(t.check(&s).await.unwrap(), Drift::InSync));
         assert!(matches!(t.apply(&s).await.unwrap(), Outcome::Verified));
     }

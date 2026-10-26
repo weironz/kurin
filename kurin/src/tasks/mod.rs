@@ -3,6 +3,7 @@ pub mod cni;
 pub mod images;
 pub mod install;
 pub mod join;
+pub mod k3s;
 pub mod kernel_deps;
 pub mod post;
 pub mod preflight;

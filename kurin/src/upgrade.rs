@@ -32,7 +32,6 @@ fn report(node: &str, step: &str, ok: bool, detail: &str) {
     }
 }
 
-
 /// Replace the kubernetes binaries on one node from the upgrade manifest.
 async fn install_kube_bins(
     session: &dyn Session,

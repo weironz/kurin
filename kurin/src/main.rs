@@ -410,19 +410,31 @@ async fn add_nodes(file: PathBuf, json: bool, offline: Option<PathBuf>) -> Resul
         // refresh the token + certificate key.
         let init = s.exec("test -f /etc/kubernetes/admin.conf").await?;
         if init.ok() {
-            // Version-skew guard: a cluster upgraded past the embedded
-            // manifest would otherwise join new nodes at the old version.
+            // Version threading: a cluster upgraded past the embedded table
+            // gets its running version installed on the new nodes via a
+            // dynamic manifest (dl.k8s.io checksums + registry digests).
             let out = s
                 .exec("kubectl --kubeconfig /etc/kubernetes/admin.conf get --raw /version 2>/dev/null")
                 .await?;
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(&out.stdout) {
                 if let Some(git) = v.get("gitVersion").and_then(|g| g.as_str()) {
-                    let server = git.trim_start_matches('v');
+                    let server = git.trim_start_matches('v').to_string();
                     let embedded = kurin::version::KUBERNETES_VERSION;
                     if server != embedded {
+                        let target: semver::Version = server
+                            .parse()
+                            .map_err(|e| miette::miette!("server version {server:?}: {e}"))?;
+                        let arch = match std::env::consts::ARCH {
+                            "x86_64" => kurin::artifact::Arch::Amd64,
+                            "aarch64" => kurin::artifact::Arch::Arm64,
+                            other => return Err(miette::miette!("unsupported arch {other}")),
+                        };
+                        let manifest =
+                            kurin::dynamic_manifest::k8s_manifest_for_from(&target, &target, arch)
+                                .await?;
+                        kurin::artifact::set_manifest_override(manifest);
                         eprintln!(
-                            "warn: cluster runs v{server} but new nodes install v{embedded} \
-                             (embedded manifest); upgrade the new nodes after joining"
+                            "[add-nodes] new nodes install v{server} (dynamic manifest; embedded v{embedded})"
                         );
                     }
                 }
