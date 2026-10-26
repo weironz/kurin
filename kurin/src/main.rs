@@ -19,6 +19,21 @@ struct Cli {
 enum Commands {
     /// Create resources.
     Create(CreateArgs),
+    /// Upgrade the cluster's Kubernetes components to a pinned version.
+    Upgrade {
+        /// Config file (.toml or .yaml) of the running cluster.
+        #[arg(short, long)]
+        file: PathBuf,
+        /// Target Kubernetes version, e.g. v1.33.13.
+        #[arg(long)]
+        with_kubernetes: Option<String>,
+        /// Show the upgrade plan without changing anything.
+        #[arg(long)]
+        dry_run: bool,
+        /// Worker batch size (control-plane nodes always go one at a time).
+        #[arg(long, default_value_t = 1)]
+        batch: usize,
+    },
     /// Build an offline artifact bundle for air-gapped installs.
     Artifact {
         /// Output directory (created if missing).
@@ -130,6 +145,28 @@ async fn main() -> ExitCode {
 
 async fn run(cli: Cli) -> Result<()> {
     match cli.command {
+        Commands::Upgrade {
+            file,
+            with_kubernetes,
+            dry_run,
+            batch,
+        } => {
+            let cluster = kurin_config::load(&file)?;
+            let target = with_kubernetes
+                .as_deref()
+                .map(|v| v.trim_start_matches('v'))
+                .map(semver::Version::parse)
+                .transpose()
+                .map_err(|e| miette::miette!("invalid --with-kubernetes: {e}"))?
+                .unwrap_or_else(|| cluster.kubernetes_version.clone());
+            let pool: std::sync::Arc<dyn kurin::SessionPool> =
+                std::sync::Arc::new(kurin::ssh::SshSessionPool::from_cluster(&cluster)?);
+            if dry_run {
+                kurin::upgrade::plan(&cluster, &target, &pool).await
+            } else {
+                kurin::upgrade::run(&cluster, &target, &pool, batch).await
+            }
+        }
         Commands::Artifact { out, arch } => build_artifacts(out, arch).await,
         Commands::Add(args) => match args.what {
             AddWhat::Nodes {

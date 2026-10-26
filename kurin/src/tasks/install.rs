@@ -164,8 +164,24 @@ impl Task for ArtifactsInstall {
 
             match install {
                 Install::Direct(dest) => {
-                    session.write_file(dest, &bytes).await?;
-                    session.exec(&format!("chmod 0755 {dest}")).await?;
+                    // Stage + rename: never truncate a binary that is
+                    // currently executing (ETXTBSY), and keep replacement
+                    // atomic for concurrent readers.
+                    let tmp = format!("{dest}.kurin-new");
+                    session.write_file(&tmp, &bytes).await?;
+                    let out = session
+                        .exec(&format!(
+                            "chmod 0755 {tmp} && mv -f {tmp} {dest} && echo installed"
+                        ))
+                        .await?;
+                    if !out.ok() {
+                        return Err(miette::miette!(
+                            "install {} on {} failed: {}",
+                            entry.name,
+                            self.node.name,
+                            out.stderr.lines().last().unwrap_or("").trim()
+                        ));
+                    }
                 }
                 Install::Tar { dir, strip } => {
                     let remote_tmp = format!("/tmp/kurin-{}.tgz", spec.name);

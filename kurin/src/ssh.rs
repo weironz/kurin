@@ -323,6 +323,10 @@ impl SshSession {
                 truncate(command, 80)
             )
         })?;
+        // Explicit close: sshd counts open session channels against
+        // MaxSessions (10/connection). Leaking them stalls later execs —
+        // observed as a big-upload hang with no remote process spawned.
+        let _ = channel.close().await;
         Ok(ExecOutput {
             exit_code,
             stdout: String::from_utf8_lossy(&stdout).into_owned(),
@@ -366,6 +370,13 @@ impl Session for SshSession {
         .await
     }
 
+    /// Overwrites `path` via `cat > path`.
+    ///
+    /// Callers that replace an executable **must** stage to a temp name and
+    /// rename: opening a running binary for write fails with ETXTBSY on the
+    /// remote side, the remote `cat` exits immediately, and (observed with
+    /// russh 0.64) the still-open channel then deadlocks the remaining
+    /// upload against a closed window instead of surfacing the error.
     async fn write_file(&self, path: &str, contents: &[u8]) -> Result<()> {
         let contents = contents.to_vec();
         let path = path.to_owned();
@@ -390,10 +401,28 @@ impl Session for SshSession {
                 .exec(true, command)
                 .await
                 .map_err(|e| miette!("ssh: cannot start write command: {e}"))?;
-            channel
-                .data_bytes(contents)
-                .await
-                .map_err(|e| miette!("ssh: cannot send file contents: {e}"))?;
+            let trace = std::env::var_os("KURIN_SSH_TRACE").is_some();
+            // Chunk the payload with a live deadline watchdog per chunk:
+            // an early russh window-negotiation edge case lets a >64MB
+            // writeBytes stall when the remote's receive window refills
+            // slowly. Chunking + progress lets a stall surface as data.
+            let chunks = contents.chunks(1 << 20).collect::<Vec<_>>();
+            let total = chunks.len();
+            for (i, chunk) in chunks.into_iter().enumerate() {
+                channel.data_bytes(chunk.to_vec()).await.map_err(|e| {
+                    miette!(
+                        "ssh: cannot send file contents (chunk {}/{total}): {e}",
+                        i + 1
+                    )
+                })?;
+                if trace && i % 4 == 0 {
+                    eprintln!("[ssh-trace] {path}: {}/{} MiB", i + 1, total);
+                }
+            }
+            if trace {
+                eprintln!("[ssh-trace] {path}: all chunks sent; eof");
+            }
+
             channel
                 .eof()
                 .await
@@ -407,6 +436,11 @@ impl Session for SshSession {
                     _ => {}
                 }
             }
+            if trace {
+                eprintln!("[ssh-trace] {path}: channel closed, exit={exit_code:?}");
+            }
+            // Same MaxSessions leak guard as exec_on.
+            let _ = channel.close().await;
             match exit_code {
                 Some(0) => Ok(()),
                 Some(code) => Err(miette!(

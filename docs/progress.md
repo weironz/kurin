@@ -1,5 +1,14 @@
 # 进度日志
 
+## M2 步骤 1 — upgrade ✅（2026-10-26）
+
+`kurin upgrade -f cluster.toml --with-kubernetes vX.Y.Z [--dry-run] [--batch N]`
+
+- **动态版本表**：kubeadm/kubelet/kubectl 的 sha256 从 `dl.k8s.io` 官方 `.sha256` 端点实时获取并校验下载（内容寻址），目标版本无需重编译。
+- **顺序**：init 节点 `kubeadm upgrade plan/apply` → 其余控制面串行 `kubeadm upgrade node` + drain/uncordon → worker 按 batch 推进；每节点按 kubelet 版本幂等跳过。
+- 实机验证（tier-2）：1.33.1 → **1.33.13** 成功，双节点 Ready；重跑全部 `up-to-date`。
+- **重大 bug（e2e 挖出）**：直接 `cat > /usr/local/bin/kubelet` 会因该文件正被 kubelet 进程持有而 `ETXTBSY`，远端 cat 秒退后 russh 通道挂在已关闭窗口上，整个上传静默卡 300s。修复：所有二进制替换改为「临时名写入 + `mv -f` 原子改名」（install 与 upgrade 两条路径都改），并加 `/usr/local/bin/*.kurin-new` 清理。探针二分证明与大小无关、只与目标 inode 是否被占用有关。
+
 ## W2 — 发布工程与 CI（2026-10-26）
 
 - **just 取代 Makefile**：`just -l` 列出全部 recipe；`check`（fmt + clippy -D warnings + 单测）、tier0-3、`tier1-offline`、`release-musl`、`ci-gate`。

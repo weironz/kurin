@@ -19,6 +19,7 @@ pub mod state;
 pub mod tasks;
 pub mod teardown;
 pub mod templates;
+pub mod upgrade;
 pub mod version;
 
 pub use engine::{Drift, Event, ExecOutput, Outcome, Session, Stage, Task};

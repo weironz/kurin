@@ -26,6 +26,7 @@ const CLEANUP_PATHS: &[&str] = &[
 ];
 
 const CLEANUP_BINARIES: &[&str] = &[
+    "/usr/local/bin/*.kurin-new",
     "/usr/local/bin/kubeadm",
     "/usr/local/bin/kubelet",
     "/usr/local/bin/kubectl",
