@@ -95,8 +95,26 @@ tier3-test:
 tier3-down:
     e2e/tier3/down.sh
 
+tier1-flannel:
+    e2e/tier1/flannel.sh target/tier1/debug/kurin
+
+tier1-cilium:
+    e2e/tier1/cilium.sh target/tier1/debug/kurin
+
+tier1-k3s:
+    e2e/tier1/k3s.sh target/tier1/debug/kurin
+
+tier3-k3s-ha:
+    e2e/tier3/k3s-ha.sh target/tier3/debug/kurin
+
+tier3-external-lb:
+    e2e/tier3/external-lb.sh target/tier3/debug/kurin
+
+tier2-upgrade-minor:
+    e2e/tier2/upgrade-minor.sh target/tier2/debug/kurin
+
 tier1-zone:
-    e2e/tier1/zone.sh
+    e2e/tier1/zone.sh target/tier1/debug/kurin
 
 tier2-add-cp:
     e2e/tier2/add-cp.sh

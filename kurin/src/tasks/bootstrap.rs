@@ -152,6 +152,7 @@ impl KubeadmInit {
             minijinja::context! {
                 cluster => cluster.name,
                 node_name => first.name,
+
                 kubernetes_version => cluster.kubernetes_version.to_string(),
                 pod_cidr => cluster.pod_cidr.to_string(),
                 service_cidr => cluster.service_cidr.to_string(),

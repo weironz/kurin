@@ -314,6 +314,8 @@ impl K3sServerInit {
                 flannel_disabled => flannel_disabled,
                 tls_sans => tls_sans,
                 node_name => first.name,
+                cluster_cidr => cluster.pod_cidr.to_string(),
+                service_cidr => cluster.service_cidr.to_string(),
             },
         )
         .expect("embedded k3s server config template renders");

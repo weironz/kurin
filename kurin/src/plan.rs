@@ -191,6 +191,15 @@ impl Plan {
         // CNI + post.
         push(8, tasks::cni::plugin_task(cluster)?);
         push(9, Arc::new(tasks::post::KubeconfigPull::new(cluster)));
+        // Config-declared node labels (kubeadm ignores nodeRegistration.labels
+        // since v1beta4); converged through the API from the first CP.
+        for node in cluster
+            .nodes
+            .iter()
+            .filter(|n| n.role != kurin_config::NodeRole::Lb && !n.labels.is_empty())
+        {
+            push(9, Arc::new(tasks::post::NodeLabels::new(cluster, node)));
+        }
 
         Ok(Plan { graph, stages: idx })
     }

@@ -6,6 +6,7 @@ kind: InitConfiguration
 nodeRegistration:
   name: {{ node_name }}
   criSocket: unix:///run/containerd/containerd.sock
+
 localAPIEndpoint:
   advertiseAddress: {{ advertise_address }}
   bindPort: 6443

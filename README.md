@@ -3,63 +3,60 @@
 Declarative Kubernetes cluster installer written in Rust — a ground-up rewrite of
 [kubekey](https://github.com/kubesphere/kubekey)'s install path, minus KubeSphere.
 
-Status: **M1 in progress** (W0 contracts + W1 parallel tracks merged; tier-0 e2e wired).
+Status: **M1 + wave2 complete** — every roadmap batch landed and is verified by
+real end-to-end tests ([`docs/progress.md`](docs/progress.md)).
 
-## What it does (M1 scope)
+## What it does
 
-- Nodes: Ubuntu 24.04+ / Debian 12 / Rocky Linux 9, amd64 + arm64
-- Runtime: containerd (binary-first; no apt/yum for the Kubernetes stack); K3s
-  distribution available (`kubernetes.distribution = "k3s"`)
-- CNI: Calico (tigera-operator), Flannel, or `none` (Cilium in wave2 integration)
-- Kubernetes ≥ v1.30 (pinned compile-time version table, `--with-kubernetes` override,
-  cross-minor upgrades supported via kubeadm's +1-minor path)
-- Single control plane and HA (kube-vip)
-- Commands: `create cluster` / `create config` / `add nodes` / `delete node` /
-  `delete cluster` / `artifact`
-- `--dry-run` plan preview (offline); `--dry-run --check` live drift annotation
+- **Nodes**: Ubuntu 24.04+ / Debian 12 / Rocky Linux 9, amd64 + arm64
+- **Distributions**: kubeadm-track (binary-first) or `kubernetes.distribution = "k3s"`
+  (embedded-etcd HA included)
+- **Runtime**: containerd (binary-first; no apt/yum for the Kubernetes stack)
+- **CNI**: Calico (tigera-operator), Flannel, Cilium, or `none` — per config, not per build
+- **HA**: kube-vip (static pod), `ha.mode = "external-endpoint"` (your own LB), or
+  `ha.mode = "kurin-lb"` (kurin installs haproxy + keepalived on `role = "lb"` nodes)
+- **Kubernetes ≥ v1.30** — pinned compile-time version table; `--with-kubernetes`
+  override; cross-minor upgrades via kubeadm's +1-minor path
+- **Operations**: install / HA / multi-node / add-remove nodes / offline / mirror
+  zone (`KURIN_ZONE=cn`) / upgrade / certs renewal / health status
+- `create cluster` · `create config` · `add nodes` · `delete node` · `delete cluster`
+  · `artifact` · `upgrade` · `certs check|renew` · `status`
+- `--dry-run` plan preview (fully offline); `--dry-run --check` live drift annotation
 
 ## Design
 
 - **Planner / Executor split.** Planning is pure and offline; the executor is the
   only thing that opens SSH sessions. `plan` and `apply` cannot drift.
-- **Idempotent tasks.** Every task is `check_state` → `apply` → `verify`.
-  Re-running the same command skips everything already converged in milliseconds.
-- **Unknown ≠ failed.** If SSH drops mid-apply the engine re-probes before
-  retrying; it never blindly re-runs a change whose outcome is unknown.
+- **Idempotent tasks.** Every task is `check_state` → `apply` → `verify`. Re-running
+  the same command skips everything already converged in milliseconds.
+- **Unknown ≠ failed.** If SSH drops mid-apply the engine re-probes before retrying;
+  it never blindly re-runs a change whose outcome is unknown.
 - **Artifacts.** One manifest (versions, arch, URL, sha256) serves online and
-  offline installs. `<cache>` doubles as the offline bundle.
-- **Templates.** systemd units, kubeadm configs and CNI manifests live in
-  `kurin/templates/` (MiniJinja), embedded via `rust-embed`. No YAML assembled
-  with `format!` in Rust code.
+  offline installs. `<cache>` doubles as the offline bundle; `kurin artifact` packs it.
+- **Templates.** systemd units, kubeadm configs, CNI manifests, kube-vip and
+  haproxy/keepalived configs live in `kurin/templates/` (MiniJinja), embedded via
+  `rust-embed`. No YAML is ever assembled with `format!` in Rust code.
 
-Details: [`docs/m1-spec.md`](docs/m1-spec.md), progress: [`docs/progress.md`](docs/progress.md).
-
-## Usage
+## Quick start
 
 ```bash
-# install a release (musl static, x86_64/aarch64)
+# install (musl static, x86_64/aarch64)
 curl -fsSL https://raw.githubusercontent.com/weironz/kurin/main/scripts/install.sh | bash
 
-# or build locally
-just build
-
 # generate an annotated example config
-./target/release/kurin create config > cluster.toml
+kurin create config > cluster.toml
 
 # preview the plan without touching anything
-./target/release/kurin create cluster -f cluster.toml --dry-run
+kurin create cluster -f cluster.toml --dry-run
 
 # probe live drift (needs SSH access)
-./target/release/kurin create cluster -f cluster.toml --dry-run --check
+kurin create cluster -f cluster.toml --dry-run --check
 
 # install
-./target/release/kurin create cluster -f cluster.toml
-
-# machine-readable event stream
-./target/release/kurin create cluster -f cluster.toml --json
+kurin create cluster -f cluster.toml
 ```
 
-Config (TOML primary, YAML equivalent accepted):
+Minimal config (TOML or YAML, same shape):
 
 ```toml
 version = "v1alpha1"
@@ -72,6 +69,12 @@ version = "1.33.1"
 pod-cidr = "10.233.64.0/18"
 service-cidr = "10.233.0.0/18"
 
+[network.cni]
+kind = "calico"
+
+[ssh]
+user = "root"
+
 [ssh.auth]
 method = "private_key"
 key-path = "/root/.ssh/id_ed25519"
@@ -79,22 +82,72 @@ key-path = "/root/.ssh/id_ed25519"
 [nodes.master01]
 address = "192.168.10.11"
 role = "control-plane"
+
+[nodes.worker01]
+address = "192.168.10.21"
+role = "worker"
+```
+
+### Cluster shapes
+
+k3s distribution:
+
+```toml
+[kubernetes]
+version = "1.33.1"
+distribution = "k3s"
+
+[network.cni]
+kind = "flannel"   # k3s supports "flannel" | "none" in this build
+
+[nodes.master01]
+address = "192.168.10.11"
+role = "control-plane"
+# 3 control-plane nodes + kv-vip gives k3s embedded-etcd HA
+```
+
+kubeadm HA with kube-vip:
+
+```toml
+[ha]
+vip = "192.168.10.100"   # must NOT collide with any node address
+mode = "kube-vip"        # default
+```
+
+HA with your own load balancer:
+
+```toml
+[ha]
+vip = "192.168.10.100"       # <— your LB's address/port entry point
+mode = "external-endpoint"   # kurin installs nothing; >= 2 control planes required
+```
+
+HA with kurin-managed LB nodes (haproxy + keepalived):
+
+```toml
+[ha]
+vip = "192.168.10.100"
+mode = "kurin-lb"
+
+[nodes.lb1]
+address = "192.168.10.31"
+role = "lb"                  # excluded from every k8s task; gets haproxy+keepalived
 ```
 
 ## Air-gapped installs
 
 ```bash
-# on a machine with network: build the bundle (binaries + all 15 pinned images)
+# online machine: build the bundle (binaries + all pinned control-plane/CNI images)
 kurin artifact --out /srv/kurin-bundle
 
-# on the target network: point the config at the bundle (or --offline <dir>)
+# offline targets: bundle path in config or via flag
 # [artifacts]
 # offline-dir = "/srv/kurin-bundle"
 kurin create cluster -f cluster.toml
+# or: kurin create cluster -f cluster.toml --offline /srv/kurin-bundle
 ```
 
-Everything (binaries, control-plane images, CNI) comes from the bundle; the
-install makes zero network requests. Image digests are pinned by OCI index.
+Zero network requests during install. Image digests are pinned by OCI index.
 
 ## CN mirrors
 
@@ -105,45 +158,49 @@ KURIN_ZONE=cn kurin create cluster -f cluster.toml
 # zone = "cn"
 ```
 
-Verified mirror table (digest parity checked by `scripts/check-mirrors.sh`,
-CI: `.github/workflows/mirrors.yml`): registries via daocloud mirrors,
-GitHub releases via gh-proxy. `dl.k8s.io` has no maintained domestic mirror
-and stays direct. The sha256 pins in the manifest remain the trust anchor.
+Verified mirror table (digest parity checked by `scripts/check-mirrors.sh`, CI
+`.github/workflows/mirrors.yml`): registries via daocloud mirrors, GitHub releases
+via gh-proxy. `dl.k8s.io` has no maintained domestic mirror and stays direct. The
+sha256 pins in the manifest remain the trust anchor regardless of mirror.
 
 ## Operations
 
 ```bash
-kurin certs check  -f cluster.toml [--warn-days N]
-kurin certs renew  -f cluster.toml [--force]      # kubeadm certs renew + gated restart
-kurin status       -f cluster.toml [--json]        # nodes/pods/etcd/certs; exit code gates health
+kurin certs check  -f cluster.toml [--warn-days N]   # expiry report per control plane
+kurin certs renew  -f cluster.toml [--force]         # kubeadm certs renew + gated restart
+kurin status       -f cluster.toml [--json]          # nodes/pods/etcd/certs; exit code gates health
 kurin upgrade      -f cluster.toml --with-kubernetes vX.Y.Z [--dry-run]
+                                                   # cross-minor allowed (one minor at a time)
 ```
 
 ## Adding, removing, tearing down
 
 ```bash
-kurin add nodes   -f cluster.toml       # idempotent: joins only new nodes
-kurin delete node worker01 -f cluster.toml   # drain + reset + wipe artifacts
-kurin delete cluster -f cluster.toml
+kurin add nodes   -f cluster.toml                 # joins only new nodes (incl. control planes)
+kurin delete node worker01 -f cluster.toml        # drain + reset + wipe artifacts
+kurin delete cluster -f cluster.toml              # everything, provably clean
 ```
 
-## Testing / CI
+`add nodes` installs the running cluster's version on new nodes (dynamic manifest),
+not whatever was pinned at build time.
 
-[`just`](https://github.com/casey/just) is the local driver; the same recipes
-run in CI on a self-hosted runner (`.github/workflows/`).
+## Testing / contributing
+
+[`just`](https://github.com/casey/just) is the local driver; these recipes also run
+in CI on a self-hosted runner (`.github/workflows/`).
 
 ```bash
 just check            # fmt + clippy -D warnings + unit tests
-just tier0            # 3 systemd containers, real SSH apply
+just tier0            # systemd containers: SSH, pool, artifact stages
 just tier0-test       # two-pass idempotency assertions
-just tier0-down
-
-just tier1            # single-node multipass + real kubeadm
-just tier1-offline    # install with egress to artifact hosts blocked
-just tier2            # 1 control-plane + 1 worker (real join)
-just tier3            # 3 control-plane + kube-vip HA
-just ci-gate          # check + tier0 + tier0-test + down
-just release-musl     # static binaries both arches into release-dist/
+just tier1            # single-node multipass cluster (kubeadm)
+just tier1-offline    # install with egress to artifact hosts blocked (true air-gap)
+just tier1-cilium     # single-node with Cilium CNI
+just tier1-zone       # single-node install via domestic mirrors
+just tier2            # 1 CP + 1 worker (real join + upgrade e2e)
+just tier3            # 3 CP + kube-vip HA
+just tier3-external-lb  # 2 CP + haproxy/keepalived LB node
+just release-musl     # static x86_64+aarch64 tarballs into release-dist/
 ```
 
 ## License
