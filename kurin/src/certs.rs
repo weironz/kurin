@@ -98,7 +98,6 @@ for c in {roots}; do
 done
 '"#
     )
-
 }
 
 /// Parse the probe output into structured certificates. Malformed lines are

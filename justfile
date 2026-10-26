@@ -104,6 +104,11 @@ tier1-cilium:
 tier1-k3s:
     e2e/tier1/k3s.sh target/tier1/debug/kurin
 
+# k3s ops: status / certs / renew / delete on a k3s cluster
+tier1-k3s-ops:
+    CARGO_TARGET_DIR=target/tier1 cargo build -q -p kurin
+    e2e/tier1/k3s-ops.sh target/tier1/debug/kurin
+
 tier3-k3s-ha:
     e2e/tier3/k3s-ha.sh target/tier3/debug/kurin
 

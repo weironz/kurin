@@ -253,7 +253,9 @@ mod tests {
     use std::net::{IpAddr, Ipv4Addr};
     use std::sync::{Arc, Mutex};
 
-    use kurin_config::{Cluster, Distribution, HaMode, Node, NodeRole, RuntimeKind, ResolvedSsh, SshAuth};
+    use kurin_config::{
+        Cluster, Distribution, HaMode, Node, NodeRole, ResolvedSsh, RuntimeKind, SshAuth,
+    };
     use miette::Result;
 
     use super::*;

@@ -406,9 +406,7 @@ async fn k3s_uses_k3s_kubectl_and_etcd_healthz() {
 
     let kube: Vec<&String> = cmds
         .iter()
-        .filter(|c| {
-            c.contains("get nodes") || c.contains("get pods") || c.contains("get --raw")
-        })
+        .filter(|c| c.contains("get nodes") || c.contains("get pods") || c.contains("get --raw"))
         .collect();
     assert!(!kube.is_empty());
     for c in kube {

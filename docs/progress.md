@@ -1,5 +1,16 @@
 # 进度日志
 
+## 命令 × 发行版矩阵审计（2026-10-26）✅
+
+修掉四个被主线验收绕开的矩阵缺口（命令 × k3s/crio/offline），新增 `docs/command-matrix.md`：
+
+- **delete 对 k3s**：teardown 重写为发行版感知——k3s 停服务后清 `/etc/rancher`、`/var/lib/rancher`、k3s 二进制，**不跑 kubeadm reset**；crio 运行时补 `/etc/crio`、crio/pinns 二进制等残留路径；kubectl helper 按 kubeadm/k3s 分派（`k3s kubectl --kubeconfig /etc/rancher/k3s/k3s.yaml`）。
+- **status 对 k3s**：`kubectl_base` 按发行版分派（k3s kubeconfig + HA 本机 127.0.0.1）；etcd 健康 k3s 走 `/healthz/etcd`（内嵌 etcd 不在 pod 里，pod 计数会误报）；cert_min_days 委托 certs::check（单一事实源）。
+- **certs 对 k3s**：探测根目录 kubeadm `/etc/kubernetes/pki` / k3s `/var/lib/rancher/k3s/server/tls`；`renew` k3s = `k3s certificate rotate` + restart + `/readyz` 门控（180s），旧版 k3s 无 rotate 时给明确升级指引。
+- **upgrade 对 k3s**：校验期明确拒绝（kubeadm 流程会损坏 k3s 节点；带离线换二进制/重装指引）。
+- **离线一致性**：flannel/cilium 与 kube-ovn 同语义——离线 bundle 只有 calico，其余 CNI 配置校验期拒绝（原来会一路跑到 CNI 阶段 Pull 失败）。
+- e2e：`e2e/tier1/k3s-ops.sh`（status + certs check/renew + delete 全链路真机断言）、`just tier1-k3s-ops`。
+
 ## Kube-OVN + haproxy 细化 + CI 手动化（2026-10-26）✅
 
 - **Kube-OVN CNI**（`network.cni.kind = "kube-ovn"`）：上游只发 helm chart，故把 v1.16.15 的
