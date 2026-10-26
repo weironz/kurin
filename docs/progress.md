@@ -2,6 +2,8 @@
 
 ## M2 步骤 1 — upgrade ✅（2026-10-26）
 
+（M2 后续全部任务清单见 `docs/roadmap.md`：批次 1 证书轮转/CP 追加/status；批次 2 国内镜像、CNI 矩阵、K3s、外部 LB；批次 3 跨 minor 升级、离线增强、夜间 e2e 备选方案。约定：e2e 全手工，主线功能开发。）
+
 `kurin upgrade -f cluster.toml --with-kubernetes vX.Y.Z [--dry-run] [--batch N]`
 
 - **动态版本表**：kubeadm/kubelet/kubectl 的 sha256 从 `dl.k8s.io` 官方 `.sha256` 端点实时获取并校验下载（内容寻址），目标版本无需重编译。
