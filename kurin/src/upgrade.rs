@@ -174,6 +174,16 @@ pub async fn run(
     let cp0 = pool.get(&first_cp.name).await?;
     let kubectl = "kubectl --kubeconfig /etc/kubernetes/admin.conf --request-timeout=30s";
 
+    let ctx = NodeCtx {
+        pool: pool.as_ref(),
+        store: &store,
+        manifest: &manifest,
+        arch,
+        cp0: cp0.as_ref(),
+        kubectl,
+        target,
+    };
+
     // Server version = currently running apiserver; none = unknown yet.
     let server = {
         let out = cp0
@@ -235,17 +245,7 @@ pub async fn run(
 
     // 2. Remaining control-plane members, serially, with a drain health gate.
     for node in cluster.control_plane().skip(1) {
-        upgrade_one_node(
-            pool.as_ref(),
-            &store,
-            &manifest,
-            node,
-            arch,
-            cp0.as_ref(),
-            kubectl,
-            target,
-        )
-        .await?;
+        upgrade_one_node(&ctx, node).await?;
     }
 
     // 3. Workers in batches: batch size N means N nodes are drained and
@@ -257,20 +257,10 @@ pub async fn run(
             eprintln!(
                 "—— worker batch {}/{} —",
                 i / batch + 1,
-                (cluster.workers().count() + batch - 1) / batch
+                cluster.workers().count().div_ceil(batch)
             );
         }
-        upgrade_one_node(
-            pool.as_ref(),
-            &store,
-            &manifest,
-            node,
-            arch,
-            cp0.as_ref(),
-            kubectl,
-            target,
-        )
-        .await?;
+        upgrade_one_node(&ctx, node).await?;
     }
 
     let out = cp0.exec(&format!("{kubectl} get nodes -o wide")).await?;
@@ -280,31 +270,36 @@ pub async fn run(
     Ok(())
 }
 
-async fn upgrade_one_node(
-    pool: &dyn SessionPool,
-    store: &ArtifactStore,
-    manifest: &ArtifactManifest,
-    node: &Node,
+/// Shared per-node context for the upgrade walk.
+struct NodeCtx<'a> {
+    pool: &'a dyn SessionPool,
+    store: &'a ArtifactStore,
+    manifest: &'a ArtifactManifest,
     arch: Arch,
-    cp0: &dyn Session,
-    kubectl: &str,
-    target: &Version,
-) -> Result<()> {
+    cp0: &'a dyn Session,
+    kubectl: &'a str,
+    target: &'a Version,
+}
+
+#[allow(clippy::too_many_arguments)] // grouped into NodeCtx; the remaining args below are the node itself
+async fn upgrade_one_node(ctx: &NodeCtx<'_>, node: &Node) -> Result<()> {
     // Per-node idempotency: a kubelet already at the target skips the turn.
-    let kv = kubectl_kubelet_version(cp0, &node.name, kubectl).await?;
-    if kv.as_deref() == Some(target.to_string().as_str()) {
+    let kv = kubectl_kubelet_version(ctx.cp0, &node.name, ctx.kubectl).await?;
+    if kv.as_deref() == Some(ctx.target.to_string().as_str()) {
         report(
             &node.name,
             "up-to-date",
             true,
-            &format!("kubelet already v{target}"),
+            &format!("kubelet already v{}", ctx.target),
         );
         return Ok(());
     }
 
-    let drain = cp0
+    let k = ctx.kubectl;
+    let drain = ctx
+        .cp0
         .exec(&format!(
-            "{kubectl} drain {} --ignore-daemonsets --delete-emptydir-data --force 2>&1; true",
+            "{k} drain {} --ignore-daemonsets --delete-emptydir-data --force 2>&1; true",
             node.name
         ))
         .await?;
@@ -318,8 +313,8 @@ async fn upgrade_one_node(
         drain.stderr.lines().next().unwrap_or("").trim(),
     );
 
-    let session = pool.get(&node.name).await?;
-    install_kube_bins(session.as_ref(), store, manifest, node, arch).await?;
+    let session = ctx.pool.get(&node.name).await?;
+    install_kube_bins(session.as_ref(), ctx.store, ctx.manifest, node, ctx.arch).await?;
     report(&node.name, "binaries", true, "");
     let out = session.exec("kubeadm upgrade node").await?;
     if !out.ok() {
@@ -334,8 +329,9 @@ async fn upgrade_one_node(
         .exec("systemctl daemon-reload 2>/dev/null; systemctl restart kubelet && systemctl is-active kubelet")
         .await?;
     report(&node.name, "kubelet restarted", out.ok(), "");
-    let out = cp0
-        .exec(&format!("{kubectl} uncordon {}", node.name))
+    let out = ctx
+        .cp0
+        .exec(&format!("{} uncordon {}", ctx.kubectl, node.name))
         .await?;
     report(&node.name, "uncordon", out.ok(), "");
     Ok(())
