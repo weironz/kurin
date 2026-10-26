@@ -15,7 +15,8 @@ use kurin_config::{Cluster, Node};
 use miette::Result;
 use semver::Version;
 
-use crate::artifact::{Arch, ArtifactError, ArtifactManifest, ArtifactStore};
+use crate::artifact::{Arch, ArtifactKind, ArtifactManifest, ArtifactStore};
+use crate::dynamic_manifest;
 use crate::engine::Session;
 use crate::executor::SessionPool;
 
@@ -31,69 +32,6 @@ fn report(node: &str, step: &str, ok: bool, detail: &str) {
     }
 }
 
-/// The bundle manifest with kubernetes binaries re-pinned to `target`.
-/// Checksums come from dl.k8s.io's own per-binary .sha256 endpoints and are
-/// verified on download, so the fetch is a SHA-trust-transfer, not blind.
-async fn manifest_for(
-    store: &ArtifactStore,
-    target: &Version,
-    arch: Arch,
-) -> Result<ArtifactManifest> {
-    let mut manifest = ArtifactManifest::embedded()?;
-    for name in KUBE_BINS {
-        let target_key = format!("linux-{}", arch.as_str());
-        let sha_url = format!(
-            "https://dl.k8s.io/release/v{target}/bin/linux/{}/{name}.sha256",
-            arch.as_str()
-        );
-        let resp = ureq_lite_get(&sha_url)
-            .await
-            .map_err(|e| miette::miette!("fetch {sha_url}: {e}"))?;
-        let sha = resp.trim().to_string();
-        if sha.len() != 64 || !sha.chars().all(|c| c.is_ascii_hexdigit()) {
-            return Err(miette::miette!(
-                "sha256 endpoint returned garbage for {name} v{target}: {sha:.80}"
-            ));
-        }
-        for e in &mut manifest.artifacts {
-            if e.name != name {
-                continue;
-            }
-            e.version = target.to_string();
-            e.sha256.clear();
-            e.sha256.insert(target_key.clone(), sha.clone());
-        }
-    }
-    let _ = store;
-    Ok(manifest)
-}
-
-/// Minimal fetch of a small text resource (bypasses the artifact store:
-/// checksums are delivered over signed HTTPS and verified as hex above).
-async fn ureq_lite_get(url: &str) -> Result<String, ArtifactError> {
-    let url = url.to_string();
-    tokio::task::spawn_blocking(move || -> Result<String, ArtifactError> {
-        let out = std::process::Command::new("curl")
-            .args(["-fsSL", "--max-time", "30", &url])
-            .output()
-            .map_err(|e| ArtifactError::Download {
-                url: url.clone(),
-                detail: e.to_string(),
-            })?;
-        if !out.status.success() {
-            return Err(ArtifactError::Download {
-                url,
-                detail: format!("curl exited with {}", out.status),
-            });
-        }
-        Ok(String::from_utf8_lossy(&out.stdout).into_owned())
-    })
-    .await
-    .map_err(|e| ArtifactError::Download {
-        url: "spawn".into(),
-        detail: e.to_string(),
-    })?
-}
 
 /// Replace the kubernetes binaries on one node from the upgrade manifest.
 async fn install_kube_bins(
@@ -153,6 +91,26 @@ async fn kubectl_kubelet_version(
     Ok(if v.is_empty() { None } else { Some(v) })
 }
 
+/// Control-plane image entries whose version/pin differs from the embedded
+/// manifest — i.e. the images `kubeadm upgrade apply` will roll.
+fn replaced_control_plane_images(manifest: &ArtifactManifest) -> Result<usize> {
+    let embedded = ArtifactManifest::embedded()?;
+    Ok(manifest
+        .artifacts
+        .iter()
+        .filter(|e| {
+            e.kind == ArtifactKind::Image
+                && dynamic_manifest::CONTROL_PLANE_IMAGES.contains(&e.name.as_str())
+        })
+        .filter(|e| {
+            embedded
+                .get(&e.name)
+                .map(|old| old.version != e.version || old.sha256 != e.sha256)
+                .unwrap_or(true)
+        })
+        .count())
+}
+
 pub async fn run(
     cluster: &Cluster,
     target: &Version,
@@ -165,7 +123,6 @@ pub async fn run(
         other => return Err(miette::miette!("unsupported host arch {other}")),
     };
     let store = ArtifactStore::open_default()?;
-    let manifest = manifest_for(&store, target, arch).await?;
 
     let first_cp = cluster
         .control_plane()
@@ -173,6 +130,35 @@ pub async fn run(
         .ok_or_else(|| miette::miette!("cluster has no control-plane node"))?;
     let cp0 = pool.get(&first_cp.name).await?;
     let kubectl = "kubectl --kubeconfig /etc/kubernetes/admin.conf --request-timeout=30s";
+
+    // Server version = currently running apiserver; "" = unknown yet.
+    let server = {
+        let out = cp0
+            .exec(&format!(
+                "{kubectl} version -o json 2>/dev/null | grep -m1 gitVersion | tail -1"
+            ))
+            .await?;
+        out.stdout
+            .split('"')
+            .nth(3)
+            .unwrap_or("")
+            .trim_start_matches('v')
+            .to_string()
+    };
+    // The dynamic manifest re-pins binaries *and* control-plane images to
+    // the target. A known server version arms kubeadm's one-minor-at-a-time
+    // policy; an unknown one builds the target bundle unconditionally.
+    let manifest = match Version::parse(&server) {
+        Ok(current) => dynamic_manifest::k8s_manifest_for_from(&current, target, arch).await?,
+        Err(_) if server.is_empty() => dynamic_manifest::k8s_manifest_for(target, arch).await?,
+        Err(_) => return Err(miette::miette!("cannot parse server version `{server}`")),
+    };
+    let replaced = replaced_control_plane_images(&manifest)?;
+    eprintln!("control-plane images to re-pin: {replaced}");
+    if !server.is_empty() && server != target.to_string() {
+        eprintln!("cluster {cluster}", cluster = cluster.name);
+        eprintln!("server={server} -> target=v{target}");
+    }
 
     let ctx = NodeCtx {
         pool: pool.as_ref(),
@@ -183,27 +169,6 @@ pub async fn run(
         kubectl,
         target,
     };
-
-    // Server version = currently running apiserver; none = unknown yet.
-    let server = {
-        let out = cp0
-            .exec(&format!(
-                "{kubectl} version -o json 2>/dev/null | grep -m1 gitVersion | tail -1"
-            ))
-            .await?;
-        let v = out
-            .stdout
-            .split('"')
-            .nth(3)
-            .unwrap_or("")
-            .trim_start_matches('v')
-            .to_string();
-        v
-    };
-    if !server.is_empty() && server != target.to_string() {
-        eprintln!("cluster {cluster}", cluster = cluster.name);
-        eprintln!("server={server} -> target=v{target}");
-    }
 
     // 1. First control-plane node: plan + apply (validates the whole upgrade).
     {
