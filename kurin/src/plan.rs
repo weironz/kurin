@@ -66,7 +66,11 @@ impl Plan {
         // K3s: same preflight/artifacts, then the distribution task set.
         // containerd/kubelet units and kubeadm tasks do not apply.
         if cluster.distribution == kurin_config::Distribution::K3s {
-            for node in &cluster.nodes {
+            for node in cluster
+                .nodes
+                .iter()
+                .filter(|n| n.role != kurin_config::NodeRole::Lb)
+            {
                 push(0, Arc::new(tasks::preflight::Preflight::new(node)));
                 push(
                     1,

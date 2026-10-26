@@ -6,10 +6,13 @@
 //! for this distribution).
 //!
 //! Task layout:
-//! - Prepare: `k3s.service` unit on every node (server|agent by role),
-//!   enabled but never started — Bootstrap/Join own activation.
+//! - Prepare: `k3s.service` unit on every k8s node (server|agent by role),
+//!   enabled but never started — Bootstrap/Join own activation — plus the
+//!   [`K3sAirgapImport`] tar on offline/cn clusters (k3s imports it on
+//!   first server/agent start).
 //! - Vip: kube-vip static pod in k3s's own pod-manifest dir on every
-//!   control-plane node (only when the cluster declares a VIP).
+//!   control-plane node (kube-vip mode), or — with `ha.mode = "kurin-lb"` —
+//!   the distribution-agnostic [`ExternalLb`] on the `lb` nodes.
 //! - Bootstrap: first control-plane server init (`cluster-init` on HA).
 //! - ApiReady: the VIP-backed API answers `/readyz` before anyone joins.
 //! - Join: remaining servers + all workers. The node token is harvested
@@ -20,15 +23,29 @@
 //!
 //! k3s embeds kubectl (`k3s kubectl`); there is no standalone kubectl on
 //! these nodes.
+//!
+//! ## `ha.mode = "kurin-lb"` under k3s
+//!
+//! Allowed (k3s + kurin-lb validation lives in `kurin-config/model.rs`,
+//! owned by the integrator): kurin-lb uses the same distribution-agnostic
+//! [`ExternalLb`] (haproxy + keepalived on the `lb` nodes). k3s itself
+//! needs no mode-specific wiring — the keepalived-held VIP and the
+//! haproxy 6443 front end are transparent to it: `K3sServerInit` already
+//! covers the VIP with `tls-san`, and `K3sJoin`/`K3sApiReady` already dial
+//! the VIP as the join endpoint regardless of how the VIP is held. A
+//! kube-vip static pod would race keepalived for the same address, so
+//! [`K3sKubeVip`] is only planned in `ha.mode = "kube-vip"`.
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use kurin_config::{Cluster, CniConfig, Node, NodeRole};
+use kurin_config::{Cluster, CniConfig, HaMode, Node, NodeRole};
 use miette::Result;
 
+use crate::artifact::{Arch, ArtifactStore};
 use crate::engine::{Drift, Outcome, Session, Stage, Task};
 use crate::tasks::bootstrap::{join_material_path, DEFAULT_VIP_IFACE};
+use crate::tasks::external_lb::ExternalLb;
 use crate::tasks::prepare::sha256_hex;
 use crate::templates;
 
@@ -46,10 +63,30 @@ pub const K3S_NODE_TOKEN: &str = "/var/lib/rancher/k3s/server/node-token";
 pub const K3S_POD_MANIFEST_DIR: &str = "/var/lib/rancher/k3s/agent/pod-manifests";
 /// kube-vip static pod inside that dir.
 pub const KUBEVIP_MANIFEST: &str = "/var/lib/rancher/k3s/agent/pod-manifests/kube-vip.yaml";
+/// k3s auto-imports every tar in this dir on server/agent start.
+pub const K3S_AIRGAP_IMAGES_DIR: &str = "/var/lib/rancher/k3s/agent/images";
+/// Manifest name of the airgap tar (embedded `artifacts/manifest.json`).
+pub const K3S_AIRGAP_ARTIFACT: &str = "k3s-airgap";
 /// Convenience record of the admin kubeconfig on the first server.
 pub const ROOT_KUBECONFIG: &str = "/root/.kube/config";
 /// k3s embeds kubectl; the binary artifact is at a fixed path.
 const KUBECTL: &str = "/usr/local/bin/k3s kubectl";
+/// The arch the airgap payload is resolved for. kurin drives one arch per
+/// run (the agent binary is arch-specific); mirrors the planner's
+/// `std::env::consts::ARCH` mapping.
+const HOST_ARCH: Arch = match std::env::consts::ARCH {
+    "x86_64" => Arch::Amd64,
+    "aarch64" => Arch::Arm64,
+    other => panic!("unsupported build architecture: {other}"),
+};
+
+/// True when the airgap tar should be shipped: offline installs always need
+/// it (no registry reachable); in the `cn` zone k3s's upstream registry
+/// pulls (rancher-mirrored images) are too slow/unreliable to lean on, so
+/// the images are pre-seeded the same way.
+fn airgap_needed(cluster: &Cluster) -> bool {
+    cluster.offline_dir.is_some() || crate::artifact::zone() == crate::zone::Zone::Cn
+}
 
 /// k3s-specific tasks with their stage assignment, for the integrator's
 /// distribution branch in `plan.rs`. Order within a stage follows node
@@ -57,7 +94,19 @@ const KUBECTL: &str = "/usr/local/bin/k3s kubectl";
 pub fn stage_tasks(cluster: &Cluster) -> Result<Vec<(Stage, Arc<dyn Task>)>> {
     let mut out: Vec<(Stage, Arc<dyn Task>)> = Vec::new();
     for node in &cluster.nodes {
+        if node.role == NodeRole::Lb {
+            // k3s task set: LB nodes never run k3s itself — they only get
+            // the distribution-agnostic ExternalLb below (and the generic
+            // preflight track from the integrator's plan branch).
+            continue;
+        }
         out.push((Stage::Prepare, Arc::new(K3sUnit::new(node))));
+        if airgap_needed(cluster) {
+            out.push((
+                Stage::Prepare,
+                Arc::new(K3sAirgapImport::new(cluster, node)),
+            ));
+        }
     }
     let Some(first_cp) = cluster.control_plane().next() else {
         // No control plane: config validation upstream rejects this; the
@@ -69,6 +118,17 @@ pub fn stage_tasks(cluster: &Cluster) -> Result<Vec<(Stage, Arc<dyn Task>)>> {
             out.push((Stage::Vip, Arc::new(task)));
         }
     }
+    // ha.mode = "kurin-lb": same distribution-agnostic LB task as the
+    // kubeadm track — haproxy fronts the servers' 6443, keepalived holds
+    // the VIP (see the module docs for why k3s needs nothing else).
+    for (ordinal, lb) in cluster
+        .nodes
+        .iter()
+        .filter(|n| n.role == NodeRole::Lb)
+        .enumerate()
+    {
+        out.push((Stage::Vip, Arc::new(ExternalLb::new(cluster, lb, ordinal)?)));
+    }
     out.push((
         Stage::Bootstrap,
         Arc::new(K3sServerInit::new(cluster, first_cp)),
@@ -77,7 +137,11 @@ pub fn stage_tasks(cluster: &Cluster) -> Result<Vec<(Stage, Arc<dyn Task>)>> {
         Stage::ApiReady,
         Arc::new(K3sApiReady::new(cluster, first_cp)),
     ));
-    for node in cluster.nodes.iter().filter(|n| n.name != first_cp.name) {
+    for node in cluster
+        .nodes
+        .iter()
+        .filter(|n| n.name != first_cp.name && n.role != NodeRole::Lb)
+    {
         out.push((Stage::Join, Arc::new(K3sJoin::new(cluster, node))));
     }
     out.push((Stage::Post, Arc::new(K3sKubeconfig::new(first_cp))));
@@ -134,7 +198,8 @@ impl K3sUnit {
         let role = match node.role {
             NodeRole::ControlPlane => "server",
             NodeRole::Worker => "agent",
-            // k3s has no LB role: validation rejects ha.mode=kurin-lb for k3s.
+            // LB nodes never get a k3s unit ([`stage_tasks`] skips them);
+            // keep a benign default for any direct construction in tests.
             NodeRole::Lb => "agent",
         };
         let rendered = templates::render(
@@ -195,12 +260,133 @@ impl Task for K3sUnit {
 }
 
 // ---------------------------------------------------------------------------
+// Prepare: airgap image tar (offline / cn-zone clusters)
+// ---------------------------------------------------------------------------
+
+/// Ships the k3s airgap tar (`k3s-airgap-images-<arch>.tar`, artifact
+/// manifest entry `k3s-airgap`) to `/var/lib/rancher/k3s/agent/images/` on
+/// every k8s node. k3s auto-imports every tar in that dir on first start —
+/// no explicit `ctr images import` (which would race k3s's own import and
+/// the containerd socket k3s owns). Only planned on offline or cn-zone
+/// clusters: online-global clusters let k3s pull from upstream.
+///
+/// Payload source mirrors [`crate::tasks::install::ArtifactsInstall`]: the
+/// verified offline bundle dir, or the local cache via
+/// [`ArtifactStore::fetch`] (zone-rewritten URL, sha pinned in the
+/// manifest).
+pub struct K3sAirgapImport {
+    node_name: String,
+    /// Absolute remote path the tar must exist at.
+    remote: String,
+    /// Manifest pin; `None` would mean an unpinned entry — treated as
+    /// "trust whatever bytes arrived" (never happens for k3s-airgap).
+    expected_sha: Option<String>,
+    offline_dir: Option<PathBuf>,
+}
+
+impl K3sAirgapImport {
+    pub fn new(cluster: &Cluster, node: &Node) -> Self {
+        let manifest = crate::artifact::install_manifest()
+            .expect("embedded artifact manifest parses");
+        let spec = manifest
+            .spec(K3S_AIRGAP_ARTIFACT, HOST_ARCH)
+            .unwrap_or_else(|e| {
+                panic!("manifest must carry the {K3S_AIRGAP_ARTIFACT} entry: {e}")
+            });
+        Self {
+            node_name: node.name.clone(),
+            remote: format!("{}/{}", K3S_AIRGAP_IMAGES_DIR, spec.file_name()),
+            expected_sha: spec.expected_sha256(),
+            offline_dir: cluster.offline_dir.clone(),
+        }
+    }
+
+    /// Resolve the local payload: the verified offline bundle when
+    /// configured, else the (possibly zone-rewritten) local cache fetch.
+    async fn payload(&self) -> Result<PathBuf> {
+        if let Some(dir) = &self.offline_dir {
+            let dm = crate::artifact::ArtifactManifest::from_dir(dir)?;
+            let found = dm.find(K3S_AIRGAP_ARTIFACT, HOST_ARCH).ok_or_else(|| {
+                miette::miette!(
+                    "offline bundle {} lacks the {K3S_AIRGAP_ARTIFACT} tar ({}, {}); \
+                     rebuild it with `kurin artifact --out <dir>`",
+                    dir.display(),
+                    HOST_ARCH.as_str(),
+                    self.remote
+                )
+            })?;
+            Ok(found.file.clone())
+        } else {
+            let spec = crate::artifact::install_manifest()?
+                .spec(K3S_AIRGAP_ARTIFACT, HOST_ARCH)?;
+            Ok(ArtifactStore::open_default()?.fetch(&spec).await?)
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl Task for K3sAirgapImport {
+    fn id(&self) -> String {
+        format!("prepare/k3s-airgap@{}", self.node_name)
+    }
+    fn stage(&self) -> Stage {
+        Stage::Prepare
+    }
+    fn node(&self) -> &str {
+        &self.node_name
+    }
+    fn describe(&self) -> String {
+        format!("ship airgap images tar {}", self.remote)
+    }
+
+    async fn check(&self, session: &dyn Session) -> Result<Drift> {
+        match (self.expected_sha.as_deref(), session.file_sha256(&self.remote).await?) {
+            (Some(want), Some(have)) if have == want => Ok(Drift::InSync),
+            (None, Some(_)) => Ok(Drift::InSync),
+            _ => Ok(Drift::Drifted(format!(
+                "airgap tar {} missing or stale",
+                self.remote
+            ))),
+        }
+    }
+
+    async fn apply(&self, session: &dyn Session) -> Result<Outcome> {
+        let local = self.payload().await?;
+        let bytes = std::fs::read(&local)
+            .map_err(|e| miette::miette!("read cached airgap tar {}: {e}", local.display()))?;
+        self.ship(session, &bytes).await
+    }
+}
+
+impl K3sAirgapImport {
+    /// Upload one payload and verify what landed on the node. Split from
+    /// [`Task::apply`] so the transfer is unit-testable without a bundle.
+    async fn ship(&self, session: &dyn Session, bytes: &[u8]) -> Result<Outcome> {
+        session
+            .exec(&format!("mkdir -p {K3S_AIRGAP_IMAGES_DIR}"))
+            .await?;
+        session.write_file(&self.remote, bytes).await?;
+        match (self.expected_sha.as_deref(), session.file_sha256(&self.remote).await?) {
+            (Some(want), Some(have)) if have == want => Ok(Outcome::Verified),
+            (None, Some(_)) => Ok(Outcome::Verified),
+            _ => Err(miette::miette!(
+                "airgap tar {} on {} does not match the pinned artifact",
+                self.remote,
+                self.node_name
+            )),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Vip: kube-vip static pod
 // ---------------------------------------------------------------------------
 
 /// HA control-plane VIP manager, shipped into k3s's pod-manifest dir
 /// (k3s watches it; kubelet's /etc/kubernetes/manifests does not exist on a
-/// k3s node). Only planned when the cluster declares a VIP. Must land before
+/// k3s node). Only planned with `ha.mode = "kube-vip"` and a VIP: in
+/// `kurin-lb` mode keepalived on the LB nodes holds the address and a
+/// kube-vip pod would race it for the ARP advertisement. Must land before
 /// Bootstrap: with a VIP the joins (and ApiReady) go through it.
 pub struct K3sKubeVip {
     node_name: String,
@@ -209,6 +395,11 @@ pub struct K3sKubeVip {
 
 impl K3sKubeVip {
     pub fn new(cluster: &Cluster, node: &Node) -> Option<Self> {
+        // kube-vip manages the VIP only in KubeVip mode (kurin-lb hands
+        // the address to keepalived on the LB nodes instead).
+        if cluster.ha_mode != HaMode::KubeVip {
+            return None;
+        }
         let vip = cluster.vip?;
         let image = crate::zone::rewrite_image_ref(
             &format!(

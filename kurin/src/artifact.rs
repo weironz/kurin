@@ -168,6 +168,11 @@ pub struct ArtifactEntry {
     /// tolerated for entries whose pin comes from a registry).
     #[serde(default)]
     pub sha256: BTreeMap<String, String>,
+    /// Optional artifacts are fetched by `kurin artifact` but do not break
+    /// offline-bundle completeness when absent (e.g. the k3s airgap tar is
+    /// only needed by k3s installs).
+    #[serde(default)]
+    pub optional: bool,
 }
 
 /// Zone for all artifact downloads, set once at startup (`KURIN_ZONE=cn`
@@ -306,6 +311,9 @@ impl ArtifactManifest {
 
         let mut missing = Vec::new();
         for entry in manifest.artifacts() {
+            if entry.optional {
+                continue; // not required for bundle completeness
+            }
             for target in &targets {
                 let Some(expected) = entry.sha256.get(target) else {
                     continue; // not pinned for this target — not required

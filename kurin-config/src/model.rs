@@ -160,12 +160,7 @@ impl Cluster {
                         .into(),
                 ));
             }
-            if self.offline_dir.is_some() {
-                return Err(invalid(
-                    "k3s offline installs are not supported in this build (no airgap image bundle yet)"
-                        .into(),
-                ));
-            }
+
         }
         if let Some(d) = &self.offline_dir {
             if !d.is_dir() {

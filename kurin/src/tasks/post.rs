@@ -1,6 +1,8 @@
 //! post/*: kubeconfig fetch + merge, node labels. Runs through the first
 //! control-plane's SSH session but writes the *operator's* local kubeconfig.
 
+use std::sync::Arc;
+
 use kurin_config::Cluster;
 use miette::Result;
 
@@ -290,6 +292,243 @@ impl Task for NodeLabels {
         }
     }
 }
+// ---------------------------------------------------------------------------
+// Summary: end-of-run inventory
+// ---------------------------------------------------------------------------
+
+/// One row of the summary table: what a node is and what it runs. Versions
+/// come from the resolved config (`cluster.kubernetes_version` pins kubelet
+/// and apiserver to the same patch on the kubeadm track; k3s carries one
+/// version for both), never re-queried from the API.
+///
+/// `cert_days_left` is the soonest expiry across that node's pki tree (see
+/// [`crate::certs`]); `None` renders as `-`: workers/LB nodes have no pki
+/// tree, and a failed probe degrades to `-` with a warning on stderr.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct NodeSummary {
+    pub name: String,
+    pub role: String,
+    pub kubelet_version: String,
+    /// API server version; control-plane nodes only.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub apiserver_version: Option<String>,
+    /// Days until the earliest-expiring certificate of this node's pki tree.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cert_days_left: Option<i64>,
+}
+
+/// The end-of-run inventory: config-derived node rows plus the cert-expiry
+/// column merged from a live probe. Feeds both output forms:
+///
+/// - human: [`SummaryReport::to_table`] (miette-style table, stderr — stdout
+///   stays machine-clean, same contract as [`crate::status::render`]);
+/// - machine: [`SummaryReport::to_json`], one `{"type":"summary", ...}` line
+///   shaped like the executor's event stream. The `Event` enum is frozen
+///   (shared file), so a real `summary` variant before `ClusterReady` is not
+///   possible; the CLI's `--json` wiring may emit this line to stderr right
+///   before the executor's `cluster-ready` event.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct SummaryReport {
+    pub cluster: String,
+    pub kubernetes_version: String,
+    pub distribution: String,
+    pub runtime: String,
+    /// Cert `WARN` marks below this many days (mirrors `certs` CLI default).
+    pub cert_warn_days: i64,
+    pub nodes: Vec<NodeSummary>,
+}
+
+impl SummaryReport {
+    /// Machine form: one compact JSON line, tagged `type: "summary"` so
+    /// consumers of the `--json` event stream can pick it up by shape.
+    pub fn to_json(&self) -> String {
+        #[derive(serde::Serialize)]
+        struct Tagged<'a> {
+            #[serde(rename = "type")]
+            kind: &'static str,
+            #[serde(flatten)]
+            inner: &'a SummaryReport,
+        }
+        serde_json::to_string(&Tagged {
+            kind: "summary",
+            inner: self,
+        })
+        .expect("SummaryReport serialization is total")
+    }
+
+    /// Human form: fixed-width table in the style of `certs::render_table`.
+    pub fn to_table(&self) -> String {
+        let mut out = String::from("CLUSTER SUMMARY\n");
+        out.push_str(&format!(
+            "cluster: {}   kubernetes: {}   distribution: {}   runtime: {}\n\n",
+            self.cluster, self.kubernetes_version, self.distribution, self.runtime
+        ));
+        out.push_str(&format!(
+            "{:<24} {:<14} {:<10} {:<10} {:>8}  MARK\n",
+            "NODE", "ROLE", "KUBELET", "APISERVER", "CERTS"
+        ));
+        for n in &self.nodes {
+            let (certs, mark) = match n.cert_days_left {
+                Some(d) => (
+                    format!("{d}d"),
+                    if d < self.cert_warn_days { "WARN" } else { "" },
+                ),
+                None => ("-".to_string(), ""),
+            };
+            out.push_str(&format!(
+                "{:<24} {:<14} {:<10} {:<10} {:>8}  {}\n",
+                n.name,
+                n.role,
+                n.kubelet_version,
+                n.apiserver_version.as_deref().unwrap_or("-"),
+                certs,
+                mark
+            ));
+        }
+        let cp = self.nodes.iter().filter(|n| n.role == "control-plane").count();
+        let workers = self.nodes.iter().filter(|n| n.role == "worker").count();
+        out.push_str(&format!(
+            "\n{} node(s): {cp} control-plane, {} worker\n",
+            self.nodes.len(),
+            workers
+        ));
+        out
+    }
+}
+
+fn role_label(role: kurin_config::NodeRole) -> &'static str {
+    use kurin_config::NodeRole::*;
+    match role {
+        ControlPlane => "control-plane",
+        Worker => "worker",
+        Lb => "lb",
+    }
+}
+
+/// Renders the cluster inventory once install/upgrade reached the Post
+/// stage. A pure report: [`Task::check`] always reports drift so every
+/// (re-)run prints a current table, and the summary never needs a session
+/// of its own — cert expiry is probed cluster-wide through the session
+/// pool (reusing [`crate::certs::check`]), everything else is derived from
+/// the already-resolved config. Probe failure never fails the run: the
+/// cluster was already installed; the table degrades to `-` plus a warning.
+///
+/// Wiring (integration): `Arc::new(Summary::new(cluster, pool.clone()))`,
+/// pushed last into the Post stage on both the install and upgrade paths.
+pub struct Summary {
+    /// Anchor node for the executor's session lookup (first control-plane,
+    /// like [`KubeconfigPull`]); the task itself never uses the session.
+    node_name: String,
+    cluster: Cluster,
+    pool: Arc<dyn crate::executor::SessionPool>,
+    base: SummaryReport,
+}
+
+impl Summary {
+    pub fn new(cluster: &Cluster, pool: Arc<dyn crate::executor::SessionPool>) -> Self {
+        let version = format!("v{}", cluster.kubernetes_version);
+        let nodes = cluster
+            .nodes
+            .iter()
+            .map(|n| NodeSummary {
+                name: n.name.clone(),
+                role: role_label(n.role).to_string(),
+                kubelet_version: match n.role {
+                    kurin_config::NodeRole::Lb => "-".into(),
+                    _ => version.clone(),
+                },
+                apiserver_version: (n.role == kurin_config::NodeRole::ControlPlane)
+                    .then(|| version.clone()),
+                cert_days_left: None,
+            })
+            .collect();
+        // Config enums are kebab-case serialized; spell them exactly as the
+        // config does rather than duplicating rename rules here.
+        let distribution = serde_json::to_value(cluster.distribution)
+            .ok()
+            .and_then(|v| v.as_str().map(str::to_owned))
+            .unwrap_or_default();
+        let runtime = serde_json::to_value(cluster.runtime)
+            .ok()
+            .and_then(|v| v.as_str().map(str::to_owned))
+            .unwrap_or_default();
+        Self {
+            node_name: cluster
+                .control_plane()
+                .next()
+                .map(|n| n.name.clone())
+                .or_else(|| cluster.nodes.first().map(|n| n.name.clone()))
+                .unwrap_or_default(),
+            cluster: cluster.clone(),
+            pool,
+            base: SummaryReport {
+                cluster: cluster.name.clone(),
+                kubernetes_version: version,
+                distribution,
+                runtime,
+                cert_warn_days: 30,
+                nodes,
+            },
+        }
+    }
+
+    /// Probe the cluster's pki trees and merge the soonest-expiry column
+    /// into the config-derived table. Per-node and per-stage log lines
+    /// (cluster, node, step, duration, failure reason) are the executor's
+    /// renderer's job; this inventory covers what those lines cannot.
+    pub async fn collect(&self) -> SummaryReport {
+        let mut report = self.base.clone();
+        match crate::certs::check(&self.cluster, &self.pool, self.base.cert_warn_days).await {
+            Ok(reports) => {
+                let earliest: std::collections::BTreeMap<String, i64> = reports
+                    .iter()
+                    .filter_map(|r| {
+                        r.certs
+                            .iter()
+                            .map(|c| c.days_left)
+                            .min()
+                            .map(|min| (r.node.clone(), min))
+                    })
+                    .collect();
+                for n in &mut report.nodes {
+                    if n.role == "control-plane" {
+                        n.cert_days_left = earliest.get(&n.name).copied();
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("warn: certificate inventory unavailable: {e:?}");
+            }
+        }
+        report
+    }
+}
+
+#[async_trait::async_trait]
+impl Task for Summary {
+    fn id(&self) -> String {
+        format!("post/summary@{}", self.node_name)
+    }
+    fn stage(&self) -> Stage {
+        Stage::Post
+    }
+    fn node(&self) -> &str {
+        &self.node_name
+    }
+    fn describe(&self) -> String {
+        format!("render cluster summary ({} nodes)", self.base.nodes.len())
+    }
+
+    async fn check(&self, _session: &dyn Session) -> Result<Drift> {
+        Ok(Drift::Drifted("summary is a report; render on every run".into()))
+    }
+
+    async fn apply(&self, _session: &dyn Session) -> Result<Outcome> {
+        eprint!("{}", self.collect().await.to_table());
+        Ok(Outcome::Verified)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

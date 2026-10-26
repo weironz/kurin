@@ -9,16 +9,23 @@
 //! Idempotency: nodes whose kubeadm/kubelet versions already match the
 //! target are skipped per-node, so a partially completed upgrade resumes.
 
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use kurin_config::{Cluster, Node};
 use miette::Result;
 use semver::Version;
 
-use crate::artifact::{Arch, ArtifactKind, ArtifactManifest, ArtifactStore};
+use crate::artifact::{Arch, ArtifactKind, ArtifactManifest, ArtifactStore, DirManifest};
 use crate::dynamic_manifest;
 use crate::engine::Session;
 use crate::executor::SessionPool;
+
+// `lib.rs` is integrator-owned: until `pub mod artifact_bundle;` lands
+// there, declare the (independently owned) shared file from this module.
+// Call sites use `upgrade::artifact_bundle::…` either way.
+#[path = "../artifact_bundle.rs"]
+pub mod artifact_bundle;
 
 const KUBE_BINS: [&str; 3] = ["kubeadm", "kubelet", "kubectl"];
 
@@ -32,19 +39,52 @@ fn report(node: &str, step: &str, ok: bool, detail: &str) {
     }
 }
 
-/// Replace the kubernetes binaries on one node from the upgrade manifest.
+/// Where upgrade binaries come from: the shared online cache or a
+/// checksum-verified offline bundle.
+enum BinSource<'a> {
+    Cache {
+        store: &'a ArtifactStore,
+        manifest: &'a ArtifactManifest,
+    },
+    Bundle(&'a DirManifest),
+}
+
+impl BinSource<'_> {
+    /// Local path of `name`'s verified payload for `arch` (fetching it
+    /// when this is the online cache).
+    async fn locate(&self, name: &str, arch: Arch, node: &str) -> Result<PathBuf> {
+        match self {
+            BinSource::Cache { store, manifest } => {
+                let spec = manifest.spec(name, arch)?;
+                eprintln!("[{node}] fetching {name} v{} ...", spec.version);
+                Ok(store.fetch(&spec).await?)
+            }
+            BinSource::Bundle(dir) => dir
+                .find(name, arch)
+                .map(|art| {
+                    eprintln!("[{node}] using bundled {name} v{}", art.version);
+                    art.file.clone()
+                })
+                .ok_or_else(|| {
+                    miette::miette!(
+                        "offline bundle lacks {name} for {arch}; rebuild with `kurin artifact --with-kubernetes vX.Y.Z --out <dir>`",
+                        arch = arch.as_str()
+                    )
+                }),
+        }
+    }
+}
+
+/// Replace the kubernetes binaries on one node from `source`.
 async fn install_kube_bins(
     session: &dyn Session,
-    store: &ArtifactStore,
-    manifest: &ArtifactManifest,
+    source: &BinSource<'_>,
     node: &Node,
     arch: Arch,
 ) -> Result<()> {
     session.exec("mkdir -p /usr/local/bin").await?;
     for name in KUBE_BINS {
-        let spec = manifest.spec(name, arch)?;
-        eprintln!("[{}] fetching {name} v{} ...", node.name, spec.version);
-        let local = store.fetch(&spec).await?;
+        let local = source.locate(name, arch, &node.name).await?;
         let bytes = std::fs::read(&local).map_err(|e| miette::miette!("read {local:?}: {e}"))?;
         eprintln!(
             "[{}] uploading {name} ({} bytes) ...",
@@ -70,7 +110,6 @@ async fn install_kube_bins(
                 out.stderr.lines().last().unwrap_or("").trim()
             ));
         }
-        let _ = node;
     }
     Ok(())
 }
@@ -110,73 +149,146 @@ fn replaced_control_plane_images(manifest: &ArtifactManifest) -> Result<usize> {
         .count())
 }
 
+fn host_arch() -> Result<Arch> {
+    match std::env::consts::ARCH {
+        "x86_64" => Ok(Arch::Amd64),
+        "aarch64" => Ok(Arch::Arm64),
+        other => Err(miette::miette!("unsupported host arch {other}")),
+    }
+}
+
+/// First control-plane node, its session, the kubectl prefix, and the
+/// running apiserver version (`""` = unknown yet).
+struct Cp0<'a> {
+    node: &'a Node,
+    session: Arc<dyn Session>,
+    kubectl: &'static str,
+    server: String,
+}
+
+async fn connect_cp0<'a>(cluster: &'a Cluster, pool: &Arc<dyn SessionPool>) -> Result<Cp0<'a>> {
+    let node = cluster
+        .control_plane()
+        .next()
+        .ok_or_else(|| miette::miette!("cluster has no control-plane node"))?;
+    let session = pool.get(&node.name).await?;
+    let kubectl = "kubectl --kubeconfig /etc/kubernetes/admin.conf --request-timeout=30s";
+    let out = session
+        .exec(&format!(
+            "{kubectl} version -o json 2>/dev/null | grep -m1 gitVersion | tail -1"
+        ))
+        .await?;
+    let server = out
+        .stdout
+        .split('"')
+        .nth(3)
+        .unwrap_or("")
+        .trim_start_matches('v')
+        .to_string();
+    Ok(Cp0 {
+        node,
+        session,
+        kubectl,
+        server,
+    })
+}
+
 pub async fn run(
     cluster: &Cluster,
     target: &Version,
     pool: &Arc<dyn SessionPool>,
     batch: usize,
 ) -> Result<()> {
-    let arch = match std::env::consts::ARCH {
-        "x86_64" => Arch::Amd64,
-        "aarch64" => Arch::Arm64,
-        other => return Err(miette::miette!("unsupported host arch {other}")),
-    };
+    let arch = host_arch()?;
     let store = ArtifactStore::open_default()?;
+    let cp = connect_cp0(cluster, pool).await?;
 
-    let first_cp = cluster
-        .control_plane()
-        .next()
-        .ok_or_else(|| miette::miette!("cluster has no control-plane node"))?;
-    let cp0 = pool.get(&first_cp.name).await?;
-    let kubectl = "kubectl --kubeconfig /etc/kubernetes/admin.conf --request-timeout=30s";
-
-    // Server version = currently running apiserver; "" = unknown yet.
-    let server = {
-        let out = cp0
-            .exec(&format!(
-                "{kubectl} version -o json 2>/dev/null | grep -m1 gitVersion | tail -1"
-            ))
-            .await?;
-        out.stdout
-            .split('"')
-            .nth(3)
-            .unwrap_or("")
-            .trim_start_matches('v')
-            .to_string()
-    };
     // The dynamic manifest re-pins binaries *and* control-plane images to
     // the target. A known server version arms kubeadm's one-minor-at-a-time
     // policy; an unknown one builds the target bundle unconditionally.
-    let manifest = match Version::parse(&server) {
+    let manifest = match Version::parse(&cp.server) {
         Ok(current) => dynamic_manifest::k8s_manifest_for_from(&current, target, arch).await?,
-        Err(_) if server.is_empty() => dynamic_manifest::k8s_manifest_for(target, arch).await?,
-        Err(_) => return Err(miette::miette!("cannot parse server version `{server}`")),
+        Err(_) if cp.server.is_empty() => {
+            dynamic_manifest::k8s_manifest_for(target, arch).await?
+        }
+        Err(_) => return Err(miette::miette!("cannot parse server version `{}`", cp.server)),
     };
-    let replaced = replaced_control_plane_images(&manifest)?;
-    eprintln!("control-plane images to re-pin: {replaced}");
-    if !server.is_empty() && server != target.to_string() {
-        eprintln!("cluster {cluster}", cluster = cluster.name);
-        eprintln!("server={server} -> target=v{target}");
-    }
-
-    let ctx = NodeCtx {
-        pool: pool.as_ref(),
+    let source = BinSource::Cache {
         store: &store,
         manifest: &manifest,
+    };
+    execute(cluster, target, pool, batch, arch, &manifest, &source, &cp).await
+}
+
+/// Air-gapped upgrade: the same walk as [`run`], but every payload comes
+/// from an offline bundle built with `kurin artifact --with-kubernetes`.
+/// The bundle's own manifest is the authority for versions and checksums —
+/// nothing is re-resolved over the network and the embedded manifest of a
+/// different release is never consulted.
+pub async fn run_offline(
+    cluster: &Cluster,
+    target: &Version,
+    offline: &Path,
+    pool: &Arc<dyn SessionPool>,
+    batch: usize,
+) -> Result<()> {
+    let manifest = artifact_bundle::read_bundle_manifest(offline)?;
+    // Rebuild the verified view of the bundle: every payload's checksum is
+    // re-checked against the bundle manifest's pins before any node is
+    // touched, so a corrupt bundle fails on the control host, not mid-roll.
+    let dir = ArtifactManifest::from_dir_with(offline, &manifest)?;
+    let cp = connect_cp0(cluster, pool).await?;
+    let arch = [Arch::Amd64, Arch::Arm64]
+        .into_iter()
+        .find(|a| dir.find("kubeadm", *a).is_some())
+        .ok_or_else(|| {
+            miette::miette!(
+                "offline bundle contains no kubeadm binary; rebuild with \
+                 `kurin artifact --with-kubernetes v{target} --arch amd64 --out <dir>`"
+            )
+        })?;
+    let source = BinSource::Bundle(&dir);
+    execute(cluster, target, pool, batch, arch, &manifest, &source, &cp).await
+}
+
+/// The upgrade walk shared by the online ([`run`]) and offline
+/// ([`run_offline`]) entry points — only the binary source differs.
+async fn execute(
+    cluster: &Cluster,
+    target: &Version,
+    pool: &Arc<dyn SessionPool>,
+    batch: usize,
+    arch: Arch,
+    manifest: &ArtifactManifest,
+    source: &BinSource<'_>,
+    cp: &Cp0<'_>,
+) -> Result<()> {
+    let replaced = replaced_control_plane_images(manifest)?;
+    eprintln!("control-plane images to re-pin: {replaced}");
+    if !cp.server.is_empty() && cp.server != target.to_string() {
+        eprintln!("cluster {}", cluster.name);
+        eprintln!("server={} -> target=v{target}", cp.server);
+    }
+
+    let cp0 = cp.session.as_ref();
+    let kubectl = cp.kubectl;
+    let ctx = NodeCtx {
+        pool: pool.as_ref(),
+        source,
         arch,
-        cp0: cp0.as_ref(),
+        cp0,
         kubectl,
         target,
     };
 
     // 1. First control-plane node: plan + apply (validates the whole upgrade).
     {
-        let n = first_cp;
-        let kv = kubectl_kubelet_version(cp0.as_ref(), &n.name, kubectl).await?;
-        if kv.as_deref() == Some(target.to_string().as_str()) && server == target.to_string() {
+        let n = cp.node;
+        let kv = kubectl_kubelet_version(cp0, &n.name, kubectl).await?;
+        if kv.as_deref() == Some(target.to_string().as_str()) && cp.server == target.to_string() {
             report(&n.name, "up-to-date", true, &format!("already v{target}"));
         } else {
-            install_kube_bins(cp0.as_ref(), &store, &manifest, n, arch).await?;
+            install_kube_bins(cp0, source, n, arch).await?;
             report(&n.name, "binaries", true, "");
             let out = cp0.exec(&format!("kubeadm upgrade plan v{target}")).await?;
             report(
@@ -237,8 +349,7 @@ pub async fn run(
 /// Shared per-node context for the upgrade walk.
 struct NodeCtx<'a> {
     pool: &'a dyn SessionPool,
-    store: &'a ArtifactStore,
-    manifest: &'a ArtifactManifest,
+    source: &'a BinSource<'a>,
     arch: Arch,
     cp0: &'a dyn Session,
     kubectl: &'a str,
@@ -277,7 +388,7 @@ async fn upgrade_one_node(ctx: &NodeCtx<'_>, node: &Node) -> Result<()> {
         drain.stderr.lines().next().unwrap_or("").trim(),
     );
 
-    let session = ctx.pool.get(&node.name).await?;
+    install_kube_bins(session.as_ref(), ctx.source, node, ctx.arch).await?;
     install_kube_bins(session.as_ref(), ctx.store, ctx.manifest, node, ctx.arch).await?;
     report(&node.name, "binaries", true, "");
     let out = session.exec("kubeadm upgrade node").await?;
