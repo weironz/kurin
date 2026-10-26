@@ -36,6 +36,8 @@ pub struct Cluster {
     pub name: String,
     /// Offline artifact bundle directory (None = online install).
     pub offline_dir: Option<std::path::PathBuf>,
+    /// Domestic mirror zone (env `KURIN_ZONE` overrides at CLI level).
+    pub zone: Option<String>,
     pub kubernetes_version: Version,
     pub pod_cidr: Ipv4Net,
     pub service_cidr: Ipv4Net,
@@ -101,9 +103,19 @@ impl Cluster {
         }
         nodes.sort_by(|a, b| a.name.cmp(&b.name));
         let offline_dir = cfg.artifacts.offline_dir.map(|p| p.to_path_buf());
+        if let Some(z) = cfg.artifacts.zone.as_deref() {
+            if z != "cn" {
+                return Err(ConfigError::invalid(
+                    String::new(),
+                    format!(r#"artifacts.zone only accepts "cn" (got {z:?})"#),
+                ));
+            }
+        }
+        let zone = cfg.artifacts.zone;
         Ok(Cluster {
             name: cfg.name,
             offline_dir,
+            zone,
             kubernetes_version,
             pod_cidr,
             service_cidr,

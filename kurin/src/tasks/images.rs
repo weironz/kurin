@@ -26,6 +26,10 @@ impl ImagesImport {
         }
     }
 
+    fn needs_import(&self) -> bool {
+        self.offline.is_some() || crate::artifact::zone() == crate::zone::Zone::Cn
+    }
+
     /// Where this node's payload directory lives.
     async fn payload_dir(&self, spec: &ArtifactSpec) -> miette::Result<PathBuf> {
         match &self.offline {
@@ -38,7 +42,13 @@ impl ImagesImport {
                 // the blobs live next to it.
                 Ok(found.file.parent().unwrap_or(Path::new("")).to_path_buf())
             }
-            None => Ok(ArtifactStore::open_default()?.artifact_dir(spec)),
+            None => {
+                // Online (zone=cn imports too): make sure the payload is
+                // fetched through the zone-aware store before importing.
+                let store = ArtifactStore::open_default()?;
+                store.fetch(spec).await?;
+                Ok(store.artifact_dir(spec))
+            }
         }
     }
 }
@@ -55,7 +65,7 @@ impl Task for ImagesImport {
         &self.node.name
     }
     fn describe(&self) -> String {
-        if self.offline.is_some() {
+        if self.needs_import() {
             format!(
                 "import pinned images into containerd k8s.io ({})",
                 self.arch.as_str()
@@ -66,9 +76,9 @@ impl Task for ImagesImport {
     }
 
     async fn check(&self, session: &dyn Session) -> Result<Drift> {
-        let Some(_dir) = &self.offline else {
+        if !self.needs_import() {
             return Ok(Drift::InSync);
-        };
+        }
         // Every expected reference must be present: counting alone can't
         // tell which one is missing, and ctr lists registry pulls too.
         let manifest = ArtifactManifest::embedded()?;
@@ -100,9 +110,9 @@ impl Task for ImagesImport {
     }
 
     async fn apply(&self, session: &dyn Session) -> miette::Result<Outcome> {
-        let Some(_dir) = &self.offline else {
+        if !self.needs_import() {
             return Ok(Outcome::Verified);
-        };
+        }
         let manifest = ArtifactManifest::embedded()?;
         for entry in manifest
             .artifacts()

@@ -181,6 +181,7 @@ mod tests {
         Cluster {
             name: "test".into(),
             offline_dir: None,
+            zone: None,
             kubernetes_version: "1.33.1".parse().unwrap(),
             pod_cidr: "10.233.64.0/18".parse().unwrap(),
             service_cidr: "10.233.0.0/18".parse().unwrap(),

@@ -438,7 +438,13 @@ impl KubeVip {
                 vip => vip.to_string(),
                 pod_cidr => cluster.pod_cidr.to_string(),
                 vip_interface => DEFAULT_VIP_IFACE,
-                image => crate::version::KUBE_VIP_VERSION,
+                image => {
+                    let image = crate::zone::rewrite_image_ref(
+                        &format!("ghcr.io/kube-vip/kube-vip:{}", crate::version::KUBE_VIP_VERSION),
+                        crate::artifact::zone(),
+                    );
+                    image
+                },
             },
         )
         .expect("embedded kube-vip template renders");
@@ -517,6 +523,7 @@ mod tests {
         Cluster {
             name: "test".into(),
             offline_dir: None,
+            zone: None,
             kubernetes_version: "1.33.1".parse().unwrap(),
             pod_cidr: "10.233.64.0/18".parse().unwrap(),
             service_cidr: "10.233.0.0/18".parse().unwrap(),

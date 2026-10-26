@@ -21,6 +21,7 @@ pub mod teardown;
 pub mod templates;
 pub mod upgrade;
 pub mod version;
+pub mod zone;
 
 pub use engine::{Drift, Event, ExecOutput, Outcome, Session, Stage, Task};
 pub use executor::{run, SessionPool};

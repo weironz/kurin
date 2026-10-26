@@ -130,6 +130,23 @@ enum CreateWhat {
     },
 }
 
+/// Resolve the download zone: `KURIN_ZONE` env wins over config's
+/// `[artifacts] zone`. Must be called before any artifact fetch.
+fn init_zone(config_zone: Option<&str>) -> Result<()> {
+    let zone_str = std::env::var("KURIN_ZONE")
+        .ok()
+        .filter(|z| !z.is_empty())
+        .or_else(|| config_zone.map(str::to_string))
+        .unwrap_or_else(|| "global".to_string());
+    let zone = kurin::zone::Zone::parse(&zone_str)
+        .ok_or_else(|| miette::miette!("invalid zone {zone_str:?} (expected "cn")"))?;
+    kurin::artifact::set_zone(zone);
+    if zone == kurin::zone::Zone::Cn {
+        eprintln!("[zone] artifact downloads via domestic mirrors");
+    }
+    Ok(())
+}
+
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> ExitCode {
     miette::set_panic_hook();
@@ -199,6 +216,7 @@ async fn run(cli: Cli) -> Result<()> {
                 offline,
             } => {
                 let mut cluster = kurin_config::load(&file)?;
+                init_zone(cluster.zone.as_deref())?;
                 if let Some(dir) = offline {
                     cluster.offline_dir = Some(dir);
                 }
@@ -255,6 +273,7 @@ async fn run(cli: Cli) -> Result<()> {
 }
 
 async fn build_artifacts(out: PathBuf, arch: Option<String>) -> Result<()> {
+    init_zone(None)?;
     let arch = match arch.as_deref() {
         Some("amd64" | "x86_64") => kurin::artifact::Arch::Amd64,
         Some("arm64" | "aarch64") => kurin::artifact::Arch::Arm64,
@@ -295,6 +314,7 @@ async fn build_artifacts(out: PathBuf, arch: Option<String>) -> Result<()> {
 
 async fn add_nodes(file: PathBuf, json: bool, offline: Option<PathBuf>) -> Result<()> {
     let mut cluster = kurin_config::load(&file)?;
+    init_zone(cluster.zone.as_deref())?;
     if let Some(dir) = offline {
         cluster.offline_dir = Some(dir);
     }

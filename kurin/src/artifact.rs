@@ -170,6 +170,18 @@ pub struct ArtifactEntry {
     pub sha256: BTreeMap<String, String>,
 }
 
+/// Zone for all artifact downloads, set once at startup (`KURIN_ZONE=cn`
+/// or `[artifacts] zone`). Reads are plain `OnceLock` gets — set-once-write.
+static ZONE: std::sync::OnceLock<crate::zone::Zone> = std::sync::OnceLock::new();
+
+pub fn set_zone(zone: crate::zone::Zone) {
+    let _ = ZONE.set(zone);
+}
+
+pub fn zone() -> crate::zone::Zone {
+    *ZONE.get().unwrap_or(&crate::zone::Zone::Global)
+}
+
 /// The artifact manifest: the single source of truth for installable
 /// binaries, images and manifests.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -447,7 +459,8 @@ impl ArtifactStore {
                 if self.is_cached(spec)? {
                     return Ok(dest);
                 }
-                download_verified(&spec.url(), &dest, &expected, &spec.name, &[]).await?;
+                let url = crate::zone::rewrite(&spec.url(), crate::artifact::zone());
+                download_verified(&url, &dest, &expected, &spec.name, &[]).await?;
                 Ok(dest)
             }
             ArtifactKind::Image => {
@@ -481,7 +494,7 @@ impl ArtifactStore {
         dir: &Path,
         expected_index: &str,
     ) -> Result<(), ArtifactError> {
-        let reference = spec.url();
+        let reference = crate::zone::rewrite_image_ref(&spec.url(), crate::artifact::zone());
         let (registry, repo, tag) = parse_image_ref(&reference)?;
 
         let index_path = dir.join("index.json");

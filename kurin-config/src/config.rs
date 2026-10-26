@@ -42,6 +42,9 @@ pub struct ClusterConfig {
 pub struct ArtifactsConfig {
     /// Prebuilt offline artifact directory (see `kurin artifact build`).
     pub offline_dir: Option<PathBuf>,
+    /// Pull artifacts via domestic Chinese mirrors. Accepted value: "cn".
+    /// `KURIN_ZONE=cn` in the environment overrides this field.
+    pub zone: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]

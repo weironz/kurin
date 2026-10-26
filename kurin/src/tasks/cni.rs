@@ -40,9 +40,15 @@ impl CalicoOperator {
     }
 
     fn installation_cr(&self) -> String {
+        // Runtime image pulls must follow the zone too: the operator CR's
+        // registry decides where calico-node/cni/typha images come from.
+        let registry = match crate::artifact::zone() {
+            crate::zone::Zone::Cn => "quay.m.daocloud.io",
+            crate::zone::Zone::Global => "quay.io",
+        };
         templates::render(
             "cni/calico-installation.yaml.j2",
-            minijinja::context! { pod_cidr => self.pod_cidr },
+            minijinja::context! { pod_cidr => self.pod_cidr, registry => registry },
         )
         .expect("embedded calico Installation template renders")
     }
@@ -164,6 +170,7 @@ mod tests {
         Cluster {
             name: "test".into(),
             offline_dir: None,
+            zone: None,
             kubernetes_version: "1.33.1".parse().unwrap(),
             pod_cidr: pod_cidr.parse().unwrap(),
             service_cidr: "10.233.0.0/18".parse().unwrap(),
