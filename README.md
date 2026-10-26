@@ -8,9 +8,11 @@ Status: **M1 in progress** (W0 contracts + W1 parallel tracks merged; tier-0 e2e
 ## What it does (M1 scope)
 
 - Nodes: Ubuntu 24.04+ / Debian 12 / Rocky Linux 9, amd64 + arm64
-- Runtime: containerd (binary-first; no apt/yum for the Kubernetes stack)
-- CNI: Calico via tigera-operator manifest
-- Kubernetes ≥ v1.30 (pinned compile-time version table, `--with-kubernetes` override)
+- Runtime: containerd (binary-first; no apt/yum for the Kubernetes stack); K3s
+  distribution available (`kubernetes.distribution = "k3s"`)
+- CNI: Calico (tigera-operator), Flannel, or `none` (Cilium in wave2 integration)
+- Kubernetes ≥ v1.30 (pinned compile-time version table, `--with-kubernetes` override,
+  cross-minor upgrades supported via kubeadm's +1-minor path)
 - Single control plane and HA (kube-vip)
 - Commands: `create cluster` / `create config` / `add nodes` / `delete node` /
   `delete cluster` / `artifact`
@@ -93,6 +95,29 @@ kurin create cluster -f cluster.toml
 
 Everything (binaries, control-plane images, CNI) comes from the bundle; the
 install makes zero network requests. Image digests are pinned by OCI index.
+
+## CN mirrors
+
+```bash
+KURIN_ZONE=cn kurin create cluster -f cluster.toml
+# or in the config:
+# [artifacts]
+# zone = "cn"
+```
+
+Verified mirror table (digest parity checked by `scripts/check-mirrors.sh`,
+CI: `.github/workflows/mirrors.yml`): registries via daocloud mirrors,
+GitHub releases via gh-proxy. `dl.k8s.io` has no maintained domestic mirror
+and stays direct. The sha256 pins in the manifest remain the trust anchor.
+
+## Operations
+
+```bash
+kurin certs check  -f cluster.toml [--warn-days N]
+kurin certs renew  -f cluster.toml [--force]      # kubeadm certs renew + gated restart
+kurin status       -f cluster.toml [--json]        # nodes/pods/etcd/certs; exit code gates health
+kurin upgrade      -f cluster.toml --with-kubernetes vX.Y.Z [--dry-run]
+```
 
 ## Adding, removing, tearing down
 

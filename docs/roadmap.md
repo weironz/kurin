@@ -6,9 +6,9 @@ tier-0~3 + offline 五层 e2e 全绿，CI 为 check + tier0（push/PR）+ releas
 本文件是 M2 的全部剩余任务清单。每项含验收标准、依赖与建议批次。
 "人工 e2e"：按当前约定，multipass e2e 只在本地手工跑，不进定时任务。
 
-## 批次 1 — 补齐 kubekey 语义必备项（建议先做）
+## 批次 1 — 补齐 kubekey 语义必备项 ✅（2026-10-26 wave1 完成）
 
-### 1.1 证书检查与轮转（`kurin certs check|renew`）
+### 1.1 证书检查与轮转（`kurin certs check|renew`）✅
 - `certs check`：读取 `/etc/kubernetes/pki`，报告每个证书的 `NotAfter`、
   剩余天数、SA/CA 层级；默认阈值 30 天，`--warn-days N` 可调。
 - `certs renew`：`kubeadm certs renew all` + 逐控制面节点轮转
@@ -18,13 +18,13 @@ tier-0~3 + offline 五层 e2e 全绿，CI 为 check + tier0（push/PR）+ releas
 - 验收：tier-2 集群下 `certs check` 输出全部证书与剩余天数；
   `--force` 轮转后 apiserver 仍 Ready、kubeconfig 认证可用。
 
-### 1.2 `add nodes` 追加控制面成员（e2e 缺口）
+### 1.2 `add nodes` 追加控制面成员（e2e 缺口）✅（并解禁无 VIP stacked 多 CP）
 - 机制已具备（join 任务对 control-plane 走 `--control-plane --certificate-key`），
   但从未在实机上验证过"运行中集群追加 CP"。
 - 验收：tier-2 起手（1 CP + 1 worker），追加第 2 个 CP，三节点 Ready、
   etcd member 数 = 2，`kubectl get nodes` roles=control-plane 正确。
 
-### 1.3 集群健康探针（post 阶段 + `kurin status`）
+### 1.3 集群健康探针（post 阶段 + `kurin status`）✅
 - `kurin status -f cluster.toml`：节点 Ready、控制面组件可用、CNI 就绪、
   etcd quorum、证书剩余天数汇总（复用 1.1 的检查代码）。
 - 安装/升级结束后自动跑一次（事件流输出），失败不算安装失败但明确告警。
@@ -32,7 +32,7 @@ tier-0~3 + offline 五层 e2e 全绿，CI 为 check + tier0（push/PR）+ releas
 
 ## 批次 2 — 部署形态扩展（每项独立，按需选择）
 
-### 2.1 国内镜像源（`KURIN_ZONE=cn`）——留口已存在
+### 2.1 国内镜像源（`KURIN_ZONE=cn`）✅（wave1 完成，见 README）
 - URL 重写 trait 已在 `artifact` 层预留（manifest URL 模板可整体改写），
   缺：镜像表数据 + 环境变量接线。
 - 镜像源已验证（2026-10）：`k8s.m.daocloud.io` / `quay.m.daocloud.io` /
