@@ -10,6 +10,7 @@
 //! The thin binary in `main.rs` only parses argv and picks an output sink.
 
 pub mod artifact;
+pub mod artifact_bundle;
 pub mod certs;
 pub mod dynamic_manifest;
 pub mod engine;

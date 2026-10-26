@@ -90,10 +90,7 @@ pub fn runtime_tasks(cluster: &Cluster) -> Result<Vec<(Stage, Arc<dyn Task>)>> {
             Stage::Prepare,
             Arc::new(CrioConfig::new(node, crate::version::PAUSE_IMAGE)),
         ));
-        out.push((
-            Stage::Prepare,
-            Arc::new(CrioUnit::new(node, &spec.version)),
-        ));
+        out.push((Stage::Prepare, Arc::new(CrioUnit::new(node, &spec.version))));
     }
     Ok(out)
 }
@@ -159,7 +156,10 @@ impl CrioInstall {
 
     async fn probe(&self, session: &dyn Session) -> miette::Result<bool> {
         let out = session.exec("/usr/local/bin/crio -v").await?;
-        Ok(out.ok() && out.stdout.contains(&format!("crio version {}", self.spec.version)))
+        Ok(out.ok()
+            && out
+                .stdout
+                .contains(&format!("crio version {}", self.spec.version)))
     }
 }
 
@@ -272,9 +272,7 @@ impl Task for CrioConfig {
 
     async fn apply(&self, session: &dyn Session) -> miette::Result<Outcome> {
         let dir = Path::new(CRIO_DROPIN).parent().expect("drop-in has parent");
-        session
-            .exec(&format!("mkdir -p {}", dir.display()))
-            .await?;
+        session.exec(&format!("mkdir -p {}", dir.display())).await?;
         session
             .write_file(CRIO_DROPIN, self.rendered.as_bytes())
             .await?;
@@ -338,7 +336,9 @@ impl Task for CrioUnit {
     async fn check(&self, session: &dyn Session) -> Result<Drift> {
         let want = sha256_hex(self.rendered.as_bytes());
         if session.file_sha256(CRIO_UNIT).await? != Some(want) {
-            return Ok(Drift::Drifted("crio.service unit differs from rendered".into()));
+            return Ok(Drift::Drifted(
+                "crio.service unit differs from rendered".into(),
+            ));
         }
         if !session.service_active("crio").await? {
             return Ok(Drift::Drifted("crio.service not active".into()));

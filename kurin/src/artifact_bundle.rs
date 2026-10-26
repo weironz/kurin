@@ -39,6 +39,5 @@ pub fn read_bundle_manifest(dir: &Path) -> Result<ArtifactManifest> {
             miette::miette!("read {}: {e}", path.display())
         }
     })?;
-    ArtifactManifest::from_json(&json)
-        .map_err(|e| miette::miette!("parse {}: {e}", path.display()))
+    ArtifactManifest::from_json(&json).map_err(|e| miette::miette!("parse {}: {e}", path.display()))
 }

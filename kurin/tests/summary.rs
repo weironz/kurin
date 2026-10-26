@@ -142,7 +142,14 @@ async fn table_marks_aged_cluster_certs() {
     // master02 is below the 30-day threshold.
     assert_eq!(
         cols("master02"),
-        ["master02", "control-plane", "v1.33.1", "v1.33.1", "29d", "WARN"],
+        [
+            "master02",
+            "control-plane",
+            "v1.33.1",
+            "v1.33.1",
+            "29d",
+            "WARN"
+        ],
         "{table}"
     );
 }

@@ -47,6 +47,9 @@ enum Commands {
         /// Worker batch size (control-plane nodes always go one at a time).
         #[arg(long, default_value_t = 1)]
         batch: usize,
+        /// Offline bundle directory (built by `kurin artifact --with-kubernetes`).
+        #[arg(long)]
+        offline: Option<PathBuf>,
     },
     /// Build an offline artifact bundle for air-gapped installs.
     Artifact {
@@ -56,6 +59,10 @@ enum Commands {
         /// Architecture to build for (default: this machine's).
         #[arg(long)]
         arch: Option<String>,
+        /// Kubernetes version to pin binaries and control-plane images for
+        /// (writes kurin-manifest.json; default: the compiled-in table).
+        #[arg(long)]
+        with_kubernetes: Option<String>,
     },
     /// Add nodes from an updated config to an existing cluster.
     Add(AddArgs),
@@ -202,6 +209,7 @@ async fn run(cli: Cli) -> Result<()> {
             with_kubernetes,
             dry_run,
             batch,
+            offline,
         } => {
             let cluster = kurin_config::load(&file)?;
             let target = with_kubernetes
@@ -215,11 +223,17 @@ async fn run(cli: Cli) -> Result<()> {
                 std::sync::Arc::new(kurin::ssh::SshSessionPool::from_cluster(&cluster)?);
             if dry_run {
                 kurin::upgrade::plan(&cluster, &target, &pool).await
+            } else if let Some(offline) = offline {
+                kurin::upgrade::run_offline(&cluster, &target, &offline, &pool, batch).await
             } else {
                 kurin::upgrade::run(&cluster, &target, &pool, batch).await
             }
         }
-        Commands::Artifact { out, arch } => build_artifacts(out, arch).await,
+        Commands::Artifact {
+            out,
+            arch,
+            with_kubernetes,
+        } => build_artifacts(out, arch, with_kubernetes).await,
         Commands::Certs { what } => match what {
             CertsWhat::Check { file, warn_days } => {
                 let cluster = kurin_config::load(&file)?;
@@ -307,10 +321,9 @@ async fn run(cli: Cli) -> Result<()> {
                 if cp > 1 && cluster.vip.is_none() && !json {
                     eprintln!("warn: {cp} control-plane nodes without ha.vip: the first master becomes the API single point of failure");
                 }
-                let mut plan = kurin::Plan::build(&cluster)?;
-
                 let pool: std::sync::Arc<dyn kurin::SessionPool> =
                     std::sync::Arc::new(kurin::ssh::SshSessionPool::from_cluster(&cluster)?);
+                let mut plan = kurin::Plan::build_with_pool(&cluster, Some(pool.clone()))?;
                 if check {
                     kurin::executor::probe(&mut plan, &pool).await?;
                 }
@@ -355,7 +368,11 @@ async fn run(cli: Cli) -> Result<()> {
     }
 }
 
-async fn build_artifacts(out: PathBuf, arch: Option<String>) -> Result<()> {
+async fn build_artifacts(
+    out: PathBuf,
+    arch: Option<String>,
+    with_kubernetes: Option<String>,
+) -> Result<()> {
     init_zone(None)?;
     let arch = match arch.as_deref() {
         Some("amd64" | "x86_64") => kurin::artifact::Arch::Amd64,
@@ -367,7 +384,16 @@ async fn build_artifacts(out: PathBuf, arch: Option<String>) -> Result<()> {
             other => return Err(miette::miette!("unsupported host arch {other}")),
         },
     };
-    let manifest = kurin::artifact::ArtifactManifest::embedded()?;
+    let manifest = match &with_kubernetes {
+        Some(v) => {
+            let target: semver::Version = v
+                .trim_start_matches('v')
+                .parse()
+                .map_err(|e| miette::miette!("--with-kubernetes {v:?}: {e}"))?;
+            kurin::dynamic_manifest::k8s_manifest_for(&target, arch).await?
+        }
+        None => kurin::artifact::ArtifactManifest::embedded()?,
+    };
     let store = kurin::artifact::ArtifactStore::open_default()?;
     std::fs::create_dir_all(&out).into_diagnostic()?;
     for entry in manifest.artifacts() {
@@ -391,6 +417,8 @@ async fn build_artifacts(out: PathBuf, arch: Option<String>) -> Result<()> {
     }
     // Sidecar checksums are included by the copy above; the dir name layout
     // is exactly what ArtifactManifest::from_dir expects.
+    kurin::artifact_bundle::write_bundle_manifest(&out, &manifest)
+        .map_err(|e| miette::miette!("bundle manifest: {e}"))?;
     eprintln!("offline bundle written to {}", out.display());
     Ok(())
 }
@@ -446,7 +474,12 @@ async fn add_nodes(file: PathBuf, json: bool, offline: Option<PathBuf>) -> Resul
     }
 
     // Same plan/executor as create: converged nodes skip, new nodes install.
-    let mut plan = kurin::Plan::build(&cluster)?;
+    let mut plan = kurin::Plan::build_with_pool(
+        &cluster,
+        Some(std::sync::Arc::new(
+            kurin::ssh::SshSessionPool::from_cluster(&cluster)?,
+        )),
+    )?;
     let mut opts = kurin::executor::RunOptions::default().with_default_state(&cluster.name);
     opts.resume = false;
     let mut emit = |event: kurin::Event| {

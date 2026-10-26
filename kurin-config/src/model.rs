@@ -160,7 +160,6 @@ impl Cluster {
                         .into(),
                 ));
             }
-
         }
         if let Some(d) = &self.offline_dir {
             if !d.is_dir() {

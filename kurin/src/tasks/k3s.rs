@@ -290,13 +290,11 @@ pub struct K3sAirgapImport {
 
 impl K3sAirgapImport {
     pub fn new(cluster: &Cluster, node: &Node) -> Self {
-        let manifest = crate::artifact::install_manifest()
-            .expect("embedded artifact manifest parses");
+        let manifest =
+            crate::artifact::install_manifest().expect("embedded artifact manifest parses");
         let spec = manifest
             .spec(K3S_AIRGAP_ARTIFACT, HOST_ARCH)
-            .unwrap_or_else(|e| {
-                panic!("manifest must carry the {K3S_AIRGAP_ARTIFACT} entry: {e}")
-            });
+            .unwrap_or_else(|e| panic!("manifest must carry the {K3S_AIRGAP_ARTIFACT} entry: {e}"));
         Self {
             node_name: node.name.clone(),
             remote: format!("{}/{}", K3S_AIRGAP_IMAGES_DIR, spec.file_name()),
@@ -321,8 +319,7 @@ impl K3sAirgapImport {
             })?;
             Ok(found.file.clone())
         } else {
-            let spec = crate::artifact::install_manifest()?
-                .spec(K3S_AIRGAP_ARTIFACT, HOST_ARCH)?;
+            let spec = crate::artifact::install_manifest()?.spec(K3S_AIRGAP_ARTIFACT, HOST_ARCH)?;
             Ok(ArtifactStore::open_default()?.fetch(&spec).await?)
         }
     }
@@ -344,7 +341,10 @@ impl Task for K3sAirgapImport {
     }
 
     async fn check(&self, session: &dyn Session) -> Result<Drift> {
-        match (self.expected_sha.as_deref(), session.file_sha256(&self.remote).await?) {
+        match (
+            self.expected_sha.as_deref(),
+            session.file_sha256(&self.remote).await?,
+        ) {
             (Some(want), Some(have)) if have == want => Ok(Drift::InSync),
             (None, Some(_)) => Ok(Drift::InSync),
             _ => Ok(Drift::Drifted(format!(
@@ -370,7 +370,10 @@ impl K3sAirgapImport {
             .exec(&format!("mkdir -p {K3S_AIRGAP_IMAGES_DIR}"))
             .await?;
         session.write_file(&self.remote, bytes).await?;
-        match (self.expected_sha.as_deref(), session.file_sha256(&self.remote).await?) {
+        match (
+            self.expected_sha.as_deref(),
+            session.file_sha256(&self.remote).await?,
+        ) {
             (Some(want), Some(have)) if have == want => Ok(Outcome::Verified),
             (None, Some(_)) => Ok(Outcome::Verified),
             _ => Err(miette::miette!(
@@ -1227,22 +1230,16 @@ mod tests {
         assert!(!online.iter().any(|(_, t)| t.id().contains("k3s-airgap")));
 
         for (label, c) in [
-            (
-                "cn",
-                {
-                    let mut c = single();
-                    c.zone = Some("cn".into());
-                    c
-                },
-            ),
-            (
-                "offline",
-                {
-                    let mut c = single();
-                    c.offline_dir = Some("/tmp/kurin-bundle".into());
-                    c
-                },
-            ),
+            ("cn", {
+                let mut c = single();
+                c.zone = Some("cn".into());
+                c
+            }),
+            ("offline", {
+                let mut c = single();
+                c.offline_dir = Some("/tmp/kurin-bundle".into());
+                c
+            }),
         ] {
             let ids: Vec<String> = stage_tasks(&c)
                 .unwrap()
@@ -1366,7 +1363,10 @@ mod tests {
         assert!(!ids.iter().any(|i| i.contains("kube-vip")));
         assert!(!ids.iter().any(|i| i.contains("external-lb")));
         // ApiReady still gates on the VIP.
-        assert_eq!(ids.iter().filter(|i| i.starts_with("api-ready:")).count(), 1);
+        assert_eq!(
+            ids.iter().filter(|i| i.starts_with("api-ready:")).count(),
+            1
+        );
     }
 
     // -- join config + command assembly --------------------------------------

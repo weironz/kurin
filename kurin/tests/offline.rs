@@ -94,7 +94,9 @@ fn bundle_payloads_verify_against_the_written_manifest() {
     // re-verify every payload against them.
     let read = read_bundle_manifest(dir.path()).unwrap();
     let found = ArtifactManifest::from_dir_with(dir.path(), &read).unwrap();
-    let art = found.find("kubeadm", Arch::Amd64).expect("kubeadm in bundle");
+    let art = found
+        .find("kubeadm", Arch::Amd64)
+        .expect("kubeadm in bundle");
     assert_eq!(std::fs::read(&art.file).unwrap(), payload);
     assert_eq!(art.version, "1.34.12");
 }

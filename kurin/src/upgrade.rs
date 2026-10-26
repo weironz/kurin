@@ -24,8 +24,7 @@ use crate::executor::SessionPool;
 // `lib.rs` is integrator-owned: until `pub mod artifact_bundle;` lands
 // there, declare the (independently owned) shared file from this module.
 // Call sites use `upgrade::artifact_bundle::…` either way.
-#[path = "artifact_bundle.rs"]
-pub mod artifact_bundle;
+pub use crate::artifact_bundle;
 
 const KUBE_BINS: [&str; 3] = ["kubeadm", "kubelet", "kubectl"];
 
@@ -208,10 +207,13 @@ pub async fn run(
     // policy; an unknown one builds the target bundle unconditionally.
     let manifest = match Version::parse(&cp.server) {
         Ok(current) => dynamic_manifest::k8s_manifest_for_from(&current, target, arch).await?,
-        Err(_) if cp.server.is_empty() => {
-            dynamic_manifest::k8s_manifest_for(target, arch).await?
+        Err(_) if cp.server.is_empty() => dynamic_manifest::k8s_manifest_for(target, arch).await?,
+        Err(_) => {
+            return Err(miette::miette!(
+                "cannot parse server version `{}`",
+                cp.server
+            ))
         }
-        Err(_) => return Err(miette::miette!("cannot parse server version `{}`", cp.server)),
     };
     let source = BinSource::Cache {
         store: &store,
@@ -255,6 +257,7 @@ pub async fn run_offline(
 
 /// The upgrade walk shared by the online ([`run`]) and offline
 /// ([`run_offline`]) entry points — only the binary source differs.
+#[allow(clippy::too_many_arguments)] // grouped context; args mirror the two call sites
 async fn execute(
     cluster: &Cluster,
     target: &Version,

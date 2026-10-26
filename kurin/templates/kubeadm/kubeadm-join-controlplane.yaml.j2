@@ -15,4 +15,4 @@ controlPlane:
     bindPort: 6443
 nodeRegistration:
   name: {{ node_name }}
-  criSocket: unix:///run/containerd/containerd.sock
+  criSocket: {{ cri_socket }}

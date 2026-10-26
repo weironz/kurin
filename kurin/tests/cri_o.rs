@@ -3,13 +3,13 @@
 //! session records files and fakes the three effects the lane depends on
 //! (binary present, unit present, service active).
 
-use std::collections::{HashMap, HashSet};
-use kurin::engine::{Drift, ExecOutput, Outcome, Session, Stage, Task};
 use kurin::artifact::{Arch, ArtifactManifest};
-use std::sync::Mutex;
+use kurin::engine::{Drift, ExecOutput, Outcome, Session, Stage, Task};
 use kurin::tasks::cri_o;
 use kurin_config::Cluster;
 use miette::Result;
+use std::collections::{HashMap, HashSet};
+use std::sync::Mutex;
 
 const CRIO_VERSION: &str = "1.33.4";
 
@@ -73,8 +73,10 @@ impl Session for MockSession {
                 });
             }
             st.files.remove("/tmp/kurin-crio.tar.gz");
-            st.files.insert("/usr/local/bin/crio".into(), b"bin".to_vec());
-            st.files.insert("/etc/crio/policy.json".into(), b"{}".to_vec());
+            st.files
+                .insert("/usr/local/bin/crio".into(), b"bin".to_vec());
+            st.files
+                .insert("/etc/crio/policy.json".into(), b"{}".to_vec());
             return ok_out("");
         }
         // Unit activation: works only when the unit file exists.
@@ -268,12 +270,7 @@ async fn crio_install_reads_the_offline_bundle_and_verifies() {
     let cluster = cluster();
     let (bundle, manifest) = seed_bundle(b"fake-static-crio-package");
     let spec = manifest.spec("crio", Arch::Amd64).unwrap();
-    let task = cri_o::CrioInstall::new(
-        &node(&cluster),
-        spec,
-        manifest,
-        Some(bundle.path().into()),
-    );
+    let task = cri_o::CrioInstall::new(&node(&cluster), spec, manifest, Some(bundle.path().into()));
     let session = MockSession::new();
 
     assert!(matches!(
@@ -302,6 +299,12 @@ async fn crio_install_fails_when_bundle_misses_the_tarball() {
     let spec = manifest.spec("crio", Arch::Amd64).unwrap();
     let task = cri_o::CrioInstall::new(&node(&cluster), spec, manifest, Some(empty.path().into()));
     let session = MockSession::new();
-    let err = task.apply(&session).await.expect_err("missing payload errors");
-    assert!(format!("{err}").contains("crio"), "error names the artifact: {err}");
+    let err = task
+        .apply(&session)
+        .await
+        .expect_err("missing payload errors");
+    assert!(
+        format!("{err}").contains("crio"),
+        "error names the artifact: {err}"
+    );
 }

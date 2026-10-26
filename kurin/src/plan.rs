@@ -25,6 +25,15 @@ impl Plan {
     /// Linear stage chain (M1): preflight -> prepare -> bootstrap -> join -> cni -> post.
     /// The graph shape is ready for M2 branching (air-gap, upgrade).
     pub fn build(cluster: &Cluster) -> Result<Plan> {
+        Self::build_with_pool(cluster, None)
+    }
+
+    /// Same as [`Self::build`], but registers tasks that need live sessions
+    /// (the post-install summary probes certificates).
+    pub fn build_with_pool(
+        cluster: &Cluster,
+        pool: Option<std::sync::Arc<dyn crate::executor::SessionPool>>,
+    ) -> Result<Plan> {
         let stages = [
             Stage::Preflight,
             Stage::Artifacts,
@@ -90,22 +99,18 @@ impl Plan {
                     .filter(|n| n.role == kurin_config::NodeRole::Lb)
                     .enumerate()
                 {
-                    let i = idx[stages
-                        .iter()
-                        .position(|x| *x == Stage::Vip)
-                        .expect("vip stage")];
-                    graph[i].tasks.push(PlannedTask {
-                        task: Arc::new(tasks::external_lb::ExternalLb::new(cluster, lb, ordinal)?),
-                        drift: None,
-                    });
+                    push(
+                        4,
+                        Arc::new(tasks::external_lb::ExternalLb::new(cluster, lb, ordinal)?),
+                    );
                 }
             }
             for (stage, task) in tasks::k3s::stage_tasks(cluster)? {
-                let i = idx[stages
+                let i = stages
                     .iter()
                     .position(|x| *x == stage)
-                    .expect("k3s stage is one of the plan stages")];
-                graph[i].tasks.push(PlannedTask { task, drift: None });
+                    .expect("k3s stage is one of the plan stages");
+                push(i, task);
             }
             return Ok(Plan { graph, stages: idx });
         }
@@ -162,7 +167,23 @@ impl Plan {
             );
         }
 
-        // CRI-O prepare tasks are wired once tasks/cri_o.rs lands (tail batch).
+        // Runtime tasks (CRI-O): prepare-stage tasks returned by the
+        // runtime implementation (skipped above when containerd is the runtime).
+        if cluster.runtime == kurin_config::RuntimeKind::Crio {
+            let mapped: Vec<(usize, Arc<dyn Task>)> = tasks::cri_o::runtime_tasks(cluster)?
+                .into_iter()
+                .map(|(stage, task)| {
+                    let i = stages
+                        .iter()
+                        .position(|x| *x == stage)
+                        .expect("runtime stage is one of the plan stages");
+                    (i, task)
+                })
+                .collect();
+            for (i, task) in mapped {
+                push(i, task);
+            }
+        }
         // Vip: kube-vip static pod on every control-plane node (VIP only).
         // Must be written before init binds the VIP as controlPlaneEndpoint.
         if cluster.ha_mode == kurin_config::HaMode::KubeVip {
@@ -213,6 +234,9 @@ impl Plan {
         // CNI + post.
         push(8, tasks::cni::plugin_task(cluster)?);
         push(9, Arc::new(tasks::post::KubeconfigPull::new(cluster)));
+        if let Some(summary) = pool {
+            push(9, Arc::new(tasks::post::Summary::new(cluster, summary)));
+        }
         // Config-declared node labels (kubeadm ignores nodeRegistration.labels
         // since v1beta4); converged through the API from the first CP.
         for node in cluster

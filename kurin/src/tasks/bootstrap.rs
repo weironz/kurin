@@ -157,6 +157,10 @@ impl KubeadmInit {
                 pod_cidr => cluster.pod_cidr.to_string(),
                 service_cidr => cluster.service_cidr.to_string(),
                 dns_domain => cluster.dns_domain,
+                cri_socket => match cluster.runtime {
+                    kurin_config::RuntimeKind::Containerd => "unix:///run/containerd/containerd.sock",
+                    kurin_config::RuntimeKind::Crio => crate::tasks::cri_o::CRIO_SOCKET,
+                },
                 advertise_address => advertise,
                 control_plane_endpoint => endpoint,
             },
