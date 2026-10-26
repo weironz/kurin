@@ -24,6 +24,16 @@ enum Commands {
         #[command(subcommand)]
         what: CertsWhat,
     },
+    /// Read-only host audit before `create cluster` (swap, kernel,
+    /// ports, disk, time sync...).
+    Precheck {
+        /// Config file (.toml or .yaml).
+        #[arg(short, long)]
+        file: PathBuf,
+        /// Emit one JSON object per check plus a summary line.
+        #[arg(long)]
+        json: bool,
+    },
     /// Probe cluster health (nodes, pods, etcd, certificates).
     Status {
         /// Config file (.toml or .yaml).
@@ -250,6 +260,24 @@ async fn run(cli: Cli) -> Result<()> {
                 kurin::certs::renew(&cluster, &pool, force).await
             }
         },
+        Commands::Precheck { file, json } => {
+            let cluster = kurin_config::load(&file)?;
+            let pool: std::sync::Arc<dyn kurin::SessionPool> =
+                std::sync::Arc::new(kurin::ssh::SshSessionPool::from_cluster(&cluster)?);
+            let report = kurin::precheck::run(&cluster, &pool).await?;
+            if json {
+                kurin::precheck::render_json(&report);
+            } else {
+                kurin::precheck::render(&report);
+            }
+            match report.ok() {
+                true => Ok(()),
+                false => Err(miette::miette!(
+                    "precheck found {} failing check(s)",
+                    report.failures()
+                )),
+            }
+        }
         Commands::Status { file, json } => {
             let cluster = kurin_config::load(&file)?;
             let pool: std::sync::Arc<dyn kurin::SessionPool> =

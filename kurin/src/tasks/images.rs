@@ -66,7 +66,8 @@ impl ImagesImport {
 
     /// Image artifacts the *selected CNI* pulls at runtime: kubelet must
     /// find them preloaded on offline (or mirror-zone) installs.
-    fn cni_image_names(cni: &kurin_config::CniConfig) -> Vec<&'static str> {
+    /// Public for the registry seed task (same selection, pushed upstream).
+    pub(crate) fn cni_image_names(cni: &kurin_config::CniConfig) -> Vec<&'static str> {
         match cni {
             kurin_config::CniConfig::Calico => vec![
                 // control-plane + calico fleet are part of the base set

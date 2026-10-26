@@ -539,6 +539,11 @@ mod tests {
             cni: CniConfig::Calico,
             vip: vip.map(|v| v.parse().unwrap()),
             nodes: vec![node("m1", "192.168.10.11")],
+            registry_kind: None,
+            registry_port: 5000,
+            registry_username: None,
+            registry_password: None,
+            registry_data_dir: "/var/lib/kurin/registry".into(),
             source: String::new(),
         }
     }

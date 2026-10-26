@@ -4,7 +4,7 @@
 
 use std::path::Path;
 
-use kurin_config::{load, parse_str, NodeRole};
+use kurin_config::{load, parse_str, NodeRole, RegistryKind};
 
 const GOOD: &str = r##"
 version = "v1alpha1"
@@ -124,4 +124,70 @@ fn miette_renders_diagnostic() {
     // miette fancy rendering exists; base Debug render must contain the reason
     let text = format!("{err:?}");
     assert!(text.contains("control-plane"), "msg: {text}");
+}
+
+// -- registry role gates (docs/registry-contracts.md) ---------------------
+
+const GOOD_WITH_REGISTRY: &str = r#"
+version = "v1alpha1"
+name = "test"
+[kubernetes]
+version = "1.33.1"
+[network]
+pod-cidr = "10.233.64.0/18"
+service-cidr = "10.233.0.0/18"
+[registry]
+kind = "zot"
+username = "kurin"
+password = "s3cret"
+[ssh]
+user = "root"
+[ssh.auth]
+method = "password"
+password = "x"
+[nodes.node01]
+address = "10.99.0.10"
+role = "control-plane"
+[nodes.reg1]
+address = "10.99.0.30"
+role = "registry"
+"#;
+
+#[test]
+fn registry_role_requires_registry_kind() {
+    // role = "registry" without [registry] section: hard error.
+    let bad = GOOD_WITH_REGISTRY.replace(
+        "[registry]\nkind = \"zot\"\nusername = \"kurin\"\npassword = \"s3cret\"\n",
+        "",
+    );
+    let err = parse_str(Path::new("x.toml"), &bad).unwrap_err();
+    let msg = format!("{err:?}");
+    assert!(msg.contains("[registry] kind"), "got: {msg}");
+}
+
+#[test]
+fn registry_kind_without_registry_node_rejected() {
+    // [registry] set but no node claiming the role: hard error.
+    let bad = GOOD_WITH_REGISTRY.replace("role = \"registry\"", "role = \"worker\"");
+    let err = parse_str(Path::new("x.toml"), &bad).unwrap_err();
+    let msg = format!("{err:?}");
+    assert!(msg.contains("no node has role"), "got: {msg}");
+}
+
+#[test]
+fn harbor_rejects_multiple_registry_nodes() {
+    let bad = format!(
+        "{GOOD_WITH_REGISTRY}\n[nodes.reg2]\naddress = \"10.99.0.31\"\nrole = \"registry\"\n"
+    )
+    .replace("kind = \"zot\"", "kind = \"harbor\"");
+    let err = parse_str(Path::new("x.toml"), &bad).unwrap_err();
+    let msg = format!("{err:?}");
+    assert!(msg.contains("harbor"), "got: {msg}");
+}
+
+#[test]
+fn registry_defaults_docker_registry_to_port_5000() {
+    let cfg = parse_str(Path::new("x.toml"), GOOD_WITH_REGISTRY).unwrap();
+    assert_eq!(cfg.registry_port, 5000);
+    assert_eq!(cfg.registry_kind, Some(RegistryKind::Zot));
 }

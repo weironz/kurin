@@ -55,4 +55,6 @@ role = "worker"
 [nodes.worker01.labels]
 "node-role.kurin.io/pool" = "general"
 
+[registry]
+
 [artifacts]

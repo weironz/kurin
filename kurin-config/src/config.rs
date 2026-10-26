@@ -31,8 +31,40 @@ pub struct ClusterConfig {
     /// Nodes keyed by node name. Names are globally unique by construction.
     #[serde(default)]
     pub nodes: BTreeMap<String, NodeConfig>,
+    /// Private image registry on `role = "registry"` nodes.
+    #[serde(default)]
+    pub registry: RegistryConfig,
     #[serde(default)]
     pub artifacts: ArtifactsConfig,
+}
+
+/// Which registry implementation to install on `role = "registry"` nodes.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum RegistryKind {
+    /// CNCF distribution v3 (docker-registry): single static binary.
+    #[default]
+    #[serde(rename = "docker-registry")]
+    DockerRegistry,
+    /// project-zot: single static binary, OCI-native.
+    Zot,
+    /// Harbor v2 offline installer (single registry node only).
+    Harbor,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case")]
+pub struct RegistryConfig {
+    /// Implementation; required when any node has role = "registry".
+    pub kind: Option<RegistryKind>,
+    /// Listen port. Defaults per kind: 5000 (docker-registry, zot), 8443 (harbor).
+    pub port: Option<u16>,
+    /// Basic-auth user for the registry API (harbor: its admin user).
+    pub username: Option<String>,
+    /// Basic-auth password (docker-registry/zot: htpasswd; harbor: admin password).
+    pub password: Option<String>,
+    /// Storage directory for images (harbor uses its installer layout).
+    pub data_dir: Option<PathBuf>,
 }
 
 /// Where node payloads come from: online (download) or a prepared
@@ -160,6 +192,8 @@ pub enum NodeRole {
     ControlPlane,
     /// HA load balancer node (only valid with ha.mode = "kurin-lb").
     Lb,
+    /// Private image registry node (only valid with [registry] set).
+    Registry,
     #[default]
     Worker,
 }

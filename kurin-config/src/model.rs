@@ -9,7 +9,8 @@ use ipnet::Ipv4Net;
 use semver::Version;
 
 use crate::config::{
-    ClusterConfig, CniConfig, Distribution, HaMode, NodeRole, RuntimeKind, SshAuth, CONFIG_VERSION,
+    ClusterConfig, CniConfig, Distribution, HaMode, NodeRole, RegistryKind, RuntimeKind, SshAuth,
+    CONFIG_VERSION,
 };
 use crate::error::{ConfigError, Result};
 
@@ -53,6 +54,12 @@ pub struct Cluster {
     pub cni: CniConfig,
     pub vip: Option<IpAddr>,
     pub nodes: Vec<Node>,
+    /// Private registry implementation (None = no registry nodes).
+    pub registry_kind: Option<RegistryKind>,
+    pub registry_port: u16,
+    pub registry_username: Option<String>,
+    pub registry_password: Option<String>,
+    pub registry_data_dir: std::path::PathBuf,
     /// Original config text, retained so validation can render spans.
     pub source: String,
 }
@@ -120,6 +127,11 @@ impl Cluster {
             }
         }
         let zone = cfg.artifacts.zone;
+        let registry_kind = cfg.registry.kind;
+        let registry_port = cfg.registry.port.unwrap_or(match registry_kind {
+            Some(RegistryKind::Harbor) => 8443,
+            _ => 5000,
+        });
         let distribution = cfg.kubernetes.distribution;
         let ha_mode = cfg.ha.mode;
         let runtime = cfg.kubernetes.runtime;
@@ -137,6 +149,14 @@ impl Cluster {
             cni: cfg.network.cni,
             vip: cfg.ha.vip,
             nodes,
+            registry_kind,
+            registry_port,
+            registry_username: cfg.registry.username,
+            registry_password: cfg.registry.password,
+            registry_data_dir: cfg
+                .registry
+                .data_dir
+                .unwrap_or_else(|| "/var/lib/kurin/registry".into()),
             source: String::new(),
         })
     }
@@ -235,6 +255,38 @@ impl Cluster {
             return Err(invalid(
                 "role = \"lb\" nodes are only valid with ha.mode = \"kurin-lb\"".into(),
             ));
+        }
+        // registry nodes: contract in docs/registry-contracts.md
+        let reg_nodes: Vec<&Node> = self
+            .nodes
+            .iter()
+            .filter(|n| n.role == NodeRole::Registry)
+            .collect();
+        match (reg_nodes.len(), self.registry_kind) {
+            (0, Some(_)) => {
+                return Err(invalid(
+                    "[registry] is configured but no node has role = \"registry\"".into(),
+                ))
+            }
+            (0, None) => {}
+            (n, None) => {
+                return Err(invalid(format!(
+                    "role = \"registry\" nodes need [registry] kind (docker-registry, zot or harbor); {n} node(s) declared"
+                )))
+            }
+            (n, Some(RegistryKind::Harbor)) if n > 1 => {
+                return Err(invalid(
+                    "[registry] kind = \"harbor\" supports exactly one registry node (no shared storage)"
+                        .into(),
+                ))
+            }
+            (_, Some(_)) => {
+                if self.registry_username.is_some() != self.registry_password.is_some() {
+                    return Err(invalid(
+                        "[registry] username and password must be set together".into(),
+                    ));
+                }
+            }
         }
         match self.ha_mode {
             HaMode::KubeVip => match (cp, self.vip) {

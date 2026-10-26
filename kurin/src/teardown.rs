@@ -363,6 +363,11 @@ mod tests {
             cni: Default::default(),
             vip: None,
             nodes: vec![node("cp1", NodeRole::ControlPlane)],
+            registry_kind: None,
+            registry_port: 5000,
+            registry_username: None,
+            registry_password: None,
+            registry_data_dir: "/var/lib/kurin/registry".into(),
             source: String::new(),
         }
     }

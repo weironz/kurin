@@ -364,6 +364,40 @@
         "linux-amd64": "547ab45f6092f681d9f54f3be9fa8fb1e705c9c5dc2df388efe3a52aa6965629",
         "linux-arm64": "547ab45f6092f681d9f54f3be9fa8fb1e705c9c5dc2df388efe3a52aa6965629"
       }
+    },
+    {
+      "name": "zot",
+      "kind": "binary",
+      "version": "2.1.22",
+      "file": "zot",
+      "url_template": "https://github.com/project-zot/zot/releases/download/v{version}/zot-linux-{arch}-minimal",
+      "sha256": {
+        "linux-amd64": "a053169f97b4ceaa051e054d53971799188a398cb36acbaf5e08622ec8664c44",
+        "linux-arm64": "4224c23122c43638f92875d6fb4f23564472d2584a348cb057440bcf4b43bf08"
+      }
+    },
+    {
+      "name": "docker-registry",
+      "kind": "binary",
+      "version": "3.1.2",
+      "file": "registry_{version}_linux_{arch}.tar.gz",
+      "url_template": "https://github.com/distribution/distribution/releases/download/v{version}/registry_{version}_linux_{arch}.tar.gz",
+      "sha256": {
+        "linux-amd64": "40df2224d410f72ae425c3371873b078bbdbda3b8b612be9571f0e6751f3acc8",
+        "linux-arm64": "09d26f88d2c0f161bd1b8bfc6c123571cc3d291dcca8af5477b3cacc4ec95e73"
+      }
+    },
+    {
+      "name": "harbor-installer",
+      "kind": "binary",
+      "version": "2.14.6",
+      "file": "harbor-offline-installer-v{version}.tgz",
+      "url_template": "https://github.com/goharbor/harbor/releases/download/v{version}/harbor-offline-installer-v{version}.tgz",
+      "sha256": {
+        "linux-amd64": "d30efc7ad7aaae462b6017df6f34810c37ac61a806aaebd6d06e28d98bab3b1d",
+        "linux-arm64": "d30efc7ad7aaae462b6017df6f34810c37ac61a806aaebd6d06e28d98bab3b1d"
+      },
+      "optional": true
     }
   ]
 }

@@ -190,6 +190,11 @@ mod tests {
             distribution: kurin_config::Distribution::K8s,
             ha_mode: kurin_config::HaMode::KubeVip,
             runtime: kurin_config::RuntimeKind::Containerd,
+            registry_kind: None,
+            registry_port: 5000,
+            registry_username: None,
+            registry_password: None,
+            registry_data_dir: "/var/lib/kurin/registry".into(),
             source: String::new(),
         }
     }

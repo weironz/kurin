@@ -202,9 +202,9 @@ impl K3sUnit {
         let role = match node.role {
             NodeRole::ControlPlane => "server",
             NodeRole::Worker => "agent",
-            // LB nodes never get a k3s unit ([`stage_tasks`] skips them);
-            // keep a benign default for any direct construction in tests.
-            NodeRole::Lb => "agent",
+            // LB/registry nodes never get a k3s unit ([`stage_tasks`]
+            // skips them); keep a benign default for direct construction.
+            NodeRole::Lb | NodeRole::Registry => "agent",
         };
         let rendered = templates::render(
             "systemd/k3s.service.j2",
@@ -1011,6 +1011,11 @@ mod tests {
             cni,
             vip: vip.map(|v| v.parse().unwrap()),
             nodes,
+            registry_kind: None,
+            registry_port: 5000,
+            registry_username: None,
+            registry_password: None,
+            registry_data_dir: "/var/lib/kurin/registry".into(),
             source: String::new(),
         }
     }

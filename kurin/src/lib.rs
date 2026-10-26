@@ -16,6 +16,7 @@ pub mod dynamic_manifest;
 pub mod engine;
 pub mod executor;
 pub mod plan;
+pub mod precheck;
 pub mod render;
 pub mod ssh;
 pub mod state;

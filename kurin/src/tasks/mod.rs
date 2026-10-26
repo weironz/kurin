@@ -10,3 +10,4 @@ pub mod kernel_deps;
 pub mod post;
 pub mod preflight;
 pub mod prepare;
+pub mod registry;

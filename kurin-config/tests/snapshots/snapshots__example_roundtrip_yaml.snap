@@ -58,6 +58,12 @@ nodes:
     auth: null
     labels:
       node-role.kurin.io/pool: general
+registry:
+  kind: null
+  port: null
+  username: null
+  password: null
+  data-dir: null
 artifacts:
   offline-dir: null
   zone: null

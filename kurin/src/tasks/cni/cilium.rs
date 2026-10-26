@@ -173,6 +173,11 @@ mod tests {
             cni: CniConfig::Cilium,
             vip: None,
             nodes: vec![node],
+            registry_kind: None,
+            registry_port: 5000,
+            registry_username: None,
+            registry_password: None,
+            registry_data_dir: "/var/lib/kurin/registry".into(),
             source: String::new(),
         }
     }

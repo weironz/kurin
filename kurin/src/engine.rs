@@ -32,6 +32,8 @@ pub enum Stage {
     /// Binary-first distribution: fetch + install pinned binaries.
     Artifacts,
     Prepare,
+    /// Private registry install/trust/seed (only when role = "registry").
+    Registry,
     /// Seed container images (offline installs only; online pulls them).
     Images,
     /// kube-vip static pod manifests on every control-plane node
@@ -51,6 +53,7 @@ impl Stage {
             Stage::Preflight => "preflight",
             Stage::Artifacts => "artifacts",
             Stage::Prepare => "prepare",
+            Stage::Registry => "registry",
             Stage::Images => "images",
             Stage::Vip => "vip",
             Stage::Bootstrap => "bootstrap",

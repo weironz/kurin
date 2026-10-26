@@ -38,6 +38,7 @@ impl Plan {
             Stage::Preflight,
             Stage::Artifacts,
             Stage::Prepare,
+            Stage::Registry,
             Stage::Images,
             Stage::Vip,
             Stage::Bootstrap,
@@ -75,11 +76,12 @@ impl Plan {
         // K3s: same preflight/artifacts, then the distribution task set.
         // containerd/kubelet units and kubeadm tasks do not apply.
         if cluster.distribution == kurin_config::Distribution::K3s {
-            for node in cluster
-                .nodes
-                .iter()
-                .filter(|n| n.role != kurin_config::NodeRole::Lb)
-            {
+            for node in cluster.nodes.iter().filter(|n| {
+                !matches!(
+                    n.role,
+                    kurin_config::NodeRole::Lb | kurin_config::NodeRole::Registry
+                )
+            }) {
                 push(0, Arc::new(tasks::preflight::Preflight::new(node)));
                 push(
                     1,
@@ -105,12 +107,37 @@ impl Plan {
         }
 
         // K8s-members only (kubeadm track): LB nodes are deployed by the
-        // vip stage, not by the k8s artifact task set.
+        // vip stage, registry nodes by the registry stage.
         let k8s_nodes: Vec<_> = cluster
             .nodes
             .iter()
-            .filter(|n| n.role != kurin_config::NodeRole::Lb)
+            .filter(|n| {
+                !matches!(
+                    n.role,
+                    kurin_config::NodeRole::Lb | kurin_config::NodeRole::Registry
+                )
+            })
             .collect();
+        // Registry nodes: preflight + artifact fetch only (no kubelet, no
+        // containerd config — harbor uses its own docker stack).
+        if cluster.registry_kind.is_some() {
+            for node in cluster
+                .nodes
+                .iter()
+                .filter(|n| n.role == kurin_config::NodeRole::Registry)
+            {
+                push(0, Arc::new(tasks::preflight::Preflight::new(node)));
+                push(
+                    1,
+                    Arc::new(tasks::install::ArtifactsInstall::new(
+                        node,
+                        arch,
+                        cluster.offline_dir.clone(),
+                        cluster.runtime,
+                    )),
+                );
+            }
+        }
         for node in &k8s_nodes {
             let node = *node;
             push(0, Arc::new(tasks::preflight::Preflight::new(node)));
@@ -145,12 +172,46 @@ impl Plan {
             );
         }
 
+        // Registry: install/trust/seed when a registry node exists; the
+        // trust+seed tasks run on k8s nodes only.
+        if cluster.registry_kind.is_some() {
+            for node in cluster.nodes.iter() {
+                match node.role {
+                    kurin_config::NodeRole::Registry => {
+                        push(
+                            3,
+                            Arc::new(tasks::registry::RegistryInstall::new(cluster, node, arch)?),
+                        );
+                    }
+                    kurin_config::NodeRole::ControlPlane => {
+                        push(
+                            3,
+                            Arc::new(tasks::registry::RegistryTrust::new(cluster, node)?),
+                        );
+                    }
+                    kurin_config::NodeRole::Worker => {
+                        push(
+                            3,
+                            Arc::new(tasks::registry::RegistryTrust::new(cluster, node)?),
+                        );
+                    }
+                    kurin_config::NodeRole::Lb => {}
+                }
+            }
+            if let Some(cp1) = cluster.control_plane().next() {
+                push(
+                    3,
+                    Arc::new(tasks::registry::RegistrySeed::new(cluster, cp1, arch)?),
+                );
+            }
+        }
+
         // Images: seed containerd from the bundle (offline only; the task
         // reports InSync when online since kubelet pulls from registries).
         for node in &k8s_nodes {
             let node = *node;
             push(
-                3,
+                4,
                 Arc::new(tasks::images::ImagesImport::new(
                     node,
                     arch,
@@ -182,7 +243,7 @@ impl Plan {
         if cluster.ha_mode == kurin_config::HaMode::KubeVip {
             for node in cluster.control_plane() {
                 if let Some(kubevip) = tasks::bootstrap::KubeVip::new(cluster, node) {
-                    push(4, Arc::new(kubevip));
+                    push(5, Arc::new(kubevip));
                 }
             }
         }
@@ -201,20 +262,21 @@ impl Plan {
         }
         if let Some(first) = cluster.control_plane().next() {
             push(
-                4,
+                5,
                 Arc::new(tasks::bootstrap::KubeadmInit::new(cluster, first)),
             );
             // ApiReady: the VIP-backed API must serve before any join. join's
             // discovery hits the VIP, which requires kube-vip's lease + 6443
             // forwarding to be live (seconds after init on a fresh node).
-            push(5, Arc::new(tasks::bootstrap::ApiReady::new(cluster, first)));
+            push(6, Arc::new(tasks::bootstrap::ApiReady::new(cluster, first)));
         }
         // Join: workers and additional control-plane members.
-        for node in cluster
-            .nodes
-            .iter()
-            .filter(|n| n.role != kurin_config::NodeRole::Lb)
-        {
+        for node in cluster.nodes.iter().filter(|n| {
+            !matches!(
+                n.role,
+                kurin_config::NodeRole::Lb | kurin_config::NodeRole::Registry
+            )
+        }) {
             let is_first_cp = cluster
                 .control_plane()
                 .next()
@@ -222,22 +284,23 @@ impl Plan {
             if is_first_cp {
                 continue;
             }
-            push(6, Arc::new(tasks::join::KubeadmJoin::new(cluster, node)));
+            push(7, Arc::new(tasks::join::KubeadmJoin::new(cluster, node)));
         }
         // CNI + post.
-        push(8, tasks::cni::plugin_task(cluster)?);
-        push(9, Arc::new(tasks::post::KubeconfigPull::new(cluster)));
+        push(9, tasks::cni::plugin_task(cluster)?);
+        push(10, Arc::new(tasks::post::KubeconfigPull::new(cluster)));
         if let Some(summary) = pool {
-            push(9, Arc::new(tasks::post::Summary::new(cluster, summary)));
+            push(10, Arc::new(tasks::post::Summary::new(cluster, summary)));
         }
         // Config-declared node labels (kubeadm ignores nodeRegistration.labels
         // since v1beta4); converged through the API from the first CP.
-        for node in cluster
-            .nodes
-            .iter()
-            .filter(|n| n.role != kurin_config::NodeRole::Lb && !n.labels.is_empty())
-        {
-            push(9, Arc::new(tasks::post::NodeLabels::new(cluster, node)));
+        for node in cluster.nodes.iter().filter(|n| {
+            !matches!(
+                n.role,
+                kurin_config::NodeRole::Lb | kurin_config::NodeRole::Registry
+            ) && !n.labels.is_empty()
+        }) {
+            push(10, Arc::new(tasks::post::NodeLabels::new(cluster, node)));
         }
 
         Ok(Plan { graph, stages: idx })
