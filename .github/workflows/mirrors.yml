@@ -1,0 +1,22 @@
+name: mirrors
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - kurin/src/zone.rs
+      - kurin/src/artifacts/manifest.json
+      - scripts/check-mirrors.sh
+  schedule:
+    # Monday 10:00 CST (UTC+8) = 02:00 UTC
+    - cron: "0 2 * * 1"
+  workflow_dispatch:
+
+jobs:
+  mirrors:
+    runs-on: self-hosted
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: mirror digest parity check
+        run: bash scripts/check-mirrors.sh
