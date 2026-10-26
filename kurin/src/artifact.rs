@@ -1172,6 +1172,7 @@ mod tests {
             file: file.to_string(),
             url_template: "https://example.invalid/{name}/{version}".to_string(),
             sha256: BTreeMap::new(),
+            optional: false,
         }
     }
 

@@ -72,12 +72,13 @@ pub const ROOT_KUBECONFIG: &str = "/root/.kube/config";
 /// k3s embeds kubectl; the binary artifact is at a fixed path.
 const KUBECTL: &str = "/usr/local/bin/k3s kubectl";
 /// The arch the airgap payload is resolved for. kurin drives one arch per
-/// run (the agent binary is arch-specific); mirrors the planner's
-/// `std::env::consts::ARCH` mapping.
-const HOST_ARCH: Arch = match std::env::consts::ARCH {
-    "x86_64" => Arch::Amd64,
-    "aarch64" => Arch::Arm64,
-    other => panic!("unsupported build architecture: {other}"),
+/// run (the agent binary is arch-specific); same mapping as the planner.
+const HOST_ARCH: Arch = if cfg!(target_arch = "x86_64") {
+    Arch::Amd64
+} else if cfg!(target_arch = "aarch64") {
+    Arch::Arm64
+} else {
+    panic!("unsupported build architecture")
 };
 
 /// True when the airgap tar should be shipped: offline installs always need
@@ -85,7 +86,10 @@ const HOST_ARCH: Arch = match std::env::consts::ARCH {
 /// pulls (rancher-mirrored images) are too slow/unreliable to lean on, so
 /// the images are pre-seeded the same way.
 fn airgap_needed(cluster: &Cluster) -> bool {
-    cluster.offline_dir.is_some() || crate::artifact::zone() == crate::zone::Zone::Cn
+    cluster.offline_dir.is_some()
+        || cluster.zone.as_deref() == Some("cn")
+        // env/config zone is set process-wide at startup; honor it too.
+        || crate::artifact::zone() == crate::zone::Zone::Cn
 }
 
 /// k3s-specific tasks with their stage assignment, for the integrator's
@@ -1212,6 +1216,157 @@ mod tests {
 
         let single_tasks = stage_tasks(&single()).unwrap();
         assert!(single_tasks.iter().all(|(s, _)| *s != Stage::Vip));
+    }
+
+    // -- airgap ----------------------------------------------------------------
+
+    #[test]
+    fn airgap_planned_only_offline_or_cn() {
+        let c = single();
+        let online = stage_tasks(&c).unwrap();
+        assert!(!online.iter().any(|(_, t)| t.id().contains("k3s-airgap")));
+
+        for (label, c) in [
+            (
+                "cn",
+                {
+                    let mut c = single();
+                    c.zone = Some("cn".into());
+                    c
+                },
+            ),
+            (
+                "offline",
+                {
+                    let mut c = single();
+                    c.offline_dir = Some("/tmp/kurin-bundle".into());
+                    c
+                },
+            ),
+        ] {
+            let ids: Vec<String> = stage_tasks(&c)
+                .unwrap()
+                .iter()
+                .map(|(_, t)| t.id())
+                .collect();
+            for n in ["cp1", "w1"] {
+                assert!(
+                    ids.contains(&format!("prepare/k3s-airgap@{n}")),
+                    "airgap task for {n} missing ({label})"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn airgap_remote_path_is_manifest_payload() {
+        let mut c = single();
+        c.zone = Some("cn".into());
+        let t = K3sAirgapImport::new(&c, &c.nodes[0]);
+        let spec = crate::artifact::install_manifest()
+            .unwrap()
+            .spec(K3S_AIRGAP_ARTIFACT, HOST_ARCH)
+            .unwrap();
+        assert_eq!(
+            t.remote,
+            format!("{K3S_AIRGAP_IMAGES_DIR}/{}", spec.file_name())
+        );
+        assert!(t.expected_sha.is_some(), "k3s-airgap must be sha-pinned");
+    }
+
+    #[tokio::test]
+    async fn airgap_ship_writes_and_verifies() {
+        let bytes = b"fake airgap tar payload".to_vec();
+        let remote = format!("{K3S_AIRGAP_IMAGES_DIR}/k3s-airgap-images-test.tar");
+        let t = K3sAirgapImport {
+            node_name: "w1".into(),
+            remote: remote.clone(),
+            expected_sha: Some(sha256_hex(&bytes)),
+            offline_dir: None,
+        };
+        let s = MockSession::active();
+        assert!(matches!(t.check(&s).await.unwrap(), Drift::Drifted(_)));
+        assert!(matches!(
+            t.ship(&s, &bytes).await.unwrap(),
+            Outcome::Verified
+        ));
+        assert!(s
+            .commands()
+            .iter()
+            .any(|c| c.contains("mkdir -p /var/lib/rancher/k3s/agent/images")));
+        assert!(matches!(t.check(&s).await.unwrap(), Drift::InSync));
+
+        // A stale tar on the node is drift and is replaced.
+        s.write_file(&remote, b"stale bytes").await.unwrap();
+        assert!(matches!(t.check(&s).await.unwrap(), Drift::Drifted(_)));
+        assert!(matches!(
+            t.ship(&s, &bytes).await.unwrap(),
+            Outcome::Verified
+        ));
+        assert!(matches!(t.check(&s).await.unwrap(), Drift::InSync));
+    }
+
+    #[tokio::test]
+    async fn airgap_offline_payload_fails_without_bundle() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut c = single();
+        c.offline_dir = Some(dir.path().to_path_buf());
+        let t = K3sAirgapImport::new(&c, &c.nodes[0]);
+        assert!(t.payload().await.is_err(), "empty bundle must not resolve");
+    }
+
+    // -- ha.mode = kurin-lb -----------------------------------------------------
+
+    fn kurin_lb() -> Cluster {
+        let mut c = cluster(
+            "k3s-test-lb",
+            vec![
+                node("cp1", "192.168.10.11", NodeRole::ControlPlane),
+                node("cp2", "192.168.10.12", NodeRole::ControlPlane),
+                node("lb1", "192.168.10.50", NodeRole::Lb),
+                node("w1", "192.168.10.21", NodeRole::Worker),
+            ],
+            Some("192.168.10.100"),
+            CniConfig::Flannel,
+        );
+        c.ha_mode = HaMode::KurinLb;
+        c
+    }
+
+    #[test]
+    fn kurin_lb_plans_external_lb_not_kube_vip() {
+        let ids: Vec<String> = stage_tasks(&kurin_lb())
+            .unwrap()
+            .iter()
+            .map(|(s, t)| format!("{}:{}", s.label(), t.id()))
+            .collect();
+        // The LB node gets the distribution-agnostic ExternalLb in Vip.
+        assert!(ids.iter().any(|i| i == "vip:vip/external-lb@lb1"));
+        // kube-vip would race keepalived for the same VIP.
+        assert!(!ids.iter().any(|i| i.contains("kube-vip")));
+        // The LB node runs no k3s task at all (unit, join, airgap).
+        assert!(!ids
+            .iter()
+            .any(|i| i.ends_with("@lb1") && !i.contains("external-lb")));
+        // Joins cover the second server and the worker, not the LB.
+        assert!(ids.iter().any(|i| i == "join:join/k3s@cp2"));
+        assert!(ids.iter().any(|i| i == "join:join/k3s@w1"));
+        assert!(!ids.iter().any(|i| i == "join:join/k3s@lb1"));
+    }
+
+    #[test]
+    fn external_endpoint_plans_no_vip_manager() {
+        let mut c = ha();
+        c.ha_mode = HaMode::ExternalEndpoint;
+        let ids: Vec<String> = stage_tasks(&c)
+            .unwrap()
+            .iter()
+            .map(|(s, t)| format!("{}:{}", s.label(), t.id()))
+            .collect();
+        assert!(!ids.iter().any(|i| i.contains("kube-vip")));
+        assert!(!ids.iter().any(|i| i.contains("external-lb")));
+        // ApiReady still gates on the VIP.
+        assert_eq!(ids.iter().filter(|i| i.starts_with("api-ready:")).count(), 1);
     }
 
     // -- join config + command assembly --------------------------------------
