@@ -520,6 +520,7 @@ impl ArtifactStore {
     ) -> Result<(), ArtifactError> {
         let reference = crate::zone::rewrite_image_ref(&spec.url(), crate::artifact::zone());
         let (registry, repo, tag) = parse_image_ref(&reference)?;
+        let auth = registry_auth_headers(&registry, &repo).await?;
 
         let index_path = dir.join("index.json");
         download_verified(
@@ -527,7 +528,7 @@ impl ArtifactStore {
             &index_path,
             expected_index,
             &spec.name,
-            &[REGISTRY_ACCEPT],
+            &auth.accept_auth,
         )
         .await?;
         let index: OciIndex = serde_json::from_slice(&std::fs::read(&index_path)?)?;
@@ -552,7 +553,7 @@ impl ArtifactStore {
             &manifest_path,
             &manifest_digest,
             &spec.name,
-            &[REGISTRY_ACCEPT],
+            &auth.accept_auth,
         )
         .await?;
         let manifest: OciManifest = serde_json::from_slice(&std::fs::read(&manifest_path)?)?;
@@ -567,12 +568,62 @@ impl ArtifactStore {
                 &blob_path,
                 &hex,
                 &spec.name,
-                &[],
+                &auth.bare_auth,
             )
             .await?;
         }
         Ok(())
     }
+}
+
+/// Per-registry auth header set for anonymous pulls. ghcr.io is the one
+/// registry of the set that 401s anonymous v2 requests; it hands out
+/// pull tokens to anyone asking. quay.io / registry.k8s.io / docker
+/// mirrors serve anonymous reads directly.
+struct RegistryAuth {
+    /// Accept + Authorization (manifest requests).
+    accept_auth: Vec<String>,
+    /// Authorization only (blob requests).
+    bare_auth: Vec<String>,
+}
+
+async fn registry_auth_headers(registry: &str, repo: &str) -> Result<RegistryAuth, ArtifactError> {
+    let auth_header = if registry == "ghcr.io" {
+        let url = format!("https://ghcr.io/token?service=ghcr.io&scope=repository:{repo}:pull");
+        let url_for_err = url.clone();
+        let out = std::process::Command::new("curl")
+            .arg("-fsSL")
+            .arg(&url)
+            .output()
+            .map_err(|e| ArtifactError::Download {
+                url: url.clone(),
+                detail: format!("failed to spawn curl: {e}"),
+            })?;
+        let json: serde_json::Value =
+            serde_json::from_slice(&out.stdout).map_err(|e| ArtifactError::Download {
+                url,
+                detail: format!("token response not JSON: {e}"),
+            })?;
+        let token = json["token"]
+            .as_str()
+            .ok_or_else(|| ArtifactError::Download {
+                url: url_for_err,
+                detail: "token response missing 'token' field".into(),
+            })?;
+        Some(format!("Authorization: Bearer {token}"))
+    } else {
+        None
+    };
+    let mut accept_auth = vec![REGISTRY_ACCEPT.to_string()];
+    let mut bare_auth = Vec::new();
+    if let Some(h) = auth_header {
+        accept_auth.push(h.clone());
+        bare_auth.push(h);
+    }
+    Ok(RegistryAuth {
+        accept_auth,
+        bare_auth,
+    })
 }
 
 /// Verify one image cache dir against the pinned index digest, walking
@@ -741,7 +792,7 @@ async fn download_verified(
     dest: &Path,
     expected: &str,
     name: &str,
-    headers: &[&str],
+    headers: &[String],
 ) -> Result<(), ArtifactError> {
     if verify_file(dest, expected)? {
         ensure_sidecar(dest, expected)?;
@@ -779,10 +830,10 @@ async fn download_verified(
 /// owned by the integration owner), so the synchronous
 /// `std::process::Command` runs on tokio's blocking pool instead — the
 /// executor keeps making progress while curl runs.
-async fn curl_download(url: &str, dest: &Path, headers: &[&str]) -> Result<(), ArtifactError> {
+async fn curl_download(url: &str, dest: &Path, headers: &[String]) -> Result<(), ArtifactError> {
     let url = url.to_string();
     let dest = dest.to_path_buf();
-    let headers: Vec<String> = headers.iter().map(|h| h.to_string()).collect();
+    let headers: Vec<String> = headers.to_vec();
     let result = tokio::task::spawn_blocking(move || {
         let mut cmd = std::process::Command::new("curl");
         cmd.arg("-fsSL")

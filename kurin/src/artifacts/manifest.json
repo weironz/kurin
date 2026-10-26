@@ -309,6 +309,61 @@
         "linux-amd64": "8f6d14828659b85da7c83bad798d50c2f7e0311742615fb7ed305f77bab54e50",
         "linux-arm64": "6a04cb1ab2020508927d7237ff1174bb330211a1076683417b30642a9c8e4996"
       }
+    },
+    {
+      "name": "flannel-image",
+      "kind": "image",
+      "version": "0.27.2",
+      "file": "index.json",
+      "url_template": "ghcr.io/flannel-io/flannel:v{version}",
+      "sha256": {
+        "linux-amd64": "782c111d55e850e8038cdaf35454987e6c170ae9b54d5b12895b02d45c908caf",
+        "linux-arm64": "782c111d55e850e8038cdaf35454987e6c170ae9b54d5b12895b02d45c908caf"
+      }
+    },
+    {
+      "name": "flannel-cni-plugin",
+      "kind": "image",
+      "version": "1.7.1-flannel1",
+      "file": "index.json",
+      "url_template": "ghcr.io/flannel-io/flannel-cni-plugin:v{version}",
+      "sha256": {
+        "linux-amd64": "cb3176a2c9eae5fa0acd7f45397e706eacb4577dac33cad89f93b775ff5611df",
+        "linux-arm64": "cb3176a2c9eae5fa0acd7f45397e706eacb4577dac33cad89f93b775ff5611df"
+      }
+    },
+    {
+      "name": "cilium-image",
+      "kind": "image",
+      "version": "1.20.4",
+      "file": "index.json",
+      "url_template": "quay.io/cilium/cilium:v{version}",
+      "sha256": {
+        "linux-amd64": "20fe92e4c86641233a450098c158d2d29085f3419931ab6bf681d2485dedf16e",
+        "linux-arm64": "20fe92e4c86641233a450098c158d2d29085f3419931ab6bf681d2485dedf16e"
+      }
+    },
+    {
+      "name": "cilium-operator-generic",
+      "kind": "image",
+      "version": "1.20.4",
+      "file": "index.json",
+      "url_template": "quay.io/cilium/operator-generic:v{version}",
+      "sha256": {
+        "linux-amd64": "7a7a3489dc66ad67e420d285c8a8d2e169b0957ad15e120f593d27081bf38d82",
+        "linux-arm64": "7a7a3489dc66ad67e420d285c8a8d2e169b0957ad15e120f593d27081bf38d82"
+      }
+    },
+    {
+      "name": "cilium-envoy",
+      "kind": "image",
+      "version": "1.39.5-1792733054-8c73b2816bc8239e27f1fd53b271884688137459",
+      "file": "index.json",
+      "url_template": "quay.io/cilium/cilium-envoy:v{version}",
+      "sha256": {
+        "linux-amd64": "547ab45f6092f681d9f54f3be9fa8fb1e705c9c5dc2df388efe3a52aa6965629",
+        "linux-arm64": "547ab45f6092f681d9f54f3be9fa8fb1e705c9c5dc2df388efe3a52aa6965629"
+      }
     }
   ]
 }

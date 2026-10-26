@@ -31,8 +31,10 @@ use crate::engine::{ExecOutput, Session};
 
 /// Upper bound for one `exec` round trip, including data transfer.
 pub const EXEC_TIMEOUT: Duration = Duration::from_secs(900);
-/// `write_file` may carry a larger payload than a probe.
-pub const WRITE_TIMEOUT: Duration = Duration::from_secs(300);
+/// `write_file` may carry a larger payload than a probe: image archives run
+/// into hundreds of MB and SSH channel flow control caps throughput, so
+/// this shares EXEC_TIMEOUT's headroom.
+pub const WRITE_TIMEOUT: Duration = Duration::from_secs(1800);
 /// TCP connect + key exchange + authentication.
 pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 /// Retries after the first failed connection attempt.
@@ -281,6 +283,15 @@ impl NodeConn {
         Ok(handle)
     }
 
+    /// True when the cached connection is gone or already closed (the
+    /// signal for "reconnect and retry the op").
+    async fn is_closed_or_absent(&self) -> bool {
+        match self.conn.read().await.as_ref() {
+            None => true,
+            Some(handle) => handle.is_closed(),
+        }
+    }
+
     async fn close(&self) {
         if let Some(handle) = self.conn.write().await.take() {
             let _ = handle
@@ -337,6 +348,30 @@ impl SshSession {
     /// Acquire a channel slot, resolve the connection, run `op` under a timeout.
     async fn with_channel<T, F, Fut>(&self, timeout: Duration, op: F) -> Result<T>
     where
+        F: FnOnce(Arc<Handle<HostKeyPolicy>>) -> Fut + Clone,
+        Fut: Future<Output = Result<T>>,
+    {
+        // One retry when the connection died mid-op (sshd restart, transient
+        // RST, a dropped channel on long uploads): `handle()` reconnects, and
+        // both exec and write_file are idempotent at the transport level.
+        let mut attempt = 0;
+        loop {
+            attempt += 1;
+            let result = self.with_channel_once(timeout, op.clone()).await;
+            match result {
+                Ok(value) => return Ok(value),
+                Err(err) => {
+                    let retryable = attempt < 2 && self.conn.is_closed_or_absent().await;
+                    if !retryable {
+                        return Err(err).wrap_err_with(|| format!("ssh {}", self.conn.label()));
+                    }
+                }
+            }
+        }
+    }
+
+    async fn with_channel_once<T, F, Fut>(&self, timeout: Duration, op: F) -> Result<T>
+    where
         F: FnOnce(Arc<Handle<HostKeyPolicy>>) -> Fut,
         Fut: Future<Output = Result<T>>,
     {
@@ -356,7 +391,6 @@ impl SshSession {
                     timeout
                 )
             })?
-            .wrap_err_with(|| format!("ssh {}", self.conn.label()))
     }
 }
 

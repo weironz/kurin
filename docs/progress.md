@@ -1,5 +1,28 @@
 # 进度日志
 
+## 离线 CNI 矩阵 + k3s×external-endpoint + 发布工程（2026-10-27）
+
+- **离线 CNI 补齐**：flannel（2 镜像）+ cilium（3 镜像，版本取自 cilium-cli
+  `--dry-run` 渲染的实际引用）加入 bundle manifest（digest 均实抓 HEAD 解析）。
+  `images/import` 改为与所选 CNI 匹配（不再一律全量导入 15 个镜像）。
+  校验放开了 flannel/cilium × offline（kube-ovn 仍拒绝）。
+  **tier-1 断网 e2e PASS（flannel、cilium）**：egress iptables 全断后镜像来自
+  bundle（ghcr.io/quay.io 引用在 containerd 里可查）且集群收敛。
+- **GHCR 匿名 token 流**：ghcr.io v2 匿名 401 → 需走
+  `ghcr.io/token?scope=repository:<repo>:pull` 获取 token；extract 时
+  `format!("{}", json["token"])` 会把 JSON 字符串的引号带进 Authorization 头 →
+  403（修复如 HEAD 解析）→ 200。
+- **k3s × external-endpoint 放开**：校验中可捆绑，并不在配置；K3sJoin/
+  K3sApiReady 默认终端的 VIP 已通用的；post/k3s-kubeconfig 复制 kubeconfig 时
+  将 server 从 127.0.0.1 改写为 VIP（与 kubeadm track 齐平）。tier-3 e2e
+  （3 server + 1 手工 haproxy）新增。
+- **`operation timed out after 300s`**（russh WRITE_TIMEOUT）：离线 cilium 镜像
+  tar 走 SSH stdin、单包 >300s；memcpy 发导引文件时 WRITE_TIMEOUT 300s 少于
+  EXEC_TIMEOUT 900s → 涨到 1800s。
+- **发布工程**：`just release <ver>` = release-musl + tag + 从 CHANGELOG.md 提取
+  该版本段落做 notes + gh release create 四资产。CHANGELOG.md 从 v0.1.0 补齐。
+
+
 ## 命令 × 发行版矩阵审计（2026-10-26）✅
 
 修掉四个被主线验收绕开的矩阵缺口（命令 × k3s/crio/offline），新增 `docs/command-matrix.md`：

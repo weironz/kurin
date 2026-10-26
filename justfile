@@ -138,3 +138,37 @@ ci-gate: check tier0
 # offline bundle for tier1-offline
 bundle:
     target/debug/kurin artifact --out /tmp/kurin-bundle || cargo run -- artifact --out /tmp/kurin-bundle
+
+# Build + tag + publish a release. Usage: just release 0.4.0 [title]
+release ver *title:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    ver="{{ver}}"
+    [ -n "$(ls release-dist 2>/dev/null)" ] || just release-musl
+    git rev-parse "v$ver" >/dev/null 2>&1 || git tag "v$ver"
+    notes=$(mktemp)
+    awk -v ver="$ver" '
+        BEGIN { insec=0; found=0 }
+        /^## / {
+            if (found) exit
+            if ($0 ~ "^## " ver "([ .]|$)") { insec=1; found=1; next }
+        }
+        insec { print }
+    ' CHANGELOG.md > "$notes"
+    [ -s "$notes" ] || echo "See commits since the previous tag." >> "$notes"
+    gh release create -R weironz/kurin \
+        --title "{{title}}" --notes-file "$notes" "v$ver" \
+        release-dist/kurin-x86_64-linux-musl.tar.gz \
+        release-dist/kurin-x86_64-linux-musl.tar.gz.sha256 \
+        release-dist/kurin-aarch64-linux-musl.tar.gz \
+        release-dist/kurin-aarch64-linux-musl.tar.gz.sha256
+    git push origin "v$ver"
+    rm -f "$notes"
+
+# tier-1 offline × CNI (flannel | cilium): needs /tmp/kurin-bundle (just bundle)
+tier1-offline-cni cni="flannel":
+    e2e/tier1/offline-cni.sh "{{cni}}" /tmp/kurin-bundle
+
+# tier-3 k3s × external-endpoint (3 servers behind a script-managed haproxy)
+tier3-k3s-external-endpoint:
+    e2e/tier3/k3s-external-endpoint.sh

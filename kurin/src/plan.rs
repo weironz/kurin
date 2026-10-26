@@ -155,6 +155,7 @@ impl Plan {
                     node,
                     arch,
                     cluster.offline_dir.clone(),
+                    cluster.cni.clone(),
                 )),
             );
         }

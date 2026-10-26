@@ -15,19 +15,77 @@ pub struct ImagesImport {
     node: Node,
     arch: Arch,
     offline: Option<PathBuf>,
+    cni: kurin_config::CniConfig,
 }
 
 impl ImagesImport {
-    pub fn new(node: &Node, arch: Arch, offline: Option<PathBuf>) -> Self {
+    pub fn new(
+        node: &Node,
+        arch: Arch,
+        offline: Option<PathBuf>,
+        cni: kurin_config::CniConfig,
+    ) -> Self {
         Self {
             node: node.clone(),
             arch,
             offline,
+            cni,
         }
+    }
+
+    /// Image entries to import: the control-plane set plus the selected
+    /// CNI's runtime images (offline bundles carry all of them; importing
+    /// only the selected CNI keeps per-node imports ~600 MB smaller).
+    fn selected_images(&self, manifest: &ArtifactManifest) -> Vec<String> {
+        let cp = [
+            "pause",
+            "kube-apiserver",
+            "kube-controller-manager",
+            "kube-scheduler",
+            "kube-proxy",
+            "coredns",
+            "etcd",
+        ];
+        let mut names: Vec<String> = cp.iter().map(|s| s.to_string()).collect();
+        names.extend(
+            Self::cni_image_names(&self.cni)
+                .into_iter()
+                .map(String::from),
+        );
+        manifest
+            .artifacts()
+            .iter()
+            .filter(|e| e.kind == ArtifactKind::Image && names.contains(&e.name))
+            .map(|e| e.name.clone())
+            .collect()
     }
 
     fn needs_import(&self) -> bool {
         self.offline.is_some() || crate::artifact::zone() == crate::zone::Zone::Cn
+    }
+
+    /// Image artifacts the *selected CNI* pulls at runtime: kubelet must
+    /// find them preloaded on offline (or mirror-zone) installs.
+    fn cni_image_names(cni: &kurin_config::CniConfig) -> Vec<&'static str> {
+        match cni {
+            kurin_config::CniConfig::Calico => vec![
+                // control-plane + calico fleet are part of the base set
+                // (kubeadm pulls its own; calico listed in the manifest).
+                "calico-node",
+                "calico-cni",
+                "calico-pod2daemon-flexvol",
+                "calico-kube-controllers",
+                "calico-typha",
+                "calico-csi",
+                "calico-node-driver-registrar",
+                "tigera-operator",
+            ],
+            kurin_config::CniConfig::Flannel => vec!["flannel-image", "flannel-cni-plugin"],
+            kurin_config::CniConfig::Cilium => {
+                vec!["cilium-image", "cilium-operator-generic", "cilium-envoy"]
+            }
+            kurin_config::CniConfig::KubeOvn | kurin_config::CniConfig::None => vec![],
+        }
     }
 
     /// Where this node's payload directory lives.
@@ -83,12 +141,8 @@ impl Task for ImagesImport {
         // tell which one is missing, and ctr lists registry pulls too.
         let manifest = ArtifactManifest::embedded()?;
         let mut refs = Vec::new();
-        for e in manifest
-            .artifacts()
-            .iter()
-            .filter(|e| e.kind == ArtifactKind::Image)
-        {
-            let spec = manifest.spec(&e.name, self.arch)?;
+        for name in self.selected_images(&manifest) {
+            let spec = manifest.spec(&name, self.arch)?;
             refs.push(spec.url());
         }
         let probe = format!(
@@ -114,12 +168,8 @@ impl Task for ImagesImport {
             return Ok(Outcome::Verified);
         }
         let manifest = ArtifactManifest::embedded()?;
-        for entry in manifest
-            .artifacts()
-            .iter()
-            .filter(|e| e.kind == ArtifactKind::Image)
-        {
-            let spec = manifest.spec(&entry.name, self.arch)?;
+        for name in self.selected_images(&manifest) {
+            let spec = manifest.spec(&name, self.arch)?;
             let dir = self.payload_dir(&spec).await?;
             let tarball = docker_archive(&dir, &spec)?;
             let remote = format!("/tmp/kurin-img-{}.tar", spec.name);

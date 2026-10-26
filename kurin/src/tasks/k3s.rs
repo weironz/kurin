@@ -148,7 +148,7 @@ pub fn stage_tasks(cluster: &Cluster) -> Result<Vec<(Stage, Arc<dyn Task>)>> {
     {
         out.push((Stage::Join, Arc::new(K3sJoin::new(cluster, node))));
     }
-    out.push((Stage::Post, Arc::new(K3sKubeconfig::new(first_cp))));
+    out.push((Stage::Post, Arc::new(K3sKubeconfig::new(cluster, first_cp))));
     Ok(out)
 }
 
@@ -893,12 +893,22 @@ impl Task for K3sJoin {
 /// downstream consumes it.
 pub struct K3sKubeconfig {
     node_name: String,
+    /// API endpoint the copied kubeconfig should target: the VIP on HA
+    /// clusters (tls-san already covers it), the node itself otherwise.
+    /// k3s.yaml itself always says 127.0.0.1 — only our convenience copy
+    /// at {ROOT_KUBECONFIG} is rewritten.
+    endpoint: String,
 }
 
 impl K3sKubeconfig {
-    pub fn new(first_cp: &Node) -> Self {
+    pub fn new(cluster: &Cluster, first_cp: &Node) -> Self {
+        let endpoint = cluster
+            .vip
+            .map(|v| v.to_string())
+            .unwrap_or_else(|| first_cp.internal_address.to_string());
         Self {
             node_name: first_cp.name.clone(),
+            endpoint,
         }
     }
 }
@@ -919,15 +929,22 @@ impl Task for K3sKubeconfig {
     }
 
     async fn check(&self, session: &dyn Session) -> Result<Drift> {
-        match (
-            session.file_sha256(K3S_KUBECONFIG).await?,
-            session.file_sha256(ROOT_KUBECONFIG).await?,
-        ) {
-            (Some(src), Some(dst)) if src == dst => Ok(Drift::InSync),
-            (None, _) => Ok(Drift::Drifted(format!("{K3S_KUBECONFIG} missing"))),
-            _ => Ok(Drift::Drifted(format!(
-                "{ROOT_KUBECONFIG} differs from {K3S_KUBECONFIG}"
-            ))),
+        if session.file_sha256(K3S_KUBECONFIG).await?.is_none() {
+            return Ok(Drift::Drifted(format!("{K3S_KUBECONFIG} missing")));
+        }
+        let server = session
+            .exec(&format!(
+                "grep -m1 'server:' {ROOT_KUBECONFIG} \
+                 | grep -oE 'https://[^:]+(:[0-9]+)?'"
+            ))
+            .await?;
+        let want = format!("https://{}:6443", self.endpoint);
+        if server.stdout.trim() == want {
+            Ok(Drift::InSync)
+        } else {
+            Ok(Drift::Drifted(format!(
+                "{ROOT_KUBECONFIG} not pointing at {want}"
+            )))
         }
     }
 
@@ -935,7 +952,9 @@ impl Task for K3sKubeconfig {
         let out = session
             .exec(&format!(
                 "install -d -m 700 /root/.kube && \
-                 install -m 600 {K3S_KUBECONFIG} {ROOT_KUBECONFIG}"
+                 install -m 600 {K3S_KUBECONFIG} {ROOT_KUBECONFIG} && \
+                 sed -i '0,/https:\\/\\/127.0.0.1:6443/s//https:\\/\\/{}:6443/' {ROOT_KUBECONFIG}",
+                self.endpoint
             ))
             .await?;
         if out.ok() {
@@ -1589,24 +1608,32 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn kubeconfig_post_task_compares_hashes() {
+    async fn kubeconfig_post_task_checks_endpoint_rewrite() {
         let c = cluster(
             "k3s-test-post",
             vec![node("cp1", "192.168.10.11", NodeRole::ControlPlane)],
             None,
             CniConfig::Flannel,
         );
-        let t = K3sKubeconfig::new(&c.nodes[0]);
+        let t = K3sKubeconfig::new(&c, &c.nodes[0]);
         let s = MockSession::active();
+        // No k3s.yaml yet: drifted.
         assert!(matches!(t.check(&s).await.unwrap(), Drift::Drifted(_)));
         s.write_file(K3S_KUBECONFIG, b"kubeconfig-bytes")
             .await
             .unwrap();
+        // Root copy missing/mispointed: drifted.
         assert!(matches!(t.check(&s).await.unwrap(), Drift::Drifted(_)));
-        s.write_file(ROOT_KUBECONFIG, b"kubeconfig-bytes")
-            .await
-            .unwrap();
+        // Root copy on the node's endpoint: in sync.
+        s.says("grep -m1 'server:'", "https://192.168.10.11:6443\n");
         assert!(matches!(t.check(&s).await.unwrap(), Drift::InSync));
         assert!(matches!(t.apply(&s).await.unwrap(), Outcome::Verified));
+        // apply rewrites the loopback endpoint but keeps the port.
+        let cmd = s
+            .commands()
+            .into_iter()
+            .find(|c| c.contains("sed -i"))
+            .expect("sed rewrite command");
+        assert!(cmd.contains("https:\\/\\/192.168.10.11:6443"), "{cmd}");
     }
 }

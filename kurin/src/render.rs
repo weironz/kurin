@@ -93,4 +93,70 @@ mod tests {
             assert_eq!(value["type"], event.kind());
         }
     }
+
+    /// v1.0 gate: the exact JSON field set per event kind is the frozen
+    /// `--json` contract (docs/v1.0-gates.md §2). A change here is a
+    /// breaking change for every consumer parsing the event stream.
+    #[test]
+    fn every_event_kind_has_frozen_field_set() {
+        let cases: Vec<(Event, Vec<&str>)> = vec![
+            (
+                Event::TaskStart {
+                    id: "a".into(),
+                    node: "n".into(),
+                    stage: "prepare",
+                },
+                vec!["type", "id", "node", "stage"],
+            ),
+            (
+                Event::TaskSkipped {
+                    id: "a".into(),
+                    node: "n".into(),
+                    stage: "prepare",
+                },
+                vec!["type", "id", "node", "stage"],
+            ),
+            (
+                Event::TaskDone {
+                    id: "a".into(),
+                    node: "n".into(),
+                    stage: "prepare",
+                    ms: 1,
+                },
+                vec!["type", "id", "node", "stage", "ms"],
+            ),
+            (
+                Event::TaskFailed {
+                    id: "a".into(),
+                    node: "n".into(),
+                    stage: "prepare",
+                    reason: "x".into(),
+                },
+                vec!["type", "id", "node", "stage", "reason"],
+            ),
+            (
+                Event::TaskReconciled {
+                    id: "a".into(),
+                    node: "n".into(),
+                    stage: "prepare",
+                },
+                vec!["type", "id", "node", "stage"],
+            ),
+            (Event::StageDone { stage: "prepare" }, vec!["type", "stage"]),
+            (Event::ClusterReady, vec!["type"]),
+        ];
+        for (event, fields) in &cases {
+            let value: serde_json::Value = serde_json::from_str(&event_json_line(event)).unwrap();
+            let mut got: Vec<&str> = value
+                .as_object()
+                .unwrap()
+                .keys()
+                .map(|k| k.as_str())
+                .collect();
+            got.sort_unstable();
+            let mut want = fields.clone();
+            want.sort_unstable();
+            assert_eq!(got, want, "field set for {}", event.kind());
+        }
+    }
 }
