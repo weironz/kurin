@@ -1,5 +1,6 @@
 pub mod bootstrap;
 pub mod cni;
+pub mod external_lb;
 pub mod images;
 pub mod install;
 pub mod join;

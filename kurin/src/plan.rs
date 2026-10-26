@@ -89,7 +89,15 @@ impl Plan {
             return Ok(Plan { graph, stages: idx });
         }
 
-        for node in &cluster.nodes {
+        // K8s-members only (kubeadm track): LB nodes are deployed by the
+        // vip stage, not by the k8s artifact task set.
+        let k8s_nodes: Vec<_> = cluster
+            .nodes
+            .iter()
+            .filter(|n| n.role != kurin_config::NodeRole::Lb)
+            .collect();
+        for node in &k8s_nodes {
+            let node = *node;
             push(0, Arc::new(tasks::preflight::Preflight::new(node)));
             push(
                 1,
@@ -118,9 +126,11 @@ impl Plan {
                 )),
             );
         }
+
         // Images: seed containerd from the bundle (offline only; the task
         // reports InSync when online since kubelet pulls from registries).
-        for node in &cluster.nodes {
+        for node in &k8s_nodes {
+            let node = *node;
             push(
                 3,
                 Arc::new(tasks::images::ImagesImport::new(
@@ -133,9 +143,25 @@ impl Plan {
 
         // Vip: kube-vip static pod on every control-plane node (VIP only).
         // Must be written before init binds the VIP as controlPlaneEndpoint.
-        for node in cluster.control_plane() {
-            if let Some(kubevip) = tasks::bootstrap::KubeVip::new(cluster, node) {
-                push(4, Arc::new(kubevip));
+        if cluster.ha_mode == kurin_config::HaMode::KubeVip {
+            for node in cluster.control_plane() {
+                if let Some(kubevip) = tasks::bootstrap::KubeVip::new(cluster, node) {
+                    push(4, Arc::new(kubevip));
+                }
+            }
+        }
+        if cluster.ha_mode == kurin_config::HaMode::KurinLb {
+            let mut ordinal = 0usize;
+            for lb in cluster
+                .nodes
+                .iter()
+                .filter(|n| n.role == kurin_config::NodeRole::Lb)
+            {
+                push(
+                    4,
+                    Arc::new(tasks::external_lb::ExternalLb::new(cluster, lb, ordinal)?),
+                );
+                ordinal += 1;
             }
         }
         if let Some(first) = cluster.control_plane().next() {
@@ -149,7 +175,11 @@ impl Plan {
             push(5, Arc::new(tasks::bootstrap::ApiReady::new(cluster, first)));
         }
         // Join: workers and additional control-plane members.
-        for node in cluster.nodes.iter() {
+        for node in cluster
+            .nodes
+            .iter()
+            .filter(|n| n.role != kurin_config::NodeRole::Lb)
+        {
             let is_first_cp = cluster
                 .control_plane()
                 .next()

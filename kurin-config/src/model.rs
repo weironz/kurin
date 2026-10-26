@@ -8,7 +8,9 @@ use std::net::IpAddr;
 use ipnet::Ipv4Net;
 use semver::Version;
 
-use crate::config::{ClusterConfig, CniConfig, Distribution, HaMode, NodeRole, SshAuth, CONFIG_VERSION};
+use crate::config::{
+    ClusterConfig, CniConfig, Distribution, HaMode, NodeRole, SshAuth, CONFIG_VERSION,
+};
 use crate::error::{ConfigError, Result};
 
 pub const DEFAULT_KUBERNETES_VERSION: &str = "1.33.1";
@@ -216,11 +218,7 @@ impl Cluster {
                 "at least one control-plane node is required".into(),
             ));
         }
-        let lb_nodes = self
-            .nodes
-            .iter()
-            .filter(|n| n.role == NodeRole::Lb)
-            .count();
+        let lb_nodes = self.nodes.iter().filter(|n| n.role == NodeRole::Lb).count();
         if lb_nodes > 0 && self.ha_mode != HaMode::KurinLb {
             return Err(invalid(
                 "role = \"lb\" nodes are only valid with ha.mode = \"kurin-lb\"".into(),
@@ -258,7 +256,8 @@ impl Cluster {
                 }
                 if self.vip.is_none() {
                     return Err(invalid(
-                        "ha.mode = \"external-endpoint\" requires ha.vip = <your LB address>".into(),
+                        "ha.mode = \"external-endpoint\" requires ha.vip = <your LB address>"
+                            .into(),
                     ));
                 }
             }

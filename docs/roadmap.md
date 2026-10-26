@@ -55,10 +55,9 @@ tier-0~3 + offline 五层 e2e 全绿，CI 为 check + tier0（push/PR）+ releas
 - 影响面：bootstrap/join/cni 阶段的实现分支，制品清单加 k3s 二进制。
 - 验收：单节点 + 3 节点 HA（k3s 内嵌 etcd）各跑通一次 tier-1/tier-3 变体。
 
-### 2.4 外部 LB（haproxy + keepalived）
-- `ha.mode = "kube-vip" | "external-lb"`（默认 kube-vip）。
-- 显式 opt-in：需要用户提供 LB 节点地址池，或 kurin 在指定 worker 上装
-  haproxy/keepalived。M1 已明确推迟，价值取决于真实需求。
+### 2.4 外部 LB（haproxy + keepalived）✅
+- 已实现 `ha.mode = "external-endpoint" | "kurin-lb"` + `NodeRole::Lb`，tier3 e2e 双模式通过。
+- 剩余：k3s × kurin-lb 组合（校验暂拒）；haproxy stats/健康检查细化。
 
 ### 2.5 CRI-O 运行时（仅枚举扩展位转正）
 - `containerd | crio`；二进制分发 + 配置模板 + `crictl` socket 对齐。

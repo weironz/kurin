@@ -1,0 +1,26 @@
+# Rendered by kurin (ha.mode = "kurin-lb"). Frontend is the keepalived VIP;
+# backends are every control-plane API endpoint. Health check is the
+# apiserver /readyz (plain TCP check keeps the LB dependency-free).
+global
+    log /dev/log local0
+    stats socket {{ stats_socket }}
+    master-worker
+
+defaults
+    mode    tcp
+    log     global
+    timeout connect 5s
+    timeout client  30s
+    timeout server  30s
+    retries 3
+
+frontend k8s-api
+    bind *:6443
+    default_backend k8s-api
+
+backend k8s-api
+    option tcp-check
+    balance roundrobin
+{% for b in backends %}
+    server {{ b.name }} {{ b.ip }}:6443 check inter 5s fall 3 rise 2
+{% endfor %}

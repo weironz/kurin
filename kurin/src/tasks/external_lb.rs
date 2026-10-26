@@ -1,0 +1,186 @@
+//! External load balancer: `ha.mode = "kurin-lb"` installs haproxy +
+//! keepalived on nodes whose role is `lb`. `external-endpoint` mode
+//! installs nothing (the operator owns the LB); its only cluster effect is
+//! the API endpoint, which the plan already points at `ha.vip`.
+
+use kurin_config::{Cluster, Node};
+use miette::Result;
+
+use crate::engine::{Drift, Outcome, Session, Stage, Task};
+use crate::tasks::prepare::sha256_hex;
+use crate::templates;
+
+const HAPROXY_CFG: &str = "/etc/haproxy/haproxy.cfg";
+const KEEPALIVED_CFG: &str = "/etc/keepalived/keepalived.conf";
+const HAPROXY_STATS_SOCKET: &str = "/var/run/haproxy.sock";
+
+pub struct ExternalLb {
+    node_name: String,
+    priority: u16,
+    haproxy: String,
+    keepalived: String,
+    rendered_hash: String,
+}
+
+impl ExternalLb {
+    pub fn new(cluster: &Cluster, node: &Node, ordinal: usize) -> Result<Self> {
+        let vip = cluster
+            .vip
+            .ok_or_else(|| miette::miette!("ha.mode=kurin-lb requires ha.vip"))?;
+
+        // Backends: every control-plane node's API endpoint.
+        let backends: Vec<(String, String)> = cluster
+            .control_plane()
+            .map(|n| (n.name.clone(), n.internal_address.to_string()))
+            .collect();
+
+        let haproxy = templates::render(
+            "lb/haproxy.cfg.j2",
+            minijinja::context! {
+                stats_socket => HAPROXY_STATS_SOCKET,
+                backends => backends
+                    .iter()
+                    .map(|(name, ip)| minijinja::context! { name => name, ip => ip })
+                    .collect::<Vec<_>>(),
+            },
+        )
+        .expect("embedded haproxy template renders");
+
+        // keepalived: one VRRP instance; descending priorities elect the
+        // first-declared LB node as MASTER. Unicast peers avoid multicast
+        // surprises on cloud networks.
+        let lb_ips: Vec<String> = cluster
+            .nodes
+            .iter()
+            .filter(|n| n.role == kurin_config::NodeRole::Lb)
+            .map(|n| n.internal_address.to_string())
+            .collect();
+        let keepalived = templates::render(
+            "lb/keepalived.conf.j2",
+            minijinja::context! {
+                vip => vip.to_string(),
+                priority => 200u16.saturating_sub(ordinal as u16 * 20),
+                peers => lb_ips,
+                iface => "eth0",
+            },
+        )
+        .expect("embedded keepalived template renders");
+
+        // Canonical hash: both sides trimmed so a trailing newline in one
+        // template cannot flip the comparison (an Idempotency bug found by
+        // the second-run e2e assertion).
+        let rendered_hash =
+            sha256_hex(format!("{}|{}", haproxy.trim_end(), keepalived.trim_end()).as_bytes());
+        Ok(Self {
+            node_name: node.name.clone(),
+            priority: 200u16.saturating_sub(ordinal as u16 * 20),
+            haproxy,
+            keepalived,
+            rendered_hash,
+        })
+    }
+
+    fn marker(&self) -> String {
+        format!("/etc/kurin/lb-marker-{}", self.node_name)
+    }
+}
+
+#[async_trait::async_trait]
+impl Task for ExternalLb {
+    fn id(&self) -> String {
+        format!("vip/external-lb@{}", self.node_name)
+    }
+    fn stage(&self) -> Stage {
+        Stage::Vip
+    }
+    fn node(&self) -> &str {
+        &self.node_name
+    }
+    fn describe(&self) -> String {
+        format!(
+            "install haproxy+keepalived (priority {}) for the API VIP",
+            self.priority
+        )
+    }
+
+    async fn check(&self, session: &dyn Session) -> Result<Drift> {
+        // Config content and both services must already be converged.
+        let want = self.rendered_hash.clone();
+        let out = session
+            .exec(&format!(
+                "echo -n \"$(cat {HAPROXY_CFG} 2>/dev/null)\"; echo -n \"|\"; \
+                 echo -n \"$(cat {KEEPALIVED_CFG} 2>/dev/null)\"",
+                HAPROXY_CFG = HAPROXY_CFG,
+                KEEPALIVED_CFG = KEEPALIVED_CFG,
+            ))
+            .await?;
+        // $(...) strips trailing newlines on both halves: same
+        // canonicalization as the render side.
+        let have = sha256_hex(out.stdout.as_bytes());
+        if have != want {
+            return Ok(Drift::Drifted("haproxy/keepalived config differs".into()));
+        }
+        if !session.service_active("haproxy").await?
+            || !session.service_active("keepalived").await?
+        {
+            return Ok(Drift::Drifted("haproxy or keepalived not active".into()));
+        }
+        Ok(Drift::InSync)
+    }
+
+    async fn apply(&self, session: &dyn Session) -> Result<Outcome> {
+        // Packages are distro-owned (not our binary-first set): apt/dnf is
+        // the documented escape hatch for OS-provided daemons.
+        let out = session
+            .exec(
+                "if command -v apt-get >/dev/null; then \
+                   DEBIAN_FRONTEND=noninteractive apt-get update -qq && \
+                   DEBIAN_FRONTEND=noninteractive apt-get install -y -qq haproxy keepalived; \
+                 elif command -v dnf >/dev/null; then dnf install -y -q haproxy keepalived; \
+                 else echo 'no package manager for haproxy/keepalived' >&2; exit 1; fi",
+            )
+            .await?;
+        if !out.ok() {
+            return Err(miette::miette!(
+                "haproxy/keepalived install failed on {}: {}",
+                self.node_name,
+                out.stderr.lines().last().unwrap_or("")
+            ));
+        }
+
+        session
+            .exec("mkdir -p /etc/haproxy /etc/keepalived /etc/kurin")
+            .await?;
+        session
+            .write_file(HAPROXY_CFG, self.haproxy.as_bytes())
+            .await?;
+        session
+            .write_file(KEEPALIVED_CFG, self.keepalived.as_bytes())
+            .await?;
+        session
+            .write_file(&self.marker(), self.rendered_hash.as_bytes())
+            .await?;
+
+        // Package postinst may have started services with no/old config:
+        // stop, reset any failed state, then start both against the files
+        // just written.
+        let out = session
+            .exec(
+                "systemctl stop haproxy keepalived 2>/dev/null || true; \
+                 systemctl reset-failed keepalived 2>/dev/null || true; \
+                 haproxy -c -f /etc/haproxy/haproxy.cfg >/dev/null && \
+                 systemctl enable --now haproxy >/dev/null && \
+                 systemctl enable --now keepalived >/dev/null && \
+                 sleep 3 && systemctl is-active haproxy keepalived",
+            )
+            .await?;
+        if !out.ok() {
+            return Err(miette::miette!(
+                "haproxy/keepalived start failed on {}: {}",
+                self.node_name,
+                out.stderr.lines().last().unwrap_or("")
+            ));
+        }
+        Ok(Outcome::Verified)
+    }
+}
