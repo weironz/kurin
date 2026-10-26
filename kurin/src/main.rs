@@ -139,7 +139,7 @@ fn init_zone(config_zone: Option<&str>) -> Result<()> {
         .or_else(|| config_zone.map(str::to_string))
         .unwrap_or_else(|| "global".to_string());
     let zone = kurin::zone::Zone::parse(&zone_str)
-        .ok_or_else(|| miette::miette!("invalid zone {zone_str:?} (expected "cn")"))?;
+        .ok_or_else(|| miette::miette!(r#"invalid zone {zone_str:?} (expected "cn")"#))?;
     kurin::artifact::set_zone(zone);
     if zone == kurin::zone::Zone::Cn {
         eprintln!("[zone] artifact downloads via domestic mirrors");
