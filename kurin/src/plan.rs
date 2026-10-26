@@ -151,17 +151,16 @@ impl Plan {
             }
         }
         if cluster.ha_mode == kurin_config::HaMode::KurinLb {
-            let mut ordinal = 0usize;
-            for lb in cluster
+            for (ordinal, lb) in cluster
                 .nodes
                 .iter()
                 .filter(|n| n.role == kurin_config::NodeRole::Lb)
+                .enumerate()
             {
                 push(
                     4,
                     Arc::new(tasks::external_lb::ExternalLb::new(cluster, lb, ordinal)?),
                 );
-                ordinal += 1;
             }
         }
         if let Some(first) = cluster.control_plane().next() {
