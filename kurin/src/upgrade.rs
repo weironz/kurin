@@ -24,7 +24,7 @@ use crate::executor::SessionPool;
 // `lib.rs` is integrator-owned: until `pub mod artifact_bundle;` lands
 // there, declare the (independently owned) shared file from this module.
 // Call sites use `upgrade::artifact_bundle::…` either way.
-#[path = "../artifact_bundle.rs"]
+#[path = "artifact_bundle.rs"]
 pub mod artifact_bundle;
 
 const KUBE_BINS: [&str; 3] = ["kubeadm", "kubelet", "kubectl"];
@@ -237,7 +237,8 @@ pub async fn run_offline(
     // re-checked against the bundle manifest's pins before any node is
     // touched, so a corrupt bundle fails on the control host, not mid-roll.
     let dir = ArtifactManifest::from_dir_with(offline, &manifest)?;
-    let cp = connect_cp0(cluster, pool).await?;
+    // The arch probe is a bundle problem too: kubeadm must be present for
+    // some arch before any node session is opened.
     let arch = [Arch::Amd64, Arch::Arm64]
         .into_iter()
         .find(|a| dir.find("kubeadm", *a).is_some())
@@ -247,6 +248,7 @@ pub async fn run_offline(
                  `kurin artifact --with-kubernetes v{target} --arch amd64 --out <dir>`"
             )
         })?;
+    let cp = connect_cp0(cluster, pool).await?;
     let source = BinSource::Bundle(&dir);
     execute(cluster, target, pool, batch, arch, &manifest, &source, &cp).await
 }
@@ -387,9 +389,8 @@ async fn upgrade_one_node(ctx: &NodeCtx<'_>, node: &Node) -> Result<()> {
         drain_ok,
         drain.stderr.lines().next().unwrap_or("").trim(),
     );
-
+    let session = ctx.pool.get(&node.name).await?;
     install_kube_bins(session.as_ref(), ctx.source, node, ctx.arch).await?;
-    install_kube_bins(session.as_ref(), ctx.store, ctx.manifest, node, ctx.arch).await?;
     report(&node.name, "binaries", true, "");
     let out = session.exec("kubeadm upgrade node").await?;
     if !out.ok() {
@@ -414,11 +415,7 @@ async fn upgrade_one_node(ctx: &NodeCtx<'_>, node: &Node) -> Result<()> {
 
 /// Report the upgrade that would happen (reads, no mutations).
 pub async fn plan(cluster: &Cluster, target: &Version, pool: &Arc<dyn SessionPool>) -> Result<()> {
-    let arch = match std::env::consts::ARCH {
-        "x86_64" => Arch::Amd64,
-        "aarch64" => Arch::Arm64,
-        other => return Err(miette::miette!("unsupported host arch {other}")),
-    };
+    let arch = host_arch()?;
     let first_cp = cluster
         .control_plane()
         .next()
