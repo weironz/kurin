@@ -528,7 +528,7 @@ async fn delete_node_cmd(name: String, file: PathBuf) -> Result<()> {
         },
         None => None,
     };
-    kurin::teardown::delete_node(&pool, node, api_session.as_ref()).await
+    kurin::teardown::delete_node(&pool, &cluster, node, api_session.as_ref()).await
 }
 
 async fn delete_cluster_cmd(file: PathBuf) -> Result<()> {
