@@ -42,14 +42,14 @@ tier-0~3 + offline 五层 e2e 全绿，CI 为 check + tier0（push/PR）+ releas
   不一致告警（镜像源最大风险是悄悄换内容）。
 - 验收：`KURIN_ZONE=cn` 下 tier-1 完整安装；mirror 校验 job 绿。
 
-### 2.2 CNI 矩阵：Flannel / Cilium / Kube-OVN
+### 2.2 CNI 矩阵：Flannel ✅ / Cilium ✅ / Kube-OVN（推迟）
 - 配置结构已就绪（`network.cni` 是 tagged enum，`Calico`/`None` 已存在）。
 - 每个 CNI：manifest 进制品清单（sha256 pin）、`tasks/cni/` 子模块、
   探针（正确性 = Node Ready + DNS 解析 + Pod 间连通）。
 - 验收：每种 CNI 至少 tier-1 通过一次；`kurin delete cluster` 清理干净。
 - 建议顺序：Flannel（最简）→ Cilium（eBPF，需内核版本前置检查）。
 
-### 2.3 K3s 发行版选项
+### 2.3 K3s 发行版选项 ✅（单节点 + 内嵌 etcd HA；离线与 arm64 资产名待办）
 - `kubernetes.distribution = "k8s" | "k3s"`；k3s 走单二进制 + systemd，
   不依赖 kubeadm，HA 用内嵌 etcd（3 节点）或 external DB。
 - 影响面：bootstrap/join/cni 阶段的实现分支，制品清单加 k3s 二进制。
@@ -66,7 +66,7 @@ tier-0~3 + offline 五层 e2e 全绿，CI 为 check + tier0（push/PR）+ releas
 
 ## 批次 3 — 运维与打磨
 
-### 3.1 版本矩阵（跨 minor 升级）
+### 3.1 版本矩阵（跨 minor 升级）✅（1.33→1.34 实测；add-nodes 动态版本已贯穿）
 - 现在 `upgrade` 支持同 minor 内任意 patch（1.33.x → 1.33.y）。
 - 跨 minor 需：`kubeadm upgrade plan` 的 minor 校验、kubelet 版本矩阵校验、
   CoreDNS/etcd 镜像版本随 minor 变化（当前制品清单固定 1.33 系镜像）→

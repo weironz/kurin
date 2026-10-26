@@ -20,11 +20,15 @@ spec:
   priorityClassName: system-node-critical
   containers:
   - name: kube-vip
-    image: ghcr.io/kube-vip/kube-vip:{{ image }}
+    image: {{ image }}
     imagePullPolicy: IfNotPresent
     args:
     - manager
     env:
+    # k3s serves a 2-cert chain (leaf+CA); kube-vip's auto discovery only
+    # accepts single-cert chains, so pin the local API address explicitly
+    # (NewRestConfig direct path, no FindWorkingKubernetesAddress).
+    - { name: kubernetes_addr, value: "127.0.0.1:6443" }
     - { name: vip_interface, value: "{{ vip_interface }}" }
     - { name: vip_leasename, value: "plndr-cp-lock" }
     - { name: vip_leaderelection, value: "true" }
@@ -47,8 +51,10 @@ spec:
         add: [NET_ADMIN, NET_RAW]
         drop: [ALL]
     volumeMounts:
+    # kube-vip only auto-discovers /etc/kubernetes/admin.conf: mount the
+    # k3s kubeconfig there (kubelet creates the parent dir for file mounts).
     - name: kubeconfig
-      mountPath: /etc/rancher/k3s/k3s.yaml
+      mountPath: /etc/kubernetes/admin.conf
       readOnly: true
   tolerations:
   - { operator: Exists, effect: NoSchedule }

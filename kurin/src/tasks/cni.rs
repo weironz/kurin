@@ -1,6 +1,7 @@
 //! cni/*: one plugin per file; plan dispatches from `cluster.cni`.
 
 pub mod calico;
+pub mod cilium;
 pub mod flannel;
 
 use std::sync::Arc;
@@ -16,10 +17,7 @@ pub fn plugin_task(cluster: &Cluster) -> Result<Arc<dyn Task>> {
     match &cluster.cni {
         kurin_config::CniConfig::Calico => Ok(Arc::new(calico::CalicoOperator::new(cluster))),
         kurin_config::CniConfig::Flannel => Ok(Arc::new(flannel::Flannel::new(cluster))),
-        // Wave2 track-cilium lands the module; wired by the integrator.
-        kurin_config::CniConfig::Cilium => Err(miette::miette!(
-            "network.cni = \"cilium\" needs the wave2 cilium module (not in this build)"
-        )),
+        kurin_config::CniConfig::Cilium => cilium::plugin(cluster),
         kurin_config::CniConfig::None => Ok(Arc::new(NoCni::new(cluster))),
     }
 }

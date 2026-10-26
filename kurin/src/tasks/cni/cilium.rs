@@ -36,7 +36,9 @@ impl Cilium {
         let cp = cluster.control_plane().next();
         Self {
             node_name: cp.map(|n| n.name.clone()).unwrap_or_default(),
-            node_internal_ip: cp.map(|n| n.internal_address.to_string()).unwrap_or_default(),
+            node_internal_ip: cp
+                .map(|n| n.internal_address.to_string())
+                .unwrap_or_default(),
             pod_cidr: cluster.pod_cidr.to_string(),
         }
     }
@@ -226,8 +228,14 @@ mod tests {
     fn install_command_carries_cidr_version_and_service_host() {
         let cmd = Cilium::new(&cluster("10.244.0.0/16")).install_command(false);
         assert!(cmd.contains("cilium install --version 1.20.4"), "{cmd}");
-        assert!(cmd.contains("--kubeconfig /etc/kubernetes/admin.conf"), "{cmd}");
-        assert!(cmd.contains("--set nativeRoutingCIDR=10.244.0.0/16"), "{cmd}");
+        assert!(
+            cmd.contains("--kubeconfig /etc/kubernetes/admin.conf"),
+            "{cmd}"
+        );
+        assert!(
+            cmd.contains("--set nativeRoutingCIDR=10.244.0.0/16"),
+            "{cmd}"
+        );
         assert!(cmd.contains("--set k8sServiceHost=192.168.10.11"), "{cmd}");
         assert!(cmd.contains("--set k8sServicePort=6443"), "{cmd}");
         assert!(!cmd.contains("useDigest"), "{cmd}");
@@ -236,13 +244,19 @@ mod tests {
     #[test]
     fn install_command_cn_zone_overrides_image_repos() {
         let cmd = Cilium::new(&cluster("10.244.0.0/16")).install_command(true);
-        assert!(cmd.contains("--set image.repository=quay.m.daocloud.io/cilium/cilium"), "{cmd}");
+        assert!(
+            cmd.contains("--set image.repository=quay.m.daocloud.io/cilium/cilium"),
+            "{cmd}"
+        );
         assert!(
             cmd.contains("--set operator.image.repository=quay.m.daocloud.io/cilium/operator"),
             "{cmd}"
         );
         assert!(cmd.contains("--set image.useDigest=false"), "{cmd}");
-        assert!(cmd.contains("--set operator.image.useDigest=false"), "{cmd}");
+        assert!(
+            cmd.contains("--set operator.image.useDigest=false"),
+            "{cmd}"
+        );
         // Zone branch keeps the Kubernetes-side settings.
         assert!(cmd.contains("nativeRoutingCIDR=10.244.0.0/16"), "{cmd}");
     }
@@ -250,7 +264,10 @@ mod tests {
     #[tokio::test]
     async fn check_in_sync_when_desired_equals_ready_and_positive() {
         let session = ScriptSession::new(vec![output(0, "1 1", "")]);
-        let seen = Cilium::new(&cluster("10.244.0.0/16")).check(&session).await.unwrap();
+        let seen = Cilium::new(&cluster("10.244.0.0/16"))
+            .check(&session)
+            .await
+            .unwrap();
         assert!(matches!(seen, Drift::InSync));
         let commands = session.commands.lock().unwrap();
         assert!(commands[0].contains("get ds cilium"), "{}", commands[0]);
@@ -259,18 +276,27 @@ mod tests {
     #[tokio::test]
     async fn check_drifted_when_ready_lags_desired() {
         let session = ScriptSession::new(vec![output(0, "2 1", "")]);
-        let seen = Cilium::new(&cluster("10.244.0.0/16")).check(&session).await.unwrap();
+        let seen = Cilium::new(&cluster("10.244.0.0/16"))
+            .check(&session)
+            .await
+            .unwrap();
         assert!(matches!(seen, Drift::Drifted(_)));
     }
 
     #[tokio::test]
     async fn check_drifted_on_zero_desired_or_missing_ds() {
         let session = ScriptSession::new(vec![output(0, "0 0", "")]);
-        let seen = Cilium::new(&cluster("10.244.0.0/16")).check(&session).await.unwrap();
+        let seen = Cilium::new(&cluster("10.244.0.0/16"))
+            .check(&session)
+            .await
+            .unwrap();
         assert!(matches!(seen, Drift::Drifted(_)));
 
         let session = ScriptSession::new(vec![output(1, "", "NotFound")]);
-        let seen = Cilium::new(&cluster("10.244.0.0/16")).check(&session).await.unwrap();
+        let seen = Cilium::new(&cluster("10.244.0.0/16"))
+            .check(&session)
+            .await
+            .unwrap();
         assert!(matches!(seen, Drift::Drifted(_)));
     }
 

@@ -19,6 +19,7 @@ if ! multipass info "$M" >/dev/null 2>&1; then
 fi
 
 TARGET=$(curl -fsSL --max-time 20 https://dl.k8s.io/release/stable-1.34.txt 2>/dev/null || true)
+TARGET="${TARGET#v}" # the file carries a v prefix
 if [ -z "$TARGET" ]; then
     echo "[skip] cannot fetch https://dl.k8s.io/release/stable-1.34.txt (network offline?)"
     exit 0

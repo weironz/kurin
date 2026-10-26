@@ -311,6 +311,7 @@ impl K3sServerInit {
                 cluster_init => cluster_init,
                 flannel_disabled => flannel_disabled,
                 tls_sans => tls_sans,
+                node_name => first.name,
             },
         )
         .expect("embedded k3s server config template renders");
@@ -527,10 +528,10 @@ impl Task for K3sApiReady {
 
 /// Renders the join config at apply time: the token is live data, never a
 /// plan artifact. Kept standalone so the shape is unit-testable.
-fn join_config_yaml(server: &str, token: &str) -> String {
+fn join_config_yaml(server: &str, token: &str, node_name: &str) -> String {
     templates::render(
         "k3s/join-config.yaml.j2",
-        minijinja::context! { server => server, token => token },
+        minijinja::context! { server => server, token => token, node_name => node_name },
     )
     .expect("embedded k3s join config template renders")
 }
@@ -580,7 +581,7 @@ impl K3sJoin {
     /// `get node <self>` — answers with the node name once registered.
     fn get_self(&self) -> String {
         format!(
-            "{KUBECTL} --kubeconfig {} get node {} -o jsonpath='{{{{.metadata.name}}}}'",
+            "{KUBECTL} --kubeconfig {} get node {} -o jsonpath='{{.metadata.name}}'",
             self.kubeconfig(),
             self.node_name
         )
@@ -636,7 +637,11 @@ impl Task for K3sJoin {
                 self.cluster_name
             )));
         };
-        let rendered = join_config_yaml(&format!("https://{}:6443", self.endpoint), &token);
+        let rendered = join_config_yaml(
+            &format!("https://{}:6443", self.endpoint),
+            &token,
+            &self.node_name,
+        );
         let want = sha256_hex(rendered.as_bytes());
         let changed = session.file_sha256(K3S_CONFIG).await?.as_deref() != Some(want.as_str());
         if changed {
@@ -656,7 +661,9 @@ impl Task for K3sJoin {
             let probe = self.get_self();
             let out = session
                 .exec(&format!(
-                    "for i in $(seq 1 90); do \
+                    // Embedded-etcd servers on small VMs take ~4min to
+                    // register (etcd member sync), so budget 420s.
+                    "for i in $(seq 1 210); do \
                        {probe} 2>/dev/null | grep -qx {name} && exit 0; \
                        sleep 2; \
                      done; echo 'node {name} never joined' >&2; exit 1",
@@ -665,7 +672,7 @@ impl Task for K3sJoin {
                 .await?;
             if !out.ok() {
                 return Err(miette::miette!(
-                    "node {} did not join within 180s: {}",
+                    "node {} did not join within 420s: {}",
                     self.node_name,
                     out.stderr.lines().last().unwrap_or("").trim()
                 ));
@@ -953,8 +960,15 @@ mod tests {
         let t = K3sKubeVip::new(&c, &c.nodes[0]).expect("vip configured");
         assert!(t.rendered.contains("value: \"192.168.10.100\""));
         assert!(t.rendered.contains("10.42.0.0/16"));
-        assert!(t.rendered.contains("/etc/rancher/k3s/k3s.yaml"));
-        assert!(!t.rendered.contains("admin.conf"));
+        // The k3s kubeconfig is the source; kube-vip only auto-discovers
+        // /etc/kubernetes/admin.conf, so it is mounted there (kubelet
+        // creates the parent dir for file mounts).
+        assert!(t.rendered.contains("path: /etc/rancher/k3s/k3s.yaml"));
+        assert!(t.rendered.contains("mountPath: /etc/kubernetes/admin.conf"));
+        // k3s's 2-cert chain trips kube-vip's auto discovery; the local API
+        // address is pinned explicitly instead.
+        assert!(t.rendered.contains("name: kubernetes_addr"));
+        assert!(t.rendered.contains("127.0.0.1:6443"));
         assert!(K3sKubeVip::new(
             &cluster(
                 "k3s-test-novip",
@@ -1007,7 +1021,11 @@ mod tests {
 
     #[test]
     fn join_config_renders_endpoint_and_token() {
-        let y = join_config_yaml("https://192.168.10.100:6443", "K10SECRET::node:abc");
+        let y = join_config_yaml(
+            "https://192.168.10.100:6443",
+            "K10SECRET::node:abc",
+            "node1",
+        );
         assert!(y.contains("server: https://192.168.10.100:6443"));
         assert!(y.contains("token: K10SECRET::node:abc"));
     }
@@ -1209,7 +1227,7 @@ mod tests {
         s.says("get node w1", "w1");
         let w = K3sJoin::new(&c, &c.nodes[1]);
         // Pre-seed the exact join config the task would render.
-        let rendered = join_config_yaml("https://192.168.10.11:6443", "K10SECRET::node:abc");
+        let rendered = join_config_yaml("https://192.168.10.11:6443", "K10SECRET::node:abc", "w1");
         s.write_file(K3S_CONFIG, rendered.as_bytes()).await.unwrap();
         assert!(matches!(w.apply(&s).await.unwrap(), Outcome::Verified));
         assert!(!s

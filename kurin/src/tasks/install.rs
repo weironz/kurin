@@ -28,7 +28,7 @@ enum Install {
 
 /// Bump when any Install mapping changes: marker values embed this so a
 /// recipe fix (like the containerd strip-level bug) invalidates old state.
-pub const INSTALL_RECIPE: u32 = 2;
+pub const INSTALL_RECIPE: u32 = 3;
 
 fn install_for(name: &str) -> Option<Install> {
     Some(match name {
@@ -47,6 +47,13 @@ fn install_for(name: &str) -> Option<Install> {
         },
         "cni-plugins" => Install::Tar {
             dir: "/opt/cni/bin",
+            strip: 0,
+        },
+        // k3s is a single self-contained binary.
+        "k3s" => Install::Direct("/usr/local/bin/k3s"),
+        // cilium-cli archive contains the `cilium` binary at the root.
+        "cilium-cli" => Install::Tar {
+            dir: "/usr/local/bin",
             strip: 0,
         },
         _ => return None, // images / manifests are not node-level installs
