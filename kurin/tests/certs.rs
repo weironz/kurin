@@ -45,7 +45,7 @@ struct MockSession {
 impl Session for MockSession {
     async fn exec(&self, command: &str) -> miette::Result<ExecOutput> {
         self.commands.lock().unwrap().push(command.to_string());
-        if command.contains("for c in /etc/kubernetes/pki") {
+        if command.contains("for c in ") {
             return Ok(ExecOutput {
                 exit_code: 0,
                 stdout: self.probe_stdout.lock().unwrap().clone(),
@@ -62,7 +62,9 @@ impl Session for MockSession {
             stderr: if code == 0 {
                 String::new()
             } else {
-                "boom".into()
+                // Matches the old-k3s failure shape (unknown subcommand),
+                // generic enough for every injected failure.
+                "unknown command".into()
             },
         })
     }
@@ -113,6 +115,29 @@ fn cluster() -> Cluster {
         std::path::Path::new("x.toml"),
         r##"version = "v1alpha1"
 name = "t"
+[ssh]
+user = "root"
+[ssh.auth]
+method = "password"
+password = "x"
+[nodes.cp1]
+address = "10.0.0.1"
+role = "control-plane"
+[nodes.w1]
+address = "10.0.0.2"
+role = "worker"
+"##,
+    )
+    .unwrap()
+}
+
+fn cluster_k3s() -> Cluster {
+    kurin_config::parse_str(
+        std::path::Path::new("x.toml"),
+        r##"version = "v1alpha1"
+name = "t"
+[kubernetes]
+distribution = "k3s"
 [ssh]
 user = "root"
 [ssh.auth]
@@ -361,4 +386,119 @@ async fn renew_aborts_when_static_pod_restart_fails() {
         .await
         .unwrap_err();
     assert!(format!("{err:?}").contains("static pod restart exited 1"));
+}
+
+// ---------------------------------------------------------------------------
+// k3s distribution
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn check_k3s_probes_rancher_tls_tree() {
+    let pool = MockPool::default();
+    let cp = mock_node(
+        &pool,
+        "cp1",
+        &[probe_line(
+            "/var/lib/rancher/k3s/server/tls/client-admin.crt",
+            "CN = system:admin",
+            300,
+            false,
+        )],
+    );
+    // Agents have no tls tree: empty probe output.
+    let _w = mock_node(&pool, "w1", &[]);
+
+    let reports = certs::check(&cluster_k3s(), &arc(pool), 90).await.unwrap();
+
+    assert_eq!(reports.len(), 2);
+    let cp_report = reports.iter().find(|r| r.node == "cp1").unwrap();
+    assert_eq!(cp_report.certs.len(), 1);
+    assert_eq!(cp_report.certs[0].days_left, 300);
+
+    let cmds = cp.commands.lock().unwrap();
+    assert!(
+        cmds[0].contains("/var/lib/rancher/k3s/server/tls/*.crt"),
+        "k3s probe must walk the rancher tls tree: {}",
+        cmds[0]
+    );
+    assert!(
+        !cmds[0].contains("/etc/kubernetes/pki"),
+        "k3s probe must not touch the kubeadm pki: {}",
+        cmds[0]
+    );
+}
+
+#[tokio::test]
+async fn renew_k3s_rotates_restarts_and_gates() {
+    let pool = MockPool::default();
+    let cp = mock_node(
+        &pool,
+        "cp1",
+        &[probe_line(
+            "/var/lib/rancher/k3s/server/tls/server-ca.crt",
+            "CN = k3s server-ca",
+            30,
+            true,
+        )],
+    );
+
+    certs::renew(&cluster_k3s(), &arc(pool), false)
+        .await
+        .unwrap();
+
+    let cmds = cp.commands.lock().unwrap();
+    let rotate = cmds
+        .iter()
+        .position(|c| c == "k3s certificate rotate")
+        .expect("k3s certificate rotate executed");
+    let restart = cmds
+        .iter()
+        .position(|c| c == "systemctl restart k3s")
+        .expect("k3s.service restarted");
+    let ready = cmds
+        .iter()
+        .position(|c| {
+            c.contains("k3s kubectl")
+                && c.contains("/etc/rancher/k3s/k3s.yaml")
+                && c.contains("/readyz")
+        })
+        .expect("readyz health gate polled through k3s kubectl");
+    assert!(rotate < restart, "rotate precedes restart");
+    assert!(restart < ready, "health gate follows restart");
+    assert!(
+        !cmds.iter().any(|c| c.contains("kubeadm")),
+        "k3s renew must not run kubeadm: {cmds:?}"
+    );
+}
+
+#[tokio::test]
+async fn renew_k3s_too_old_reports_upgrade_guidance() {
+    let pool = MockPool::default();
+    let cp = mock_node(
+        &pool,
+        "cp1",
+        &[probe_line(
+            "/var/lib/rancher/k3s/server/tls/server-ca.crt",
+            "CN = k3s server-ca",
+            30,
+            true,
+        )],
+    );
+    // Old k3s: `certificate rotate` is unknown (stderr contains "unknown").
+    *cp.fail_on.lock().unwrap() = Some("k3s certificate rotate".into());
+
+    let err = certs::renew(&cluster_k3s(), &arc(pool), false)
+        .await
+        .unwrap_err();
+    let msg = format!("{err:?}");
+    assert!(
+        msg.contains("k3s too old for rotate; upgrade k3s"),
+        "upgrade guidance expected: {msg}"
+    );
+
+    let cmds = cp.commands.lock().unwrap();
+    assert!(
+        !cmds.iter().any(|c| c == "systemctl restart k3s"),
+        "failed rotate must not restart k3s: {cmds:?}"
+    );
 }

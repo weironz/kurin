@@ -161,9 +161,22 @@ impl Cluster {
                 ));
             }
         }
-        if self.offline_dir.is_some() && self.cni == CniConfig::KubeOvn {
+        if self.offline_dir.is_some()
+            && matches!(
+                self.cni,
+                CniConfig::Flannel | CniConfig::Cilium | CniConfig::KubeOvn
+            )
+        {
             return Err(invalid(
-                "network.cni = \"kube-ovn\" is not air-gap ready yet (its images are not part of the offline bundle); use calico for offline installs".into(),
+                format!(
+                    "network.cni = {} is not air-gap ready yet (its images are not part of the offline bundle); use calico for offline installs",
+                    match self.cni {
+                        CniConfig::Flannel => "\"flannel\"",
+                        CniConfig::Cilium => "\"cilium\"",
+                        CniConfig::KubeOvn => "\"kube-ovn\"",
+                        _ => "<this-kind>",
+                    }
+                ),
             ));
         }
         if let Some(d) = &self.offline_dir {

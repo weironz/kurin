@@ -1,14 +1,17 @@
 //! Cluster health probe (`kurin status`): node readiness, non-running pods,
 //! etcd health and certificate freshness.
 //!
-//! Everything is collected through the first control-plane node's session:
-//! kubectl there always uses `/etc/kubernetes/admin.conf`, and on HA clusters
-//! `--server https://127.0.0.1:6443` (the local apiserver, so a broken VIP
-//! cannot blind the probe).
+//! Everything is collected through the first control-plane node's session.
+//! kubectl is distribution-dependent: kubeadm nodes use
+//! `/etc/kubernetes/admin.conf`, k3s nodes use `k3s kubectl` with
+//! `/etc/rancher/k3s/k3s.yaml`. On HA clusters `--server
+//! https://127.0.0.1:6443` pins the local apiserver so a broken VIP cannot
+//! blind the probe. etcd health: kubeadm counts ready etcd pods, k3s runs
+//! its etcd outside pods and is checked via `/healthz/etcd`.
 
 use std::sync::Arc;
 
-use kurin_config::Cluster;
+use kurin_config::{Cluster, Distribution};
 use miette::{IntoDiagnostic, Result, WrapErr};
 use serde_json::Value;
 
@@ -39,7 +42,11 @@ pub struct StatusReport {
 /// Base kubectl invocation; HA clusters pin the local apiserver.
 fn kubectl_base(cluster: &Cluster) -> String {
     let ha = cluster.control_plane().nth(1).is_some();
-    let mut cmd = String::from("kubectl --kubeconfig /etc/kubernetes/admin.conf");
+    let mut cmd = if cluster.distribution == Distribution::K3s {
+        String::from("k3s kubectl --kubeconfig /etc/rancher/k3s/k3s.yaml")
+    } else {
+        String::from("kubectl --kubeconfig /etc/kubernetes/admin.conf")
+    };
     if ha {
         cmd.push_str(" --server https://127.0.0.1:6443");
     }
@@ -156,56 +163,20 @@ fn parse_etcd_ready(v: &Value) -> usize {
         .count()
 }
 
-/// Days until the earliest `notAfter` under `/etc/kubernetes/pki` on every
-/// control-plane node.
+/// Days until the earliest `notAfter` among all control-plane certificates
+/// (distribution-specific roots; agent-only nodes report nothing).
 ///
-/// Local implementation: track A's `crate::certs::check` is not exported yet
-/// (lib.rs is the integration owner's file), so this reads the same paths with
-/// `openssl` + `date` remotely and needs no extra crate. When `certs` is wired
-/// in, this should delegate to `crate::certs::check(..)` instead.
+/// Delegates to `crate::certs::check`, which probes every node and validates
+/// the table remotely-computed expiry days.
 pub(crate) async fn cert_min_days(
     cluster: &Cluster,
     pool: &Arc<dyn SessionPool>,
 ) -> Result<Option<i64>> {
-    // One `<days>` line per certificate found; `0`/`-1` fallback when the
-    // date cannot be parsed but openssl -checkend can judge validity.
-    const SCRIPT: &str = r#"now=$(date +%s)
-for f in $(grep -rsl -- 'BEGIN CERTIFICATE' /etc/kubernetes/pki 2>/dev/null || true); do
-  end=$(openssl x509 -in "$f" -noout -enddate 2>/dev/null | cut -d= -f2-)
-  [ -n "$end" ] || continue
-  ts=$(date -d "$end" +%s 2>/dev/null || echo "")
-  if [ -n "$ts" ]; then
-    echo $(( (ts - now) / 86400 ))
-  elif openssl x509 -in "$f" -noout -checkend 0 >/dev/null 2>&1; then
-    echo 0
-  else
-    echo -1
-  fi
-done
-exit 0"#;
-    let mut min: Option<i64> = None;
-    for node in cluster.control_plane() {
-        let s = pool.get(&node.name).await?;
-        let out = s
-            .exec(SCRIPT)
-            .await
-            .wrap_err_with(|| format!("cert probe failed on {}", node.name))?;
-        // A missing pki dir yields no lines: node not (yet) a control plane.
-        if !out.ok() {
-            return Err(miette::miette!(
-                "cert probe on {} exited {}: {}",
-                node.name,
-                out.exit_code,
-                out.stderr.trim()
-            ));
-        }
-        for line in out.stdout.lines() {
-            if let Ok(days) = line.trim().parse::<i64>() {
-                min = Some(min.map_or(days, |m| m.min(days)));
-            }
-        }
-    }
-    Ok(min)
+    let reports = crate::certs::check(cluster, pool, 0).await?;
+    Ok(reports
+        .iter()
+        .filter_map(|r| r.certs.iter().map(|c| c.days_left).min())
+        .min())
 }
 
 /// Probe the cluster through the first control-plane session.
@@ -221,7 +192,16 @@ pub async fn collect(cluster: &Cluster, pool: &Arc<dyn SessionPool>) -> Result<S
     let pods_not_running =
         parse_pods_not_running(&kubectl_json(&s, &base, "get pods -A -o json").await?);
 
-    let etcd_ok = if cp.len() >= 2 {
+    let etcd_ok = if cluster.distribution == Distribution::K3s {
+        // k3s runs etcd as part of the server process, not in a pod: ask the
+        // apiserver directly (any non-5xx answer means etcd is serving).
+        let cmd = format!("{base} get --raw /healthz/etcd");
+        let out = s
+            .exec(&cmd)
+            .await
+            .wrap_err_with(|| format!("cannot run `{cmd}`"))?;
+        out.ok()
+    } else if cp.len() >= 2 {
         let etcd = kubectl_json(
             &s,
             &base,
@@ -285,4 +265,59 @@ pub fn render(r: &StatusReport) {
         "overall: {}",
         if r.healthy { "healthy" } else { "UNHEALTHY" }
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(distribution: kurin_config::Distribution, ha: bool) -> Cluster {
+        let dist = match distribution {
+            kurin_config::Distribution::K3s => "k3s",
+            kurin_config::Distribution::K8s => "k8s",
+        };
+        let mut toml = format!(
+            r#"version = "v1alpha1"
+name = "t"
+[kubernetes]
+distribution = "{dist}"
+[ssh]
+user = "root"
+[ssh.auth]
+method = "password"
+password = "x"
+[nodes.cp1]
+address = "10.0.0.1"
+role = "control-plane"
+"#
+        );
+        if ha {
+            toml.push_str("[nodes.cp2]\naddress = \"10.0.0.2\"\nrole = \"control-plane\"\n");
+        }
+        kurin_config::parse_str(std::path::Path::new("x.toml"), &toml).unwrap()
+    }
+
+    #[test]
+    fn kubectl_base_kubeadm() {
+        assert_eq!(
+            kubectl_base(&parse(kurin_config::Distribution::K8s, false)),
+            "kubectl --kubeconfig /etc/kubernetes/admin.conf"
+        );
+        assert_eq!(
+            kubectl_base(&parse(kurin_config::Distribution::K8s, true)),
+            "kubectl --kubeconfig /etc/kubernetes/admin.conf --server https://127.0.0.1:6443"
+        );
+    }
+
+    #[test]
+    fn kubectl_base_k3s() {
+        assert_eq!(
+            kubectl_base(&parse(kurin_config::Distribution::K3s, false)),
+            "k3s kubectl --kubeconfig /etc/rancher/k3s/k3s.yaml"
+        );
+        assert_eq!(
+            kubectl_base(&parse(kurin_config::Distribution::K3s, true)),
+            "k3s kubectl --kubeconfig /etc/rancher/k3s/k3s.yaml --server https://127.0.0.1:6443"
+        );
+    }
 }

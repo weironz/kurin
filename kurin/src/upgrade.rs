@@ -192,12 +192,26 @@ async fn connect_cp0<'a>(cluster: &'a Cluster, pool: &Arc<dyn SessionPool>) -> R
     })
 }
 
+async fn ensure_supported(cluster: &Cluster) -> Result<()> {
+    // k3s upgrades are a different operation (binary swap + `k3s certificate
+    // rotate` semantics); the kubeadm walk here would corrupt a k3s node.
+    if cluster.distribution == kurin_config::Distribution::K3s {
+        return Err(miette::miette!(
+            "kurin upgrade does not support distribution = \"k3s\" yet: kubeadm-based upgrade \
+             would corrupt a k3s node. Replace the k3s binary out of band, or \
+             reinstall with the target version."
+        ));
+    }
+    Ok(())
+}
+
 pub async fn run(
     cluster: &Cluster,
     target: &Version,
     pool: &Arc<dyn SessionPool>,
     batch: usize,
 ) -> Result<()> {
+    ensure_supported(cluster).await?;
     let arch = host_arch()?;
     let store = ArtifactStore::open_default()?;
     let cp = connect_cp0(cluster, pool).await?;
@@ -234,6 +248,7 @@ pub async fn run_offline(
     pool: &Arc<dyn SessionPool>,
     batch: usize,
 ) -> Result<()> {
+    ensure_supported(cluster).await?;
     let manifest = artifact_bundle::read_bundle_manifest(offline)?;
     // Rebuild the verified view of the bundle: every payload's checksum is
     // re-checked against the bundle manifest's pins before any node is
@@ -418,6 +433,7 @@ async fn upgrade_one_node(ctx: &NodeCtx<'_>, node: &Node) -> Result<()> {
 
 /// Report the upgrade that would happen (reads, no mutations).
 pub async fn plan(cluster: &Cluster, target: &Version, pool: &Arc<dyn SessionPool>) -> Result<()> {
+    ensure_supported(cluster).await?;
     let arch = host_arch()?;
     let first_cp = cluster
         .control_plane()

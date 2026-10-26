@@ -17,6 +17,14 @@ impl Session for MockSession {
     async fn exec(&self, command: &str) -> Result<ExecOutput> {
         for (needle, stdout) in &self.rules {
             if command.contains(needle) {
+                // `!fail:<stderr>` marks a failing command (exit 1).
+                if let Some(stderr) = stdout.strip_prefix("!fail:") {
+                    return Ok(ExecOutput {
+                        exit_code: 1,
+                        stdout: String::new(),
+                        stderr: stderr.to_string(),
+                    });
+                }
                 return Ok(ExecOutput {
                     exit_code: 0,
                     stdout: (*stdout).to_string(),
@@ -56,6 +64,40 @@ impl SessionPool for MockPool {
             .get(node)
             .cloned()
             .ok_or_else(|| miette::miette!("no mock session for {node}"))
+    }
+}
+
+/// A certs::check probe table line with the given days-left.
+fn cert_probe(days: i64) -> &'static str {
+    match days {
+        365 => "probe.crt|CN = kubernetes|probe enddate|365|0\n",
+        200 => "probe.crt|CN = kubernetes|probe enddate|200|1\n",
+        -1 => "probe.crt|CN = kubernetes|probe enddate|-1|0\n",
+        _ => panic!("no canned probe for {days}"),
+    }
+}
+
+/// Command-recording session wrapper (same rules as MockSession).
+struct Spy(MockSession, std::sync::Arc<std::sync::Mutex<Vec<String>>>);
+
+#[async_trait::async_trait]
+impl Session for Spy {
+    async fn exec(&self, c: &str) -> Result<ExecOutput> {
+        self.1.lock().unwrap().push(c.to_string());
+        MockSession {
+            rules: self.0.rules.clone(),
+        }
+        .exec(c)
+        .await
+    }
+    async fn write_file(&self, _p: &str, _c: &[u8]) -> Result<()> {
+        Ok(())
+    }
+    async fn file_sha256(&self, _p: &str) -> Result<Option<String>> {
+        Ok(None)
+    }
+    async fn service_active(&self, _n: &str) -> Result<bool> {
+        Ok(true)
     }
 }
 
@@ -270,27 +312,6 @@ async fn ha_uses_local_apiserver_and_etcd_quorum() {
 
     // The HA path must address the local apiserver, not the VIP.
     let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
-    struct Spy(MockSession, Arc<std::sync::Mutex<Vec<String>>>);
-    #[async_trait::async_trait]
-    impl Session for Spy {
-        async fn exec(&self, c: &str) -> Result<ExecOutput> {
-            self.1.lock().unwrap().push(c.to_string());
-            MockSession {
-                rules: self.0.rules.clone(),
-            }
-            .exec(c)
-            .await
-        }
-        async fn write_file(&self, _p: &str, _c: &[u8]) -> Result<()> {
-            Ok(())
-        }
-        async fn file_sha256(&self, _p: &str) -> Result<Option<String>> {
-            Ok(None)
-        }
-        async fn service_active(&self, _n: &str) -> Result<bool> {
-            Ok(true)
-        }
-    }
     let mut sessions: HashMap<String, Arc<dyn Session>> = HashMap::new();
     sessions.insert(
         "cp1".to_string(),
@@ -325,6 +346,123 @@ async fn ha_uses_local_apiserver_and_etcd_quorum() {
     let r = status::collect(&cluster, &pool_for(&["cp1", "cp2"], rules))
         .await
         .unwrap();
+    assert!(!r.etcd_ok);
+    assert!(!r.healthy);
+}
+
+fn cluster_one_k3s() -> kurin_config::Cluster {
+    let mut c = cluster_one_cp();
+    c.distribution = kurin_config::Distribution::K3s;
+    c
+}
+
+/// Runs `collect` against a spy-wrapped cp1 plus optional extra nodes, and
+/// returns the commands seen on cp1.
+async fn collect_spied(
+    cluster: &kurin_config::Cluster,
+    rules: Vec<(&'static str, &'static str)>,
+) -> (status::StatusReport, Vec<String>) {
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let mut sessions: HashMap<String, Arc<dyn Session>> = HashMap::new();
+    for node in &cluster.nodes {
+        if node.name == "cp1" {
+            sessions.insert(
+                node.name.clone(),
+                Arc::new(Spy(
+                    MockSession {
+                        rules: rules.clone(),
+                    },
+                    seen.clone(),
+                )),
+            );
+        } else {
+            sessions.insert(
+                node.name.clone(),
+                Arc::new(MockSession {
+                    rules: rules.clone(),
+                }),
+            );
+        }
+    }
+    let pool: Arc<dyn SessionPool> = Arc::new(MockPool { sessions });
+    let report = status::collect(cluster, &pool).await.unwrap();
+    let cmds = seen.lock().unwrap().clone();
+    (report, cmds)
+}
+
+#[tokio::test]
+async fn k3s_uses_k3s_kubectl_and_etcd_healthz() {
+    let rules = vec![
+        ("get nodes -o json", NODES_ONE_CP_READY),
+        ("get pods -A -o json", PODS_OK),
+        ("get --raw /healthz/etcd", "ok"),
+        ("openssl x509 -in", cert_probe(365)),
+    ];
+    let (r, cmds) = collect_spied(&cluster_one_k3s(), rules).await;
+
+    assert!(r.healthy);
+    assert!(r.etcd_ok);
+    assert_eq!(r.cert_min_days, Some(365));
+
+    let kube: Vec<&String> = cmds
+        .iter()
+        .filter(|c| {
+            c.contains("get nodes")
+                || c.contains("get pods")
+                || c.contains("get --raw")
+                || c.contains("openssl x509")
+        })
+        .collect();
+    assert!(!kube.is_empty());
+    for c in kube {
+        assert!(
+            c.contains("k3s kubectl --kubeconfig /etc/rancher/k3s/k3s.yaml"),
+            "k3s command must use k3s kubectl + its kubeconfig: {c}"
+        );
+    }
+    assert!(cmds.iter().any(|c| c.contains("/healthz/etcd")));
+    assert!(
+        !cmds
+            .iter()
+            .any(|c| c.contains("/etc/kubernetes/admin.conf")),
+        "k3s must not use the kubeadm kubeconfig: {cmds:?}"
+    );
+}
+
+#[tokio::test]
+async fn k3s_ha_pins_local_apiserver_and_checks_etcd() {
+    let mut cluster = cluster_one_k3s();
+    cluster
+        .nodes
+        .push(node("cp2", kurin_config::NodeRole::ControlPlane, 2));
+    let rules = vec![
+        ("get nodes -o json", NODES_ONE_CP_READY),
+        ("get pods -A -o json", PODS_OK),
+        ("get --raw /healthz/etcd", "ok"),
+        ("openssl x509 -in", cert_probe(200)),
+    ];
+    let (r, cmds) = collect_spied(&cluster, rules).await;
+
+    assert!(r.healthy);
+    assert!(r.etcd_ok);
+    assert!(cmds.iter().any(|c| c
+        == "k3s kubectl --kubeconfig /etc/rancher/k3s/k3s.yaml --server https://127.0.0.1:6443 get --raw /healthz/etcd"));
+    assert!(
+        !cmds.iter().any(|c| c.contains("component=etcd")),
+        "k3s etcd is not pod-based: {cmds:?}"
+    );
+}
+
+#[tokio::test]
+async fn k3s_etcd_unhealthy_marks_cluster_unhealthy() {
+    let rules = vec![
+        ("get nodes -o json", NODES_ONE_CP_READY),
+        ("get pods -A -o json", PODS_OK),
+        ("get --raw /healthz/etcd", "!fail:500 Internal Server Error"),
+        ("openssl x509 -in", cert_probe(365)),
+    ];
+    let (r, _) = collect_spied(&cluster_one_k3s(), rules).await;
+
     assert!(!r.etcd_ok);
     assert!(!r.healthy);
 }
