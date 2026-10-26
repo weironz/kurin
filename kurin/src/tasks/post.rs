@@ -192,6 +192,11 @@ impl Task for KubeconfigPull {
 }
 
 fn marker_path(cluster: &str) -> Result<std::path::PathBuf> {
+    if let Some(dir) = std::env::var_os("KURIN_SUMMARY_DIR") {
+        let dir = std::path::PathBuf::from(dir);
+        std::fs::create_dir_all(&dir).map_err(|e| miette::miette!("mkdir summaries: {e}"))?;
+        return Ok(dir.join(format!("{cluster}.sha")));
+    }
     let base = std::env::var_os("XDG_CACHE_HOME")
         .map(std::path::PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".cache")))

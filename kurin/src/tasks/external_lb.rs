@@ -23,6 +23,13 @@ pub struct ExternalLb {
 }
 
 impl ExternalLb {
+    pub fn haproxy(&self) -> &str {
+        &self.haproxy
+    }
+    pub fn keepalived(&self) -> &str {
+        &self.keepalived
+    }
+
     pub fn new(cluster: &Cluster, node: &Node, ordinal: usize) -> Result<Self> {
         let vip = cluster
             .vip
@@ -175,12 +182,71 @@ impl Task for ExternalLb {
             )
             .await?;
         if !out.ok() {
+            // Full stderr: the interesting line sits above haproxy's summary
+            // ALERT ("Fatal errors found in configuration"), which is all a
+            // last-line-only error would show.
             return Err(miette::miette!(
-                "haproxy/keepalived start failed on {}: {}",
+                "haproxy/keepalived start failed on {} (exit {}):\n{}",
                 self.node_name,
-                out.stderr.lines().last().unwrap_or("")
+                out.exit_code,
+                out.stderr.trim()
             ));
         }
         Ok(Outcome::Verified)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use kurin_config::Cluster;
+
+    fn cluster() -> Cluster {
+        kurin_config::parse_str(
+            std::path::Path::new("x.toml"),
+            r##"version = "v1alpha1"
+name = "t"
+[ha]
+vip = "10.97.0.99"
+mode = "kurin-lb"
+[ssh]
+user = "root"
+[ssh.auth]
+method = "password"
+password = "x"
+[nodes.cp1]
+address = "10.97.0.5"
+role = "control-plane"
+[nodes.cp2]
+address = "10.97.0.6"
+role = "control-plane"
+[nodes.lb1]
+address = "10.97.0.7"
+role = "lb"
+"##,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn rendered_configs_end_with_newline() {
+        // haproxy refuses a config whose last line lacks LF ("file might
+        // have been truncated"), and minijinja strips trailing newlines by
+        // default — regression guard for both files.
+        let c = cluster();
+        let lb = c
+            .nodes
+            .iter()
+            .find(|n| n.role == kurin_config::NodeRole::Lb)
+            .unwrap();
+        let t = ExternalLb::new(&c, lb, 0).unwrap();
+        assert!(
+            t.haproxy().ends_with('\n'),
+            "haproxy config must end with LF"
+        );
+        assert!(
+            t.keepalived().ends_with('\n'),
+            "keepalived config must end with LF"
+        );
     }
 }

@@ -14,7 +14,9 @@ real end-to-end tests ([`docs/progress.md`](docs/progress.md)).
 - **Runtime**: containerd (binary-first; no apt/yum for the Kubernetes stack)
 - **CNI**: Calico (tigera-operator), Flannel, Cilium, or `none` — per config, not per build
 - **HA**: kube-vip (static pod), `ha.mode = "external-endpoint"` (your own LB), or
-  `ha.mode = "kurin-lb"` (kurin installs haproxy + keepalived on `role = "lb"` nodes)
+  `ha.mode = "kurin-lb"` (kurin installs haproxy + keepalived on `role = "lb"` nodes;
+  haproxy health-checks every backend via HTTPS `/readyz` and exposes
+  `http://<lb>:8404/haproxy-stats`)
 - **Kubernetes ≥ v1.30** — pinned compile-time version table; `--with-kubernetes`
   override; cross-minor upgrades via kubeadm's +1-minor path
 - **Operations**: install / HA / multi-node / add-remove nodes / offline / mirror

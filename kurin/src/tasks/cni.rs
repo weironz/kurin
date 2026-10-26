@@ -3,6 +3,7 @@
 pub mod calico;
 pub mod cilium;
 pub mod flannel;
+pub mod kube_ovn;
 
 use std::sync::Arc;
 
@@ -18,6 +19,7 @@ pub fn plugin_task(cluster: &Cluster) -> Result<Arc<dyn Task>> {
         kurin_config::CniConfig::Calico => Ok(Arc::new(calico::CalicoOperator::new(cluster))),
         kurin_config::CniConfig::Flannel => Ok(Arc::new(flannel::Flannel::new(cluster))),
         kurin_config::CniConfig::Cilium => cilium::plugin(cluster),
+        kurin_config::CniConfig::KubeOvn => Ok(Arc::new(kube_ovn::KubeOvn::new(cluster))),
         kurin_config::CniConfig::None => Ok(Arc::new(NoCni::new(cluster))),
     }
 }

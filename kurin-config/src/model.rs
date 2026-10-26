@@ -161,6 +161,11 @@ impl Cluster {
                 ));
             }
         }
+        if self.offline_dir.is_some() && self.cni == CniConfig::KubeOvn {
+            return Err(invalid(
+                "network.cni = \"kube-ovn\" is not air-gap ready yet (its images are not part of the offline bundle); use calico for offline installs".into(),
+            ));
+        }
         if let Some(d) = &self.offline_dir {
             if !d.is_dir() {
                 return Err(invalid(format!(

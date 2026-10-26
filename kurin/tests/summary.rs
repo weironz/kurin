@@ -156,6 +156,10 @@ async fn table_marks_aged_cluster_certs() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn apply_is_a_verified_report() {
+    // Isolate the change-detection marker (global cache would leak between
+    // tests and the developer's machine).
+    let dir = std::env::temp_dir().join(format!("kurin-summary-test-{}", std::process::id()));
+    std::env::set_var("KURIN_SUMMARY_DIR", &dir);
     let summary = Summary::new(&cluster(), Arc::new(MockPool));
     // The executor hands the task its anchor node's session; Summary
     // ignores it and probes through the pool instead.
@@ -168,4 +172,11 @@ async fn apply_is_a_verified_report() {
         summary.apply(session.as_ref()).await.unwrap(),
         Outcome::Verified
     ));
+    // Second check after apply: marker matches the rendered summary -> InSync
+    // (the report re-renders only when its content changes).
+    assert!(matches!(
+        summary.check(session.as_ref()).await.unwrap(),
+        Drift::InSync
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
 }

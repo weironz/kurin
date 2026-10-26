@@ -98,7 +98,9 @@ echo "[ok] kurin-lb: cluster-ready, 0 failures"
 
 CPKC="sudo /usr/local/bin/kubectl --kubeconfig /etc/kubernetes/admin.conf" 2>/dev/null
 echo "[extlb] nodes"
-for i in $(seq 1 30); do
+# 600s: calico image pulls dominate on a fresh VM pair and can spike
+# under host network load; the cluster itself is already up by now.
+for i in $(seq 1 60); do
     READY=$(multipass exec "$PREFIX-master01" -- sh -c "$CPKC get nodes -o jsonpath='{range .items[*]}{.status.conditions[?(@.type==\"Ready\")].status}{\" \"}{end}'" 2>/dev/null | xargs || true)
     [ "$READY" = "True True" ] && break
     sleep 10
@@ -120,6 +122,29 @@ echo "[ok] VIP-backed API serves /readyz via haproxy+keepalived (~$((i*3))s)"
 LBIP_BOUND=$(multipass exec "$LB_PREFIX-lb1" -- ip -4 addr show | grep -c "$VIP" || true)
 [ "$LBIP_BOUND" -ge 1 ] || { echo "[FAIL] keepalived VIP not bound on lb1"; exit 1; }
 echo "[ok] keepalived VIP bound on lb1"
+
+echo "[extlb] haproxy stats + backend health checks"
+# Fetch stats via the admin socket (python is on every tier-1 LB node base
+# image; HTML scraping is unstable across haproxy versions) and assert
+# every backend's op_state is UP (2) and the health check result is OK.
+# The haproxy CSV stats endpoint (builtin ;csv=true) — port-80-class stable,
+# no unix-socket permission wrangling.
+HAPSTAT() {
+    multipass exec "$LB_PREFIX-lb1" -- sh -c \
+        "curl -fsS 'http://127.0.0.1:8404/haproxy-stats;csv=true' | grep '^k8s-api' | awk -F, '{print \$2, \$18}'"
+}
+OK=""
+for i in $(seq 1 24); do
+    ST=$(HAPSTAT || true)
+    ROWS=$(echo "$ST" | grep -c . || true)
+    BAD=$(echo "$ST" | awk '$1 !~ /^(FRONTEND|BACKEND)$/ && $2 != "UP"' | head -3)
+    # ALL server rows (cp1/cp2) must be UP; a failed/empty read can never
+    # pass: rows must be >2 (frontend+backend+servers) with zero DOWN.
+    [ "${ROWS:-0}" -ge 4 ] && [ -z "$BAD" ] && { OK=1; break; }
+    sleep 5
+done
+[ -n "$OK" ] || { echo "[FAIL] haproxy backend health (rows=${ROWS:-0}, bad=${BAD:-none})"; echo "$ST" | sed 's/^/  st: /'; exit 1; }
+echo "[ok] haproxy stats all rows healthy via /readyz checks ($ROWS rows incl. FRONTEND/BACKEND) (~$((i*5))s): $(echo "$ST" | tr '\n' ' ')"
 
 echo "[extlb] pod health"
 for i in $(seq 1 30); do

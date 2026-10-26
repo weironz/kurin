@@ -90,13 +90,15 @@ pub struct NetworkConfig {
     pub cni: CniConfig,
 }
 
-#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum CniConfig {
     #[default]
     Calico,
     Flannel,
     Cilium,
+    #[serde(rename = "kube-ovn")]
+    KubeOvn,
     #[serde(rename = "none")]
     None,
 }

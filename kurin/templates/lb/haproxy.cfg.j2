@@ -19,8 +19,21 @@ frontend k8s-api
     default_backend k8s-api
 
 backend k8s-api
-    option tcp-check
+    # Health check probes /readyz over TLS (check-ssl) and trusts the
+    # apiserver's self-signed cert (verify none) — but data traffic stays a
+    # pure TCP passthrough: client TLS must reach the backend untouched.
+    option httpchk GET /readyz
+    http-check expect status 200
+    default-server inter 5s fall 3 rise 2
+
     balance roundrobin
 {% for b in backends %}
-    server {{ b.name }} {{ b.ip }}:6443 check inter 5s fall 3 rise 2
+    server {{ b.name }} {{ b.ip }}:6443 check check-ssl verify none
 {% endfor %}
+
+listen stats
+    bind *:8404
+    mode http
+    stats enable
+    stats uri /haproxy-stats
+    stats refresh 5s

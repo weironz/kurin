@@ -1,5 +1,22 @@
 # 进度日志
 
+## Kube-OVN + haproxy 细化 + CI 手动化（2026-10-26）✅
+
+- **Kube-OVN CNI**（`network.cni.kind = "kube-ovn"`）：上游只发 helm chart，故把 v1.16.15 的
+  `helm template` 输出固化进 `kurin/templates/cni/kube-ovn.yaml`（39KB），运行时按集群
+  CIDR/注册表改写。**上游 install.sh 的隐式步骤**：给控制面打 `kube-ovn/role=master`
+  标签（否则 ovn-central 永久 Pending、控制器连不上 NB）——已内置。
+  tier-1 e2e PASS（controller/ovs-ovn/ovn-default subnet 全部收敛、pinger 网关可达、二遍全 skip）。
+  明确限制：kube-ovn 镜像未入离线 bundle，离线安装校验拒绝（诚实失败）。
+- **haproxy 细化**：后端健康检查从裸 TCP 改为 HTTPS `GET /readyz`（`http-check expect
+  status 200` + `check-ssl verify none`，数据面保持 TCP 透传）；`:8404/haproxy-stats`
+  统计页；e2e 用 `;csv=true` 断言全部后端 UP。
+- **实机 triage 三连**：minijinja 默认丢弃模板末尾换行 → haproxy 2.8 视为截断拒绝启动
+  （`set_keep_trailing_newline(true)` + 回归测试）；`default-server ssl` 会把客户端 TLS
+  二次包一层（已移除，仅 check-ssl）；e2e stats 断言中的 awk 字段错位。
+- **CI 手动化**：check/mirrors 改为仅 `workflow_dispatch`（push 触发的 CI 与本机 e2e
+  抢内存导致连续失败堆积）；release 保留 tag 触发并加手动入口。
+
 ## Tails 收尾（2026-10-26）✅ 全部完成
 
 四轨并行 + 集成，全部真机验证：

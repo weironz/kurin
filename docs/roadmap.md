@@ -42,7 +42,7 @@ tier-0~3 + offline 五层 e2e 全绿，CI 为 check + tier0（push/PR）+ releas
   不一致告警（镜像源最大风险是悄悄换内容）。
 - 验收：`KURIN_ZONE=cn` 下 tier-1 完整安装；mirror 校验 job 绿。
 
-### 2.2 CNI 矩阵：Flannel ✅ / Cilium ✅ / Kube-OVN（明确推迟）
+### 2.2 CNI 矩阵：Flannel ✅ / Cilium ✅ / Kube-OVN ✅（离线不入 bundle，校验拒绝）
 - 配置结构已就绪（`network.cni` 是 tagged enum，`Calico`/`None` 已存在）。
 - 每个 CNI：manifest 进制品清单（sha256 pin）、`tasks/cni/` 子模块、
   探针（正确性 = Node Ready + DNS 解析 + Pod 间连通）。
