@@ -138,6 +138,8 @@ fn cluster_k3s() -> Cluster {
 name = "t"
 [kubernetes]
 distribution = "k3s"
+[network]
+cni = { kind = "none" }
 [ssh]
 user = "root"
 [ssh.auth]
@@ -490,11 +492,11 @@ async fn renew_k3s_too_old_reports_upgrade_guidance() {
     let err = certs::renew(&cluster_k3s(), &arc(pool), false)
         .await
         .unwrap_err();
+    // miette debug output wraps long messages with `│` breaks; check the key
+    // fragments separately.
     let msg = format!("{err:?}");
-    assert!(
-        msg.contains("k3s too old for rotate; upgrade k3s"),
-        "upgrade guidance expected: {msg}"
-    );
+    assert!(msg.contains("k3s too old for"), "guidance start: {msg}");
+    assert!(msg.contains("upgrade k3s"), "guidance end: {msg}");
 
     let cmds = cp.commands.lock().unwrap();
     assert!(

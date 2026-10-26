@@ -223,7 +223,7 @@ async fn healthy_single_cp() {
         // Single CP: apiserver healthz.
         ("get --raw /healthz", "ok"),
         // Cert probe: 365 days left.
-        ("BEGIN CERTIFICATE", "365"),
+        ("openssl x509 -in", cert_probe(365)),
     ]);
     let r = status::collect(&cluster_one_cp(), &pool).await.unwrap();
 
@@ -240,7 +240,7 @@ async fn not_ready_node_unhealthy() {
         ("get nodes -o json", NODES_WORKER_NOT_READY),
         ("get pods -A -o json", PODS_OK),
         ("get --raw /healthz", "ok"),
-        ("BEGIN CERTIFICATE", "365"),
+        ("openssl x509 -in", cert_probe(365)),
     ]);
     let r = status::collect(&cluster_one_cp(), &pool).await.unwrap();
 
@@ -257,7 +257,7 @@ async fn failed_pod_unhealthy() {
         ("get nodes -o json", NODES_ONE_CP_READY),
         ("get pods -A -o json", PODS_WITH_FAILURE),
         ("get --raw /healthz", "ok"),
-        ("BEGIN CERTIFICATE", "365"),
+        ("openssl x509 -in", cert_probe(365)),
     ]);
     let r = status::collect(&cluster_one_cp(), &pool).await.unwrap();
 
@@ -274,7 +274,7 @@ async fn expired_cert_unhealthy() {
         ("get nodes -o json", NODES_ONE_CP_READY),
         ("get pods -A -o json", PODS_OK),
         ("get --raw /healthz", "ok"),
-        ("BEGIN CERTIFICATE", "-1"),
+        ("openssl x509 -in", cert_probe(-1)),
     ]);
     let r = status::collect(&cluster_one_cp(), &pool).await.unwrap();
 
@@ -302,7 +302,7 @@ async fn ha_uses_local_apiserver_and_etcd_quorum() {
         ("get nodes -o json", NODES_ONE_CP_READY),
         ("get pods -A -o json", PODS_OK),
         ("component=etcd", etcd_pods),
-        ("BEGIN CERTIFICATE", "200"),
+        ("openssl x509 -in", cert_probe(200)),
     ];
     let healthy_pool = pool_for(&["cp1", "cp2"], rules.clone());
     let r = status::collect(&cluster, &healthy_pool).await.unwrap();
@@ -407,10 +407,7 @@ async fn k3s_uses_k3s_kubectl_and_etcd_healthz() {
     let kube: Vec<&String> = cmds
         .iter()
         .filter(|c| {
-            c.contains("get nodes")
-                || c.contains("get pods")
-                || c.contains("get --raw")
-                || c.contains("openssl x509")
+            c.contains("get nodes") || c.contains("get pods") || c.contains("get --raw")
         })
         .collect();
     assert!(!kube.is_empty());
@@ -420,6 +417,14 @@ async fn k3s_uses_k3s_kubectl_and_etcd_healthz() {
             "k3s command must use k3s kubectl + its kubeconfig: {c}"
         );
     }
+    let probe = cmds
+        .iter()
+        .find(|c| c.contains("openssl x509"))
+        .expect("cert probe executed");
+    assert!(
+        probe.contains("/var/lib/rancher/k3s/server/tls"),
+        "k3s cert probe must walk the rancher tls tree: {probe}"
+    );
     assert!(cmds.iter().any(|c| c.contains("/healthz/etcd")));
     assert!(
         !cmds

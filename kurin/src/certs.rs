@@ -374,6 +374,11 @@ mod tests {
     use super::*;
 
     fn parse(distribution: &str) -> Cluster {
+        let network = if distribution == "k3s" {
+            "[network]\ncni = { kind = \"none\" }\n"
+        } else {
+            ""
+        };
         kurin_config::parse_str(
             std::path::Path::new("x.toml"),
             &format!(
@@ -381,7 +386,7 @@ mod tests {
 name = "t"
 [kubernetes]
 distribution = "{distribution}"
-[ssh]
+{network}[ssh]
 user = "root"
 [ssh.auth]
 method = "password"

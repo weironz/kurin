@@ -276,12 +276,17 @@ mod tests {
             kurin_config::Distribution::K3s => "k3s",
             kurin_config::Distribution::K8s => "k8s",
         };
+        let network = if dist == "k3s" {
+            "[network]\ncni = { kind = \"none\" }\n"
+        } else {
+            ""
+        };
         let mut toml = format!(
             r#"version = "v1alpha1"
 name = "t"
 [kubernetes]
 distribution = "{dist}"
-[ssh]
+{network}[ssh]
 user = "root"
 [ssh.auth]
 method = "password"
