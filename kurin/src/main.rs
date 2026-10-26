@@ -307,7 +307,7 @@ async fn run(cli: Cli) -> Result<()> {
                 if cp > 1 && cluster.vip.is_none() && !json {
                     eprintln!("warn: {cp} control-plane nodes without ha.vip: the first master becomes the API single point of failure");
                 }
-                let mut plan = kurin::Plan::build(&cluster);
+                let mut plan = kurin::Plan::build(&cluster)?;
 
                 let pool: std::sync::Arc<dyn kurin::SessionPool> =
                     std::sync::Arc::new(kurin::ssh::SshSessionPool::from_cluster(&cluster)?);
@@ -434,7 +434,7 @@ async fn add_nodes(file: PathBuf, json: bool, offline: Option<PathBuf>) -> Resul
     }
 
     // Same plan/executor as create: converged nodes skip, new nodes install.
-    let mut plan = kurin::Plan::build(&cluster);
+    let mut plan = kurin::Plan::build(&cluster)?;
     let mut opts = kurin::executor::RunOptions::default().with_default_state(&cluster.name);
     opts.resume = false;
     let mut emit = |event: kurin::Event| {

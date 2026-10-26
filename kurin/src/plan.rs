@@ -4,6 +4,7 @@
 use std::sync::Arc;
 
 use kurin_config::Cluster;
+use miette::Result;
 use petgraph::{graph::NodeIndex, stable_graph::StableDiGraph};
 
 use crate::engine::{PlannedTask, Stage, Task};
@@ -23,7 +24,7 @@ pub struct Plan {
 impl Plan {
     /// Linear stage chain (M1): preflight -> prepare -> bootstrap -> join -> cni -> post.
     /// The graph shape is ready for M2 branching (air-gap, upgrade).
-    pub fn build(cluster: &Cluster) -> Plan {
+    pub fn build(cluster: &Cluster) -> Result<Plan> {
         let stages = [
             Stage::Preflight,
             Stage::Artifacts,
@@ -133,9 +134,9 @@ impl Plan {
             push(6, Arc::new(tasks::join::KubeadmJoin::new(cluster, node)));
         }
         // CNI + post.
-        push(8, Arc::new(tasks::cni::CalicoOperator::new(cluster)));
+        push(8, tasks::cni::plugin_task(cluster)?);
         push(9, Arc::new(tasks::post::KubeconfigPull::new(cluster)));
 
-        Plan { graph, stages: idx }
+        Ok(Plan { graph, stages: idx })
     }
 }

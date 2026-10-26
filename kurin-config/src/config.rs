@@ -52,6 +52,18 @@ pub struct ArtifactsConfig {
 pub struct KubernetesConfig {
     /// Target Kubernetes version, e.g. "1.33.1".
     pub version: Option<Version>,
+    /// Cluster distribution. `k8s` = kubeadm + binary-first (default),
+    /// `k3s` = Rancher K3s (embedded containerd/etcd, no kubeadm).
+    #[serde(default)]
+    pub distribution: Distribution,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Distribution {
+    #[default]
+    K8s,
+    K3s,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -71,6 +83,8 @@ pub struct NetworkConfig {
 pub enum CniConfig {
     #[default]
     Calico,
+    Flannel,
+    Cilium,
     #[serde(rename = "none")]
     None,
 }

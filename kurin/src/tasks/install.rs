@@ -147,7 +147,7 @@ impl Task for ArtifactsInstall {
         } else {
             None
         };
-        let manifest = ArtifactManifest::embedded()?;
+        let manifest = crate::artifact::install_manifest()?;
 
         session
             .exec("mkdir -p /usr/local/bin /opt/cni/bin /etc/kurin")

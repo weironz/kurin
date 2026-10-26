@@ -129,7 +129,7 @@ role = "control-plane"
 "##,
     )
     .unwrap();
-    let plan = kurin::Plan::build(&cluster);
+    let plan = kurin::Plan::build(&cluster).expect("test plan builds");
     let tree = kurin::render::render_tree(&plan);
     assert!(tree.contains("preflight"));
     assert!(tree.contains("bootstrap"));

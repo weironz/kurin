@@ -182,6 +182,22 @@ pub fn zone() -> crate::zone::Zone {
     *ZONE.get().unwrap_or(&crate::zone::Zone::Global)
 }
 
+/// Manifest override for this process: lets `add nodes`/`upgrade` install
+/// the *cluster's* version instead of the compile-time table.
+static MANIFEST_OVERRIDE: std::sync::OnceLock<ArtifactManifest> = std::sync::OnceLock::new();
+
+pub fn set_manifest_override(manifest: ArtifactManifest) {
+    let _ = MANIFEST_OVERRIDE.set(manifest);
+}
+
+/// The manifest install tasks must use: the override if set, else embedded.
+pub fn install_manifest() -> Result<ArtifactManifest, ArtifactError> {
+    match MANIFEST_OVERRIDE.get() {
+        Some(m) => Ok(m.clone()),
+        None => ArtifactManifest::embedded(),
+    }
+}
+
 /// The artifact manifest: the single source of truth for installable
 /// binaries, images and manifests.
 #[derive(Debug, Clone, Serialize, Deserialize)]

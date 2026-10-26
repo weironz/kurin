@@ -133,6 +133,7 @@ fn cluster_one_cp() -> kurin_config::Cluster {
         name: "t".into(),
         offline_dir: None,
         zone: None,
+        distribution: kurin_config::Distribution::K8s,
         kubernetes_version: semver::Version::parse("1.33.2").unwrap(),
         pod_cidr: "10.244.0.0/16".parse().unwrap(),
         service_cidr: "10.96.0.0/12".parse().unwrap(),

@@ -8,7 +8,7 @@ use std::net::IpAddr;
 use ipnet::Ipv4Net;
 use semver::Version;
 
-use crate::config::{ClusterConfig, CniConfig, NodeRole, SshAuth, CONFIG_VERSION};
+use crate::config::{ClusterConfig, CniConfig, Distribution, NodeRole, SshAuth, CONFIG_VERSION};
 use crate::error::{ConfigError, Result};
 
 pub const DEFAULT_KUBERNETES_VERSION: &str = "1.33.1";
@@ -38,6 +38,8 @@ pub struct Cluster {
     pub offline_dir: Option<std::path::PathBuf>,
     /// Domestic mirror zone (env `KURIN_ZONE` overrides at CLI level).
     pub zone: Option<String>,
+    /// Cluster distribution (kubeadm or k3s).
+    pub distribution: Distribution,
     pub kubernetes_version: Version,
     pub pod_cidr: Ipv4Net,
     pub service_cidr: Ipv4Net,
@@ -112,10 +114,12 @@ impl Cluster {
             }
         }
         let zone = cfg.artifacts.zone;
+        let distribution = cfg.kubernetes.distribution;
         Ok(Cluster {
             name: cfg.name,
             offline_dir,
             zone,
+            distribution,
             kubernetes_version,
             pod_cidr,
             service_cidr,
@@ -130,6 +134,23 @@ impl Cluster {
     pub fn validate(&self) -> Result<()> {
         let invalid = |hint: String| ConfigError::invalid(self.source.clone(), hint);
 
+        if self.distribution == Distribution::K3s {
+            // K3s embeds containerd and (in this build) ships its own
+            // flannel. Calico/Cilium with k3s needs --flannel-backend=none
+            // wiring that this build does not do.
+            if !matches!(self.cni, CniConfig::Flannel | CniConfig::None) {
+                return Err(invalid(
+                    "kubernetes.distribution = \"k3s\" supports network.cni = \"flannel\" or \"none\" only"
+                        .into(),
+                ));
+            }
+            if self.offline_dir.is_some() {
+                return Err(invalid(
+                    "k3s offline installs are not supported in this build (no airgap image bundle yet)"
+                        .into(),
+                ));
+            }
+        }
         if let Some(d) = &self.offline_dir {
             if !d.is_dir() {
                 return Err(invalid(format!(

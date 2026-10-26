@@ -253,6 +253,39 @@
         "linux-amd64": "dbf1bad0def7b5955dc8e4aeee96e23ead0bc5822f6872518e685cd0ed484121",
         "linux-arm64": "dbf1bad0def7b5955dc8e4aeee96e23ead0bc5822f6872518e685cd0ed484121"
       }
+    },
+    {
+      "name": "flannel",
+      "kind": "manifest",
+      "version": "0.27.2",
+      "file": "kube-flannel.yml",
+      "url_template": "https://raw.githubusercontent.com/flannel-io/flannel/v{version}/Documentation/kube-flannel.yml",
+      "sha256": {
+        "linux-amd64": "58fd1389c036893e7bb6dc6eb68c6c460d39953429b625cd7b5fad434d6fca80",
+        "linux-arm64": "58fd1389c036893e7bb6dc6eb68c6c460d39953429b625cd7b5fad434d6fca80"
+      }
+    },
+    {
+      "name": "k3s",
+      "kind": "binary",
+      "version": "1.33.1+k3s1",
+      "file": "k3s",
+      "url_template": "https://github.com/k3s-io/k3s/releases/download/v{version}/k3s-{arch}",
+      "sha256": {
+        "linux-amd64": "0f53a0ee29c837713472e5fb0a13b5841f9dca76d029b26138364b9efbac66b1",
+        "linux-arm64": "ae4d5208d786b7ae3d916133419728bfc676648bd996de609e5cd55327c6f30a"
+      }
+    },
+    {
+      "name": "cilium-cli",
+      "kind": "binary",
+      "version": "0.20.1",
+      "file": "cilium-linux-{arch}.tar.gz",
+      "url_template": "https://github.com/cilium/cilium-cli/releases/download/v{version}/cilium-linux-{arch}.tar.gz",
+      "sha256": {
+        "linux-amd64": "24e817dcfcc8a12e325ce7547617bcbcf171c5b0b335bb24d2bb1207ba047f61",
+        "linux-arm64": "d237550b882af6f2e01e8985e1e024d57c0774611c0a527c7a20dcee7dc4fd07"
+      }
     }
   ]
 }
