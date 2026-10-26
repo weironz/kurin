@@ -39,6 +39,9 @@ real end-to-end tests ([`docs/progress.md`](docs/progress.md)).
 
 ## Quick start
 
+详细手把手教程：[`docs/quickstart.md`](docs/quickstart.md)（单节点 / HA / 离线 / 国内镜像 / FAQ）。
+字段全表：[`docs/configuration.md`](docs/configuration.md)；集成插件见 [`docs/plugins.md`](docs/plugins.md)。
+
 ```bash
 # install (musl static, x86_64/aarch64)
 curl -fsSL https://raw.githubusercontent.com/weironz/kurin/main/scripts/install.sh | bash
