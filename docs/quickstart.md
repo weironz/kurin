@@ -207,7 +207,7 @@ kurin create cluster -f cluster.toml --offline /srv/kurin-bundle
 KURIN_ZONE=cn kurin create cluster -f cluster.toml
 ```
 
-效果：registry.k8s.io → k8s.m.daoclond、quay.io → quay.m.daoclond、GitHub release →
+效果：registry.k8s.io → k8s.m.daocloud.io、quay.io → quay.m.daocloud.io、GitHub release →
 gh-proxy 前缀。校验值不变——manifest 的 sha256 依旧兜底。
 
 ---
