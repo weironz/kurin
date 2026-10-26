@@ -16,12 +16,13 @@ if ! "$BIN" status --help >/dev/null 2>&1; then
     exit 0
 fi
 
-echo "[status] healthy cluster"
-if ! "$BIN" status -f "$CFG" > "$OUT" 2>&1; then
-    echo "[FAIL] status nonzero on healthy cluster"
-    cat "$OUT"
-    exit 1
-fi
+echo "[status] healthy cluster (bounded retry: recent restarts can be transient)"
+ok=""
+for i in $(seq 1 24); do
+    if "$BIN" status -f "$CFG" > "$OUT" 2>&1; then ok=1; break; fi
+    sleep 5
+done
+[ -n "$ok" ] || { echo "[FAIL] status nonzero on healthy cluster"; cat "$OUT"; exit 1; }
 grep -q 'master01' "$OUT" || { echo "[FAIL] master01 missing from status"; cat "$OUT"; exit 1; }
 grep -q 'worker01' "$OUT" || { echo "[FAIL] worker01 missing from status"; cat "$OUT"; exit 1; }
 echo "[ok] status exit 0, lists master01 + worker01"

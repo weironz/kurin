@@ -95,6 +95,18 @@ tier3-test:
 tier3-down:
     e2e/tier3/down.sh
 
+tier1-zone:
+    e2e/tier1/zone.sh
+
+tier2-add-cp:
+    e2e/tier2/add-cp.sh
+
+tier2-certs:
+    e2e/tier2/certs.sh
+
+tier2-status:
+    e2e/tier2/status.sh
+
 # full local gate before pushing anything that touches behavior
 ci-gate: check tier0
     just tier0-test

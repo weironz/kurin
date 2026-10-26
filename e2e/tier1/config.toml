@@ -17,6 +17,9 @@ method = "private_key"
 key-path = "/home/gsops/data/repos/kurin/e2e/tier1/.keys/id_ed25519"
 
 [nodes.node01]
-address = "10.97.0.65"
-internal-address = "10.97.0.65"
+address = "10.97.0.60"
+internal-address = "10.97.0.60"
 role = "control-plane"
+
+[artifacts]
+zone = "cn"

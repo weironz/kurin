@@ -48,13 +48,12 @@ fn kubectl_base(cluster: &Cluster) -> String {
 
 async fn kubectl_json(s: &Arc<dyn Session>, base: &str, args: &str) -> Result<Value> {
     let cmd = format!("{base} {args}");
-    let out = s.exec(&cmd).await.wrap_err_with(|| format!("cannot run `{cmd}`"))?;
+    let out = s
+        .exec(&cmd)
+        .await
+        .wrap_err_with(|| format!("cannot run `{cmd}`"))?;
     if !out.ok() {
-        miette::bail!(
-            "`{cmd}` exited {}: {}",
-            out.exit_code,
-            out.stderr.trim()
-        );
+        miette::bail!("`{cmd}` exited {}: {}", out.exit_code, out.stderr.trim());
     }
     serde_json::from_str(&out.stdout)
         .into_diagnostic()
@@ -143,14 +142,16 @@ fn parse_etcd_ready(v: &Value) -> usize {
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
-        .filter(|item| match item
-            .pointer("/status/containerStatuses")
-            .and_then(Value::as_array)
-        {
-            Some(cs) if !cs.is_empty() => cs
-                .iter()
-                .all(|c| c.get("ready").and_then(Value::as_bool) == Some(true)),
-            _ => false,
+        .filter(|item| {
+            match item
+                .pointer("/status/containerStatuses")
+                .and_then(Value::as_array)
+            {
+                Some(cs) if !cs.is_empty() => cs
+                    .iter()
+                    .all(|c| c.get("ready").and_then(Value::as_bool) == Some(true)),
+                _ => false,
+            }
         })
         .count()
 }

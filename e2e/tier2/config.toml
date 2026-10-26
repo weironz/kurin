@@ -25,3 +25,8 @@ role = "control-plane"
 address = "10.97.0.85"
 internal-address = "10.97.0.85"
 role = "worker"
+
+[nodes.master2]
+address = "10.97.0.137"
+internal-address = "10.97.0.137"
+role = "control-plane"

@@ -30,15 +30,32 @@ fails=$(grep -c '"task-failed"' "$EVENTS" || true)
 [ "$fails" -eq 0 ] || { echo "[FAIL] $fails task failures"; grep task-failed "$EVENTS"; exit 1; }
 echo "[ok] cluster-ready, 0 task failures"
 
-echo "[zone] waiting for cn-mirror images in containerd"
+# Zone installs seed control-plane images from the mirror through the
+# artifact cache and import them under their *upstream* names, so kubelet
+# never pulls them. The observable proof of mirror traffic is therefore:
+#   1. the seeded kube-apiserver image exists under registry.k8s.io (imported),
+#   2. calico images were pulled at runtime from quay.m.daocloud.io (the CR
+#      registry), i.e. a mirror-named image exists in containerd.
+echo "[zone] checking seeded control-plane image (import, upstream tag)"
+for i in $(seq 1 12); do
+    SEEDED=$(multipass exec "$NAME" -- sudo ctr -n k8s.io images list -q 2>/dev/null | grep -c '^registry\.k8s\.io/kube-apiserver' || true)
+    [[ "$SEEDED" =~ ^[0-9]+$ ]] && [ "$SEEDED" -ge 1 ] && break
+    sleep 10
+done
+[[ "$SEEDED" =~ ^[0-9]+$ ]] && [ "$SEEDED" -ge 1 ] \
+    || { echo "[FAIL] kube-apiserver was not seeded (zone import did not run)"; exit 1; }
+echo "[ok] control-plane images seeded (kubelet needs no registry pull)"
+
+echo "[zone] waiting for mirror-named calico images in containerd"
+CN=0
 for i in $(seq 1 24); do
-    CN=$(multipass exec "$NAME" -- sudo ctr -n k8s.io images list -q 2>/dev/null | grep -c 'k8s\.m\.daocloud\.io' || true)
+    CN=$(multipass exec "$NAME" -- sudo ctr -n k8s.io images list -q 2>/dev/null | grep -c 'quay\.m\.daocloud\.io' || true)
     [[ "$CN" =~ ^[0-9]+$ ]] && [ "$CN" -ge 1 ] && break
     sleep 10
 done
-[[ "$CN" =~ ^[0-9]+$ ]] && [ "$CN" -ge 1 ] || { echo "[FAIL] no k8s.m.daocloud.io images in containerd"; exit 1; }
-echo "[ok] $CN image(s) from k8s.m.daocloud.io (~$((i*10))s)"
-multipass exec "$NAME" -- sudo ctr -n k8s.io images list -q | grep 'k8s\.m\.daocloud\.io' | head -5
+[[ "$CN" =~ ^[0-9]+$ ]] && [ "$CN" -ge 1 ] \
+    || { echo "[FAIL] no quay.m.daocloud.io images in containerd (runtime pulls bypassed the mirror)"; exit 1; }
+echo "[ok] $CN mirror-named image(s) pulled from quay.m.daocloud.io (~$((i*10))s)"
 
 echo "[zone] waiting for calico Installation registry to be mirrored"
 KC="sudo /usr/local/bin/kubectl --kubeconfig /etc/kubernetes/admin.conf"

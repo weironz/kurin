@@ -57,3 +57,4 @@ nodes:
       node-role.kurin.io/pool: general
 artifacts:
   offline-dir: null
+  zone: null

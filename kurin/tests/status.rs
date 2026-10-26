@@ -144,13 +144,15 @@ fn cluster_one_cp() -> kurin_config::Cluster {
     }
 }
 
-fn pool_for(
-    nodes: &[&str],
-    rules: Vec<(&'static str, &'static str)>,
-) -> Arc<dyn SessionPool> {
+fn pool_for(nodes: &[&str], rules: Vec<(&'static str, &'static str)>) -> Arc<dyn SessionPool> {
     let mut sessions: HashMap<String, Arc<dyn Session>> = HashMap::new();
     for name in nodes {
-        sessions.insert(name.to_string(), Arc::new(MockSession { rules: rules.clone() }));
+        sessions.insert(
+            name.to_string(),
+            Arc::new(MockSession {
+                rules: rules.clone(),
+            }),
+        );
     }
     Arc::new(MockPool { sessions })
 }
@@ -215,7 +217,10 @@ async fn failed_pod_unhealthy() {
     let r = status::collect(&cluster_one_cp(), &pool).await.unwrap();
 
     assert!(!r.healthy);
-    assert_eq!(r.pods_not_running, vec!["default/broken", "default/pending"]);
+    assert_eq!(
+        r.pods_not_running,
+        vec!["default/broken", "default/pending"]
+    );
 }
 
 #[tokio::test]
@@ -244,7 +249,9 @@ async fn ha_uses_local_apiserver_and_etcd_quorum() {
 }"#;
 
     let mut cluster = cluster_one_cp();
-    cluster.nodes.push(node("cp2", kurin_config::NodeRole::ControlPlane, 2));
+    cluster
+        .nodes
+        .push(node("cp2", kurin_config::NodeRole::ControlPlane, 2));
 
     let mut rules = vec![
         ("get nodes -o json", NODES_ONE_CP_READY),
@@ -265,7 +272,11 @@ async fn ha_uses_local_apiserver_and_etcd_quorum() {
     impl Session for Spy {
         async fn exec(&self, c: &str) -> Result<ExecOutput> {
             self.1.lock().unwrap().push(c.to_string());
-            MockSession { rules: self.0.rules.clone() }.exec(c).await
+            MockSession {
+                rules: self.0.rules.clone(),
+            }
+            .exec(c)
+            .await
         }
         async fn write_file(&self, _p: &str, _c: &[u8]) -> Result<()> {
             Ok(())
@@ -281,25 +292,36 @@ async fn ha_uses_local_apiserver_and_etcd_quorum() {
     sessions.insert(
         "cp1".to_string(),
         Arc::new(Spy(
-            MockSession { rules: rules.clone() },
+            MockSession {
+                rules: rules.clone(),
+            },
             seen.clone(),
         )),
     );
     sessions.insert(
         "cp2".to_string(),
-        Arc::new(MockSession { rules: rules.clone() }),
+        Arc::new(MockSession {
+            rules: rules.clone(),
+        }),
     );
     let spy_pool: Arc<dyn SessionPool> = Arc::new(MockPool { sessions });
     status::collect(&cluster, &spy_pool).await.unwrap();
     let cmds = seen.lock().unwrap().clone();
-    assert!(cmds.iter().any(|c| c.contains("--server https://127.0.0.1:6443")));
+    assert!(cmds
+        .iter()
+        .any(|c| c.contains("--server https://127.0.0.1:6443")));
 
     // HA semantics: one etcd pod down breaks the quorum check.
-    rules[2] = ("component=etcd", r#"{"items": [
+    rules[2] = (
+        "component=etcd",
+        r#"{"items": [
       {"metadata": {"name": "etcd-cp1"}, "status": {"containerStatuses": [{"ready": true}]}},
       {"metadata": {"name": "etcd-cp2"}, "status": {"containerStatuses": [{"ready": false}]}}
-    ]}"#);
-    let r = status::collect(&cluster, &pool_for(&["cp1", "cp2"], rules)).await.unwrap();
+    ]}"#,
+    );
+    let r = status::collect(&cluster, &pool_for(&["cp1", "cp2"], rules))
+        .await
+        .unwrap();
     assert!(!r.etcd_ok);
     assert!(!r.healthy);
 }

@@ -33,7 +33,8 @@ if ! "$BIN" certs check -f "$CFG" --warn-days 3650 > "$OUT" 2>&1; then
     exit 1
 fi
 grep -q 'apiserver\.crt' "$OUT" || { echo "[FAIL] apiserver.crt missing from report"; cat "$OUT"; exit 1; }
-grep -Eq '20[0-9]{2}-[0-9]{2}-[0-9]{2}' "$OUT" || { echo "[FAIL] no expiry date in report"; cat "$OUT"; exit 1; }
+# OpenSSL prints "Oct 26 01:09:57 2027 GMT"; either that or ISO is fine.
+grep -Eq '20[0-9]{2}( |-[0-9]{2})' "$OUT" || { echo "[FAIL] no expiry date in report"; cat "$OUT"; exit 1; }
 grep -q 'master01' "$OUT" || { echo "[FAIL] master01 missing from report"; cat "$OUT"; exit 1; }
 echo "[ok] report lists apiserver.crt with expiry:"
 grep 'apiserver\.crt' "$OUT" | head -3

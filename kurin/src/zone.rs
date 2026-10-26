@@ -40,7 +40,10 @@ const CN_MIRRORS: &[(&str, &str)] = &[
     ("docker.io/", "docker.m.daocloud.io/"),
     // GitHub release downloads via a proxy prefix (proxied, not mirrored;
     // sha256 verification still applies)
-    ("https://github.com/", "https://gh-proxy.com/https://github.com/"),
+    (
+        "https://github.com/",
+        "https://gh-proxy.com/https://github.com/",
+    ),
 ];
 
 /// Everything else passes through unchanged, notably `https://dl.k8s.io/...`.

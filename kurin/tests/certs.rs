@@ -5,12 +5,8 @@
 //! `crate::` dependency. When the integrator wires the module into lib.rs,
 //! these tests still pass unchanged.
 
-mod executor {
-    pub use kurin::SessionPool;
-}
-
-#[path = "../src/certs.rs"]
-mod certs;
+// Integration wiring landed: the module is `kurin::certs` now.
+use kurin::certs;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -25,7 +21,10 @@ use kurin_config::Cluster;
 /// What `openssl`/`date` on the node would have printed for a cert expiring
 /// `days` from the mock now.
 fn probe_line(path: &str, subject: &str, days: i64, ca: bool) -> String {
-    format!("{path}|{subject}|probe enddate|{days}|{}", if ca { 1 } else { 0 })
+    format!(
+        "{path}|{subject}|probe enddate|{days}|{}",
+        if ca { 1 } else { 0 }
+    )
 }
 
 #[derive(Default)]
@@ -60,7 +59,11 @@ impl Session for MockSession {
         Ok(ExecOutput {
             exit_code: code,
             stdout: "ok".into(),
-            stderr: if code == 0 { String::new() } else { "boom".into() },
+            stderr: if code == 0 {
+                String::new()
+            } else {
+                "boom".into()
+            },
         })
     }
     async fn write_file(&self, _p: &str, _c: &[u8]) -> miette::Result<()> {
@@ -144,12 +147,7 @@ async fn check_parses_probe_output_and_days_left() {
                 false,
             ),
             probe_line("/etc/kubernetes/pki/ca.crt", "CN = kubernetes", 42, true),
-            probe_line(
-                "/etc/kubernetes/pki/etcd/server.crt",
-                "CN = cp1",
-                12,
-                false,
-            ),
+            probe_line("/etc/kubernetes/pki/etcd/server.crt", "CN = cp1", 12, false),
         ],
     );
     // Workers have no pki tree: probe succeeds with empty output.
@@ -161,7 +159,11 @@ async fn check_parses_probe_output_and_days_left() {
     let cp_report = reports.iter().find(|r| r.node == "cp1").unwrap();
     assert_eq!(cp_report.certs.len(), 3);
 
-    let ca = cp_report.certs.iter().find(|c| c.path.ends_with("ca.crt")).unwrap();
+    let ca = cp_report
+        .certs
+        .iter()
+        .find(|c| c.path.ends_with("ca.crt"))
+        .unwrap();
     assert!(ca.is_ca);
     assert_eq!(ca.days_left, 42);
     assert_eq!(ca.subject, "CN = kubernetes");
@@ -257,7 +259,12 @@ async fn renew_skips_healthy_node_without_force() {
     let cp = mock_node(
         &pool,
         "cp1",
-        &[probe_line("/etc/kubernetes/pki/apiserver.crt", "CN = kube-apiserver", 200, false)],
+        &[probe_line(
+            "/etc/kubernetes/pki/apiserver.crt",
+            "CN = kube-apiserver",
+            200,
+            false,
+        )],
     );
 
     certs::renew(&cluster(), &arc(pool), false).await.unwrap();
@@ -276,7 +283,12 @@ async fn renew_renews_expiring_node_and_gates_health() {
     let cp = mock_node(
         &pool,
         "cp1",
-        &[probe_line("/etc/kubernetes/pki/ca.crt", "CN = kubernetes", 30, true)],
+        &[probe_line(
+            "/etc/kubernetes/pki/ca.crt",
+            "CN = kubernetes",
+            30,
+            true,
+        )],
     );
 
     certs::renew(&cluster(), &arc(pool), false).await.unwrap();
@@ -309,14 +321,21 @@ async fn renew_force_skips_precheck() {
     let cp = mock_node(
         &pool,
         "cp1",
-        &[probe_line("/etc/kubernetes/pki/apiserver.crt", "CN = kube-apiserver", 200, false)],
+        &[probe_line(
+            "/etc/kubernetes/pki/apiserver.crt",
+            "CN = kube-apiserver",
+            200,
+            false,
+        )],
     );
 
     certs::renew(&cluster(), &arc(pool), true).await.unwrap();
 
     let cmds = cp.commands.lock().unwrap();
     assert!(
-        !cmds.iter().any(|c| c.contains("for c in /etc/kubernetes/pki")),
+        !cmds
+            .iter()
+            .any(|c| c.contains("for c in /etc/kubernetes/pki")),
         "force must skip the pre-check probe: {cmds:?}"
     );
     assert!(cmds.iter().any(|c| c.contains("kubeadm certs renew all")));
@@ -328,7 +347,12 @@ async fn renew_aborts_when_static_pod_restart_fails() {
     let cp = mock_node(
         &pool,
         "cp1",
-        &[probe_line("/etc/kubernetes/pki/ca.crt", "CN = kubernetes", 30, true)],
+        &[probe_line(
+            "/etc/kubernetes/pki/ca.crt",
+            "CN = kubernetes",
+            30,
+            true,
+        )],
     );
     // Let renew succeed, fail the manifest-cycle step.
     *cp.fail_on.lock().unwrap() = Some("/etc/kubernetes/manifests/*.yaml".into());

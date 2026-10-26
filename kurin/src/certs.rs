@@ -109,10 +109,7 @@ fn parse_probe(node: &str, stdout: &str) -> Result<Vec<CertInfo>> {
 }
 
 /// Probe a single node's certificate tree.
-async fn check_node(
-    node: &str,
-    pool: &Arc<dyn SessionPool>,
-) -> Result<NodeCerts> {
+async fn check_node(node: &str, pool: &Arc<dyn SessionPool>) -> Result<NodeCerts> {
     let session = pool.get(node).await?;
     let out = session.exec(PROBE).await?;
     if !out.ok() {
@@ -132,7 +129,11 @@ async fn check_node(
 /// Collect certificate expiry info for every node in the cluster (serially:
 /// this is a read-only probe, but one SSH round-trip per node keeps the
 /// output ordered and the load trivial).
-pub async fn check(cluster: &Cluster, pool: &Arc<dyn SessionPool>, warn_days: i64) -> Result<Vec<NodeCerts>> {
+pub async fn check(
+    cluster: &Cluster,
+    pool: &Arc<dyn SessionPool>,
+    warn_days: i64,
+) -> Result<Vec<NodeCerts>> {
     let mut reports = Vec::new();
     for node in &cluster.nodes {
         let r = check_node(&node.name, pool).await?;
@@ -140,7 +141,11 @@ pub async fn check(cluster: &Cluster, pool: &Arc<dyn SessionPool>, warn_days: i6
             &node.name,
             "certs probed",
             true,
-            &format!("{} certs, min days_left {}", r.certs.len(), min_days(&r).map_or("n/a".into(), |d| d.to_string())),
+            &format!(
+                "{} certs, min days_left {}",
+                r.certs.len(),
+                min_days(&r).map_or("n/a".into(), |d| d.to_string())
+            ),
         );
         reports.push(r);
     }

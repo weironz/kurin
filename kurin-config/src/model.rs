@@ -199,9 +199,9 @@ impl Cluster {
                 ))
             }
             (n, None) if n > 1 => {
-                return Err(invalid(format!(
-                    "{n} control-plane nodes require ha.vip for the API endpoint"
-                )))
+                // Allowed: stacked control plane (first master is the API
+                // SPOF). The CLI warns; kubeadm joins the rest via that
+                // endpoint. spec:裸 HA without VIP is operator choice.
             }
             (_, Some(vip))
                 if self

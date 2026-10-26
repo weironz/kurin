@@ -25,7 +25,7 @@ pub enum ConfigError {
         message: String,
     },
 
-    #[error("invalid configuration")]
+    #[error("invalid configuration: {hint}")]
     #[diagnostic(code(kurin::config::invalid))]
     Invalid {
         #[source_code]

@@ -19,6 +19,20 @@ struct Cli {
 enum Commands {
     /// Create resources.
     Create(CreateArgs),
+    /// Inspect or rotate control-plane certificates.
+    Certs {
+        #[command(subcommand)]
+        what: CertsWhat,
+    },
+    /// Probe cluster health (nodes, pods, etcd, certificates).
+    Status {
+        /// Config file (.toml or .yaml).
+        #[arg(short, long)]
+        file: PathBuf,
+        /// Emit machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
     /// Upgrade the cluster's Kubernetes components to a pinned version.
     Upgrade {
         /// Config file (.toml or .yaml) of the running cluster.
@@ -47,6 +61,27 @@ enum Commands {
     Add(AddArgs),
     /// Delete a node or the whole cluster.
     Delete(DeleteArgs),
+}
+
+#[derive(Subcommand)]
+enum CertsWhat {
+    /// Report certificate expiry on every control-plane node.
+    Check {
+        #[arg(short, long)]
+        file: PathBuf,
+        /// Flag certificates expiring within this many days.
+        #[arg(long, default_value_t = 30)]
+        warn_days: i64,
+    },
+    /// Rotate control-plane certificates (kubeadm certs renew) with a
+    /// health gate per node.
+    Renew {
+        #[arg(short, long)]
+        file: PathBuf,
+        /// Renew even when certificates look fresh.
+        #[arg(long)]
+        force: bool,
+    },
 }
 
 #[derive(clap::Args)]
@@ -185,6 +220,51 @@ async fn run(cli: Cli) -> Result<()> {
             }
         }
         Commands::Artifact { out, arch } => build_artifacts(out, arch).await,
+        Commands::Certs { what } => match what {
+            CertsWhat::Check { file, warn_days } => {
+                let cluster = kurin_config::load(&file)?;
+                let pool: std::sync::Arc<dyn kurin::SessionPool> =
+                    std::sync::Arc::new(kurin::ssh::SshSessionPool::from_cluster(&cluster)?);
+                let reports = kurin::certs::check(&cluster, &pool, warn_days).await?;
+                kurin::certs::render(&reports, warn_days);
+                Ok(())
+            }
+            CertsWhat::Renew { file, force } => {
+                let cluster = kurin_config::load(&file)?;
+                let pool: std::sync::Arc<dyn kurin::SessionPool> =
+                    std::sync::Arc::new(kurin::ssh::SshSessionPool::from_cluster(&cluster)?);
+                kurin::certs::renew(&cluster, &pool, force).await
+            }
+        },
+        Commands::Status { file, json } => {
+            let cluster = kurin_config::load(&file)?;
+            let pool: std::sync::Arc<dyn kurin::SessionPool> =
+                std::sync::Arc::new(kurin::ssh::SshSessionPool::from_cluster(&cluster)?);
+            let report = kurin::status::collect(&cluster, &pool).await?;
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "healthy": report.healthy,
+                        "nodes": report.nodes.iter().map(|n| serde_json::json!({
+                            "name": n.name, "ready": n.ready,
+                            "kubelet_version": n.kubelet_version, "roles": n.roles,
+                        })).collect::<Vec<_>>(),
+                        "pods_not_running": report.pods_not_running,
+                        "etcd_ok": report.etcd_ok,
+                        "cert_min_days": report.cert_min_days,
+                    }))
+                    .into_diagnostic()?
+                );
+            } else {
+                kurin::status::render(&report);
+            }
+            if report.healthy {
+                Ok(())
+            } else {
+                Err(miette::miette!("cluster is not healthy"))
+            }
+        }
         Commands::Add(args) => match args.what {
             AddWhat::Nodes {
                 file,
@@ -223,6 +303,9 @@ async fn run(cli: Cli) -> Result<()> {
                 let cp = cluster.control_plane().count();
                 if cp % 2 == 0 && cp > 1 && !json {
                     eprintln!("warn: even control-plane count ({cp}); etcd quorum prefers odd");
+                }
+                if cp > 1 && cluster.vip.is_none() && !json {
+                    eprintln!("warn: {cp} control-plane nodes without ha.vip: the first master becomes the API single point of failure");
                 }
                 let mut plan = kurin::Plan::build(&cluster);
 
@@ -321,14 +404,29 @@ async fn add_nodes(file: PathBuf, json: bool, offline: Option<PathBuf>) -> Resul
     let pool: std::sync::Arc<dyn kurin::SessionPool> =
         std::sync::Arc::new(kurin::ssh::SshSessionPool::from_cluster(&cluster)?);
 
-    // Fresh join material: the certificate key from the original install is
-    // only valid for 2h, and a new CP member needs a usable one.
     if let Some(first) = cluster.control_plane().next() {
         let s = pool.get(&first.name).await?;
         // If the cluster was initialized by this kurin (admin.conf present),
         // refresh the token + certificate key.
         let init = s.exec("test -f /etc/kubernetes/admin.conf").await?;
         if init.ok() {
+            // Version-skew guard: a cluster upgraded past the embedded
+            // manifest would otherwise join new nodes at the old version.
+            let out = s
+                .exec("kubectl --kubeconfig /etc/kubernetes/admin.conf get --raw /version 2>/dev/null")
+                .await?;
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&out.stdout) {
+                if let Some(git) = v.get("gitVersion").and_then(|g| g.as_str()) {
+                    let server = git.trim_start_matches('v');
+                    let embedded = kurin::version::KUBERNETES_VERSION;
+                    if server != embedded {
+                        eprintln!(
+                            "warn: cluster runs v{server} but new nodes install v{embedded} \
+                             (embedded manifest); upgrade the new nodes after joining"
+                        );
+                    }
+                }
+            }
             kurin::tasks::bootstrap::refresh_join_material(s.as_ref(), &cluster.name)
                 .await
                 .map_err(|e| miette::miette!("refresh join material on {}: {e}", first.name))?;

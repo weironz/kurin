@@ -10,12 +10,14 @@
 //! The thin binary in `main.rs` only parses argv and picks an output sink.
 
 pub mod artifact;
+pub mod certs;
 pub mod engine;
 pub mod executor;
 pub mod plan;
 pub mod render;
 pub mod ssh;
 pub mod state;
+pub mod status;
 pub mod tasks;
 pub mod teardown;
 pub mod templates;
