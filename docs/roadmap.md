@@ -42,14 +42,14 @@ tier-0~3 + offline 五层 e2e 全绿，CI 为 check + tier0（push/PR）+ releas
   不一致告警（镜像源最大风险是悄悄换内容）。
 - 验收：`KURIN_ZONE=cn` 下 tier-1 完整安装；mirror 校验 job 绿。
 
-### 2.2 CNI 矩阵：Flannel ✅ / Cilium ✅ / Kube-OVN（推迟）
+### 2.2 CNI 矩阵：Flannel ✅ / Cilium ✅ / Kube-OVN（明确推迟）
 - 配置结构已就绪（`network.cni` 是 tagged enum，`Calico`/`None` 已存在）。
 - 每个 CNI：manifest 进制品清单（sha256 pin）、`tasks/cni/` 子模块、
   探针（正确性 = Node Ready + DNS 解析 + Pod 间连通）。
 - 验收：每种 CNI 至少 tier-1 通过一次；`kurin delete cluster` 清理干净。
 - 建议顺序：Flannel（最简）→ Cilium（eBPF，需内核版本前置检查）。
 
-### 2.3 K3s 发行版选项 ✅（单节点 + 内嵌 etcd HA；离线与 arm64 资产名待办）
+### 2.3 K3s 发行版选项 ✅（单节点 + 内嵌 etcd HA + 离线 airgap + arm64 资产名；kurin-lb HA ✅）
 - `kubernetes.distribution = "k8s" | "k3s"`；k3s 走单二进制 + systemd，
   不依赖 kubeadm，HA 用内嵌 etcd（3 节点）或 external DB。
 - 影响面：bootstrap/join/cni 阶段的实现分支，制品清单加 k3s 二进制。
@@ -59,9 +59,10 @@ tier-0~3 + offline 五层 e2e 全绿，CI 为 check + tier0（push/PR）+ releas
 - 已实现 `ha.mode = "external-endpoint" | "kurin-lb"` + `NodeRole::Lb`，tier3 e2e 双模式通过。
 - 剩余：k3s × kurin-lb 组合（校验暂拒）；haproxy stats/健康检查细化。
 
-### 2.5 CRI-O 运行时（仅枚举扩展位转正）
-- `containerd | crio`；二进制分发 + 配置模板 + `crictl` socket 对齐。
-- 优先级最低：目标用户 99% 用 containerd。
+### 2.5 CRI-O 运行时 ✅
+- `kubernetes.runtime = "crio"`（kubeadm 轨道；k3s×crio 校验拒绝）。制品 cri-o@1.33.4 静态包
+  （GCS，双架构 sha 下载实测），containerd 制品自动跳过，kubeadm criSocket 切换。
+  tier-1 e2e PASS（node runtime cri-o://1.33.4）。
 
 ## 批次 3 — 运维与打磨
 
@@ -73,14 +74,17 @@ tier-0~3 + offline 五层 e2e 全绿，CI 为 check + tier0（push/PR）+ releas
   在本地即可算出，接入 upgrade 的 manifest_for）。
 - 验收：1.33.13 → 1.34.x（下一个 minor）tier-2 升级成功。
 
-### 3.2 离线增强
-- `kurin artifact --arch arm64` 跨架构 bundle（当前只打本机架构）。
-- 离线升级：`upgrade --offline <dir>`，bundle 带目标版本二进制 + 镜像。
-- 验收：tier-2 在断网环境完成一次升级。
+### 3.2 离线增强 ✅
+- `kurin artifact --arch arm64` 跨架构 bundle（实测 arm64 k3s bundle 成功）。
+- 离线升级：`kurin artifact --with-kubernetes vX --out dir`（写 `kurin-manifest.json`）+
+  `kurin upgrade --offline dir`。tier-2 断网升级 PASS（1.33.13 → 1.34.12，二遍幂等）。
+- k3s 离线：airgap tar 入制品（`k3s-airgap`，optional）+ 分发到
+  `/var/lib/rancher/k3s/agent/images/`。tier-1 断网 PASS。
 
-### 3.3 报告与可观测
-- 安装/升级结束的"版本清单 + 节点表 + 证书到期"汇总（人读 + `--json`）。
-- `--json` 事件补充耗时统计与阶段汇总（现在已有逐任务 ms）。
+### 3.3 报告与可观测 ✅（核心）
+- `post/summary`：安装后打印 CLUSTER SUMMARY（节点/角色/版本/证书最早到期），带
+  内容哈希门控（摘要变化才重报，保持"二遍全 skip"契约）；`to_json()` 单行供自动化。
+- 事件流已有逐任务 ms。
 
 ### 3.4 夜间 e2e（**当前约定：手工，不做**）
 - 备选方案已成型：`.github/workflows/nightly.yml`（cron + 串行

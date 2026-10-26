@@ -30,6 +30,15 @@ enum Install {
 /// recipe fix (like the containerd strip-level bug) invalidates old state.
 pub const INSTALL_RECIPE: u32 = 3;
 
+/// Runtime-aware wrapper: containerd is not installed on CRI-O clusters
+/// (cri-o ships its own runtime stack).
+fn install_for_runtime(name: &str, runtime: kurin_config::RuntimeKind) -> Option<Install> {
+    if runtime == kurin_config::RuntimeKind::Crio && name == "containerd" {
+        return None;
+    }
+    install_for(name)
+}
+
 fn install_for(name: &str) -> Option<Install> {
     Some(match name {
         "kubeadm" => Install::Direct("/usr/local/bin/kubeadm"),
@@ -37,6 +46,8 @@ fn install_for(name: &str) -> Option<Install> {
         "kubectl" => Install::Direct("/usr/local/bin/kubectl"),
         "runc" => Install::Direct("/usr/local/bin/runc"),
         // containerd tgz layout: bin/containerd, bin/containerd-shim-* (no strip)
+        // Skipped by ArtifactsInstall when the cluster runs CRI-O (see
+        // install_for_runtime below).
         "containerd" => Install::Tar {
             dir: "/usr/local",
             strip: 0,
@@ -70,14 +81,22 @@ pub struct ArtifactsInstall {
     arch: Arch,
     /// Offline bundle directory; None fetches into the local cache.
     offline: Option<std::path::PathBuf>,
+    /// Runtime selection (CRI-O clusters skip the containerd payload).
+    runtime: kurin_config::RuntimeKind,
 }
 
 impl ArtifactsInstall {
-    pub fn new(node: &Node, arch: Arch, offline: Option<std::path::PathBuf>) -> Self {
+    pub fn new(
+        node: &Node,
+        arch: Arch,
+        offline: Option<std::path::PathBuf>,
+        runtime: kurin_config::RuntimeKind,
+    ) -> Self {
         Self {
             node: node.clone(),
             arch,
             offline,
+            runtime,
         }
     }
 
@@ -131,7 +150,7 @@ impl Task for ArtifactsInstall {
         let manifest = crate::artifact::ArtifactManifest::embedded()?;
         let marker = self.marker(session).await?;
         for entry in manifest.artifacts() {
-            if install_for(&entry.name).is_none() {
+            if install_for_runtime(&entry.name, self.runtime).is_none() {
                 continue; // images/manifests don't install to the node
             }
             let spec = manifest.spec(&entry.name, self.arch)?;
@@ -224,7 +243,7 @@ impl Task for ArtifactsInstall {
         // Marker records what is installed; check compares to the manifest.
         let mut lines = String::new();
         for entry in manifest.artifacts() {
-            if install_for(&entry.name).is_none() {
+            if install_for_runtime(&entry.name, self.runtime).is_none() {
                 continue;
             }
             let spec = manifest.spec(&entry.name, self.arch)?;

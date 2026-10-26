@@ -191,6 +191,16 @@ impl Task for KubeconfigPull {
     }
 }
 
+fn marker_path(cluster: &str) -> Result<std::path::PathBuf> {
+    let base = std::env::var_os("XDG_CACHE_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".cache")))
+        .unwrap_or_else(|| std::path::PathBuf::from("/tmp"));
+    let dir = base.join("kurin").join("summaries");
+    std::fs::create_dir_all(&dir).map_err(|e| miette::miette!("mkdir summaries: {e}"))?;
+    Ok(dir.join(format!("{cluster}.sha")))
+}
+
 /// Applies per-node labels declared in the config. kubeadm v1beta4 accepts
 /// `nodeRegistration.labels` but does not act on it (verified on 1.33), so
 /// labels are converged through the API explicitly.
@@ -524,13 +534,27 @@ impl Task for Summary {
     }
 
     async fn check(&self, _session: &dyn Session) -> Result<Drift> {
-        Ok(Drift::Drifted(
-            "summary is a report; render on every run".into(),
-        ))
+        // Idempotency: re-render only when the summary actually changed
+        // (version, node set, cert days). A report that always "runs"
+        // breaks the second-pass-all-skipped contract.
+        let marker = marker_path(&self.base.cluster)?;
+        let rendered = self.collect().await;
+        let want = crate::tasks::prepare::sha256_hex(rendered.to_json().as_bytes());
+        match std::fs::read_to_string(&marker) {
+            Ok(have) if have.trim() == want => Ok(Drift::InSync),
+            _ => Ok(Drift::Drifted("cluster summary changed".into())),
+        }
     }
 
     async fn apply(&self, _session: &dyn Session) -> Result<Outcome> {
-        eprint!("{}", self.collect().await.to_table());
+        let rendered = self.collect().await;
+        eprint!("{}", rendered.to_table());
+        let marker = marker_path(&self.base.cluster)?;
+        std::fs::write(
+            &marker,
+            crate::tasks::prepare::sha256_hex(rendered.to_json().as_bytes()),
+        )
+        .map_err(|e| miette::miette!("write summary marker: {e}"))?;
         Ok(Outcome::Verified)
     }
 }

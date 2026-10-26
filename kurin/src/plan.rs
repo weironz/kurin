@@ -87,24 +87,13 @@ impl Plan {
                         node,
                         arch,
                         cluster.offline_dir.clone(),
+                        cluster.runtime,
                     )),
                 );
                 push(2, Arc::new(tasks::prepare::Sysctl::new(node)));
                 push(2, Arc::new(tasks::kernel_deps::KernelDeps::new(node)));
             }
-            if cluster.ha_mode == kurin_config::HaMode::KurinLb {
-                for (ordinal, lb) in cluster
-                    .nodes
-                    .iter()
-                    .filter(|n| n.role == kurin_config::NodeRole::Lb)
-                    .enumerate()
-                {
-                    push(
-                        4,
-                        Arc::new(tasks::external_lb::ExternalLb::new(cluster, lb, ordinal)?),
-                    );
-                }
-            }
+            // ExternalLb for kurin-lb comes from stage_tasks itself.
             for (stage, task) in tasks::k3s::stage_tasks(cluster)? {
                 let i = stages
                     .iter()
@@ -131,18 +120,21 @@ impl Plan {
                     node,
                     arch,
                     cluster.offline_dir.clone(),
+                    cluster.runtime,
                 )),
             );
             push(2, Arc::new(tasks::prepare::Sysctl::new(node)));
             push(2, Arc::new(tasks::kernel_deps::KernelDeps::new(node)));
-            push(
-                2,
-                Arc::new(tasks::prepare::ContainerdConfig::new(
-                    node,
-                    crate::version::PAUSE_IMAGE,
-                )),
-            );
-            push(2, Arc::new(tasks::prepare::ContainerdUnit::new(node)));
+            if cluster.runtime == kurin_config::RuntimeKind::Containerd {
+                push(
+                    2,
+                    Arc::new(tasks::prepare::ContainerdConfig::new(
+                        node,
+                        crate::version::PAUSE_IMAGE,
+                    )),
+                );
+                push(2, Arc::new(tasks::prepare::ContainerdUnit::new(node)));
+            }
             push(
                 2,
                 Arc::new(tasks::prepare::KubeletUnit::new(

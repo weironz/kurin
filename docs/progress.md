@@ -1,5 +1,23 @@
 # 进度日志
 
+## Tails 收尾（2026-10-26）✅ 全部完成
+
+四轨并行 + 集成，全部真机验证：
+
+| 尾项 | 结果 |
+|---|---|
+| CRI-O 运行时（`kubernetes.runtime = "crio"`） | tier-1 PASS：node runtime `cri-o://1.33.4`；containerd 制品自动跳过；criSocket 切换；启动竞态修复（同 stage 前置等待） |
+| k3s 离线（airgap tar） | tier-1 断网 PASS：airgap tar 落 `/var/lib/rancher/k3s/agent/images/`，二遍全 skip |
+| k3s × kurin-lb | tier-3 PASS：2 CP + 1 LB，keepalived 持 VIP、无 kube-vip pod、VIP /readyz、全 pod 健康 |
+| 离线升级（`artifact --with-kubernetes` + `upgrade --offline`） | tier-2 断网升级 1.33.13 → 1.34.12 PASS，二遍 up-to-date |
+| k3s arm64 资产名 | `{asset_arch}` 模板变量；arm64 bundle 实测（k3s-arm64 二进制下载校验通过） |
+| 安装报告 | `post/summary` 哈希门控（报告变化才重报，不破幂等）；tier-2 二遍全 skip 已回归 |
+
+集成修复（e2e 暴露）：plan 的 runtime gate 两次静默未生效（crio 集群仍装 containerd）；
+k3s 分支 ExternalLb 重复规划（stage_tasks 已含）；Summary "always drift" 破坏二遍幂等；
+crio unit 与安装/配置并行启动竞态。
+
+## 文档补齐（2026-10-26）
 ## M2 步骤 1 — upgrade ✅（2026-10-26）
 
 （M2 后续全部任务清单见 `docs/roadmap.md`：批次 1 证书轮转/CP 追加/status；批次 2 国内镜像、CNI 矩阵、K3s、外部 LB；批次 3 跨 minor 升级、离线增强、夜间 e2e 备选方案。约定：e2e 全手工，主线功能开发。）

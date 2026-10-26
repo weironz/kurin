@@ -350,10 +350,19 @@ impl Task for CrioUnit {
         session
             .write_file(CRIO_UNIT, self.rendered.as_bytes())
             .await?;
+        // Sibling tasks (binary install, config drop-in) run in the same
+        // parallel stage: wait for their on-disk markers before starting,
+        // otherwise crio exits on missing binaries and systemd parks the
+        // unit in a failed state we would have to reset-failed.
         let out = session
             .exec(
-                "systemctl daemon-reload && systemctl enable --now crio.service \
-                 && systemctl is-active crio.service",
+                "for i in $(seq 1 120); do \
+                   [ -x /usr/local/bin/crio ] && [ -x /usr/local/libexec/crio/crun ] \
+                     && [ -f /etc/crio/crio.conf.d/10-kurin.conf ] && break; \
+                   sleep 2; \
+                 done; \
+                 systemctl daemon-reload && systemctl reset-failed crio.service 2>/dev/null || true; \
+                 systemctl enable --now crio.service && systemctl is-active crio.service",
             )
             .await?;
         if out.ok() {
