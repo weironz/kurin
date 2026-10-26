@@ -1,0 +1,29 @@
+# CRI-O systemd unit, rendered by kurin. The binaries are distributed by
+# the kurin artifact model ("crio" static package under /usr/local), never
+# via apt/yum; the helper binaries (crun/runc/conmon) live in
+# /usr/local/libexec/crio after CrioInstall's install pass.
+[Unit]
+Description=Container Runtime Interface for OCI (CRI-O)
+Documentation=https://github.com/cri-o/cri-o
+X-URL=https://github.com/cri-o/cri-o/releases/tag/v{{ crio_version }}
+Wants=network-online.target
+After=network-online.target
+Before=kubelet.service
+
+[Service]
+Type=notify
+Environment=GOTRACEBACK=crash
+ExecStart=/usr/local/bin/crio
+ExecReload=/bin/kill -s HUP $MAINPID
+TasksMax=infinity
+LimitNOFILE=1048576
+LimitNPROC=1048576
+LimitCORE=infinity
+OOMScoreAdjust=-999
+TimeoutStartSec=0
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+Alias=cri-o.service

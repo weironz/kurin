@@ -1,0 +1,23 @@
+# Managed by kurin (CRI-O lane). Drop-in loaded from /etc/crio/crio.conf.d
+# after the compiled-in defaults; drop-in order is lexical, so 10-... runs
+# after 00-defaults. Overrides only what kurin owns: pinned pause image and
+# the runtime helpers shipped by the static CRI-O package under /usr/local
+# (upstream's own install script would put them under /usr/libexec/crio).
+[crio.image]
+pause_image = "{{ pause_image }}"
+signature_policy = "/etc/crio/policy.json"
+
+[crio.runtime]
+conmon_cgroup = "pod"
+cgroup_manager = "systemd"
+default_runtime = "crun"
+
+[crio.runtime.runtimes.crun]
+runtime_path = "/usr/local/libexec/crio/crun"
+runtime_root = "/run/crun"
+monitor_path = "/usr/local/libexec/crio/conmon"
+
+[crio.runtime.runtimes.runc]
+runtime_path = "/usr/local/libexec/crio/runc"
+runtime_root = "/run/runc"
+monitor_path = "/usr/local/libexec/crio/conmon"
