@@ -11,6 +11,7 @@
 
 pub mod artifact;
 pub mod certs;
+pub mod dynamic_manifest;
 pub mod engine;
 pub mod executor;
 pub mod plan;
