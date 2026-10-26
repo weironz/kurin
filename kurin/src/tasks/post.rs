@@ -385,7 +385,11 @@ impl SummaryReport {
                 mark
             ));
         }
-        let cp = self.nodes.iter().filter(|n| n.role == "control-plane").count();
+        let cp = self
+            .nodes
+            .iter()
+            .filter(|n| n.role == "control-plane")
+            .count();
         let workers = self.nodes.iter().filter(|n| n.role == "worker").count();
         out.push_str(&format!(
             "\n{} node(s): {cp} control-plane, {} worker\n",
@@ -520,7 +524,9 @@ impl Task for Summary {
     }
 
     async fn check(&self, _session: &dyn Session) -> Result<Drift> {
-        Ok(Drift::Drifted("summary is a report; render on every run".into()))
+        Ok(Drift::Drifted(
+            "summary is a report; render on every run".into(),
+        ))
     }
 
     async fn apply(&self, _session: &dyn Session) -> Result<Outcome> {
@@ -657,5 +663,195 @@ kind: Config
                 .and_then(|s| s.as_str()),
             Some("https://192.168.10.100:6443")
         );
+    }
+}
+
+#[cfg(test)]
+mod summary_tests {
+    use super::*;
+    use kurin_config::{Node, NodeRole, ResolvedSsh, SshAuth};
+    use std::collections::BTreeMap;
+
+    fn cluster() -> Cluster {
+        let mk = |name: &str, role: NodeRole| Node {
+            name: name.into(),
+            role,
+            address: "192.168.10.11".parse().unwrap(),
+            internal_address: "192.168.10.11".parse().unwrap(),
+            ssh: ResolvedSsh {
+                user: "root".into(),
+                port: 22,
+                auth: SshAuth::Password {
+                    password: "x".into(),
+                },
+            },
+            labels: BTreeMap::new(),
+        };
+        Cluster {
+            name: "kfc".into(),
+            kubernetes_version: "1.33.1".parse().unwrap(),
+            pod_cidr: "10.233.64.0/18".parse().unwrap(),
+            service_cidr: "10.33.0.0/18".parse().unwrap(),
+            dns_domain: "cluster.local".into(),
+            cni: kurin_config::CniConfig::Calico,
+            vip: None,
+            nodes: vec![
+                mk("master01", NodeRole::ControlPlane),
+                mk("master02", NodeRole::ControlPlane),
+                mk("worker01", NodeRole::Worker),
+            ],
+            offline_dir: None,
+            zone: None,
+            distribution: kurin_config::Distribution::K8s,
+            ha_mode: kurin_config::HaMode::KubeVip,
+            runtime: kurin_config::RuntimeKind::Containerd,
+            source: String::new(),
+        }
+    }
+
+    /// Pool that cannot hand out sessions; enough for `new` / format tests.
+    struct NoPool;
+
+    #[async_trait::async_trait]
+    impl crate::executor::SessionPool for NoPool {
+        async fn get(&self, _node: &str) -> Result<Arc<dyn Session>> {
+            Err(miette::miette!("no session in summary_tests"))
+        }
+    }
+
+    fn report() -> SummaryReport {
+        SummaryReport {
+            cluster: "kfc".into(),
+            kubernetes_version: "v1.33.1".into(),
+            distribution: "k8s".into(),
+            runtime: "containerd".into(),
+            cert_warn_days: 30,
+            nodes: vec![
+                NodeSummary {
+                    name: "master01".into(),
+                    role: "control-plane".into(),
+                    kubelet_version: "v1.33.1".into(),
+                    apiserver_version: Some("v1.33.1".into()),
+                    cert_days_left: Some(365),
+                },
+                NodeSummary {
+                    name: "worker01".into(),
+                    role: "worker".into(),
+                    kubelet_version: "v1.33.1".into(),
+                    apiserver_version: None,
+                    cert_days_left: None,
+                },
+            ],
+        }
+    }
+
+    #[test]
+    fn table_layout_has_header_rows_and_footer() {
+        let table = report().to_table();
+        assert!(table.contains("CLUSTER SUMMARY"), "{table}");
+        assert!(table.contains("cluster: kfc"), "{table}");
+        assert!(table.contains("NODE"), "{table}");
+        let cols = |name: &str| -> Vec<&str> {
+            table
+                .lines()
+                .find(|l| l.starts_with(name))
+                .unwrap_or_else(|| panic!("no row for {name}: {table}"))
+                .split_whitespace()
+                .collect()
+        };
+        assert_eq!(
+            cols("master01"),
+            ["master01", "control-plane", "v1.33.1", "v1.33.1", "365d"],
+            "{table}"
+        );
+        assert_eq!(
+            cols("worker01"),
+            ["worker01", "worker", "v1.33.1", "-", "-"],
+            "{table}"
+        );
+        assert!(
+            table.contains("2 node(s): 1 control-plane, 1 worker"),
+            "{table}"
+        );
+    }
+
+    #[test]
+    fn certs_below_warn_threshold_are_marked() {
+        let mut r = report();
+        r.nodes[0].cert_days_left = Some(29);
+        assert!(r.to_table().contains("WARN"));
+        // Far-from-expiry certs carry no mark.
+        let mut r = report();
+        r.nodes[0].cert_days_left = Some(300);
+        assert!(!r.to_table().contains("WARN"));
+    }
+
+    #[test]
+    fn json_form_is_a_summary_event_line() {
+        let line = report().to_json();
+        assert!(!line.contains('\n'), "must stay one line: {line}");
+        let v: serde_json::Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(v.pointer("/type").and_then(|t| t.as_str()), Some("summary"));
+        assert_eq!(v.pointer("/cluster").and_then(|c| c.as_str()), Some("kfc"));
+        assert_eq!(
+            v.pointer("/kubernetes_version").and_then(|c| c.as_str()),
+            Some("v1.33.1")
+        );
+        let names: Vec<&str> = v
+            .pointer("/nodes")
+            .and_then(|n| n.as_array())
+            .unwrap()
+            .iter()
+            .filter_map(|n| n.get("name").and_then(|x| x.as_str()))
+            .collect();
+        assert_eq!(names, ["master01", "worker01"], "{line}");
+        // Worker rows omit absent columns instead of nulling them.
+        assert!(v.pointer("/nodes/1/apiserver_version").is_none(), "{line}");
+    }
+
+    #[test]
+    fn new_derives_versions_and_roles_from_config() {
+        let summary = Summary::new(&cluster(), Arc::new(NoPool));
+        assert_eq!(summary.id(), "post/summary@master01");
+        assert_eq!(summary.describe(), "render cluster summary (3 nodes)");
+        let base = &summary.base;
+        assert_eq!(base.kubernetes_version, "v1.33.1");
+        assert_eq!(base.distribution, "k8s");
+        assert_eq!(base.runtime, "containerd");
+        assert_eq!(base.nodes[0].role, "control-plane");
+        assert_eq!(base.nodes[0].apiserver_version.as_deref(), Some("v1.33.1"));
+        assert_eq!(base.nodes[0].kubelet_version, "v1.33.1");
+        assert_eq!(base.nodes[2].role, "worker");
+        assert_eq!(base.nodes[2].apiserver_version, None);
+        // Cert column starts empty; the live probe fills it.
+        assert!(base.nodes.iter().all(|n| n.cert_days_left.is_none()));
+    }
+
+    #[tokio::test]
+    async fn check_always_reports_drift() {
+        let summary = Summary::new(&cluster(), Arc::new(NoPool));
+        // A session that never executes anything: Summary::check/apply take
+        // one only to satisfy the executor's per-node contract.
+        struct Dead;
+        #[async_trait::async_trait]
+        impl Session for Dead {
+            async fn exec(&self, _command: &str) -> Result<crate::engine::ExecOutput> {
+                panic!("Summary never touches the executor-provided session")
+            }
+            async fn write_file(&self, _path: &str, _contents: &[u8]) -> Result<()> {
+                panic!("Summary never touches the executor-provided session")
+            }
+            async fn file_sha256(&self, _path: &str) -> Result<Option<String>> {
+                panic!("Summary never touches the executor-provided session")
+            }
+            async fn service_active(&self, _name: &str) -> Result<bool> {
+                panic!("Summary never touches the executor-provided session")
+            }
+        }
+        let session: Arc<dyn Session> = Arc::new(Dead);
+        assert!(matches!(
+            summary.check(session.as_ref()).await.unwrap(),
+            Drift::Drifted(_)
+        ));
     }
 }
