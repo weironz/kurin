@@ -286,6 +286,28 @@
         "linux-amd64": "24e817dcfcc8a12e325ce7547617bcbcf171c5b0b335bb24d2bb1207ba047f61",
         "linux-arm64": "d237550b882af6f2e01e8985e1e024d57c0774611c0a527c7a20dcee7dc4fd07"
       }
+    },
+    {
+      "name": "crio",
+      "kind": "binary",
+      "version": "1.33.4",
+      "file": "cri-o.{arch}.v{version}.tar.gz",
+      "url_template": "https://storage.googleapis.com/cri-o/artifacts/cri-o.{arch}.v{version}.tar.gz",
+      "sha256": {
+        "linux-amd64": "8f6d14828659b85da7c83bad798d50c2f7e0311742615fb7ed305f77bab54e50",
+        "linux-arm64": "6a04cb1ab2020508927d7237ff1174bb330211a1076683417b30642a9c8e4996"
+      }
+    },
+    {
+      "name": "k3s-airgap",
+      "kind": "binary",
+      "version": "1.33.1+k3s1",
+      "file": "k3s-airgap-images-{arch}.tar",
+      "url_template": "https://github.com/k3s-io/k3s/releases/download/v{version}/k3s-airgap-images-{arch}.tar",
+      "sha256": {
+        "linux-amd64": "e32338ce207d63bef89b76f546d7d590f32e540eef71e79bc9b308285af22a91",
+        "linux-arm64": "97b37345827b6c771ab75464ce08311e69e27c768bfefea7337253b0d58580ee"
+      }
     }
   ]
 }

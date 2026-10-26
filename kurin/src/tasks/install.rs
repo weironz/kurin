@@ -51,6 +51,11 @@ fn install_for(name: &str) -> Option<Install> {
         },
         // k3s is a single self-contained binary.
         "k3s" => Install::Direct("/usr/local/bin/k3s"),
+        // cri-o bundle: bin/crio, bin/pinns, share/... into /usr/local.
+        "crio" => Install::Tar {
+            dir: "/usr/local",
+            strip: 0,
+        },
         // cilium-cli archive contains the `cilium` binary at the root.
         "cilium-cli" => Install::Tar {
             dir: "/usr/local/bin",

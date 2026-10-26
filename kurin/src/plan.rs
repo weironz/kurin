@@ -79,6 +79,23 @@ impl Plan {
                 push(2, Arc::new(tasks::prepare::Sysctl::new(node)));
                 push(2, Arc::new(tasks::kernel_deps::KernelDeps::new(node)));
             }
+            if cluster.ha_mode == kurin_config::HaMode::KurinLb {
+                for (ordinal, lb) in cluster
+                    .nodes
+                    .iter()
+                    .filter(|n| n.role == kurin_config::NodeRole::Lb)
+                    .enumerate()
+                {
+                    let i = idx[stages
+                        .iter()
+                        .position(|x| *x == Stage::Vip)
+                        .expect("vip stage")];
+                    graph[i].tasks.push(PlannedTask {
+                        task: Arc::new(tasks::external_lb::ExternalLb::new(cluster, lb, ordinal)?),
+                        drift: None,
+                    });
+                }
+            }
             for (stage, task) in tasks::k3s::stage_tasks(cluster)? {
                 let i = idx[stages
                     .iter()
@@ -141,6 +158,7 @@ impl Plan {
             );
         }
 
+        // CRI-O prepare tasks are wired once tasks/cri_o.rs lands (tail batch).
         // Vip: kube-vip static pod on every control-plane node (VIP only).
         // Must be written before init binds the VIP as controlPlaneEndpoint.
         if cluster.ha_mode == kurin_config::HaMode::KubeVip {
