@@ -920,10 +920,17 @@ fn err_with_name(err: ArtifactError, name: &str) -> ArtifactError {
 
 /// Renders `{version}` / `{os}` / `{arch}` placeholders.
 fn render(template: &str, version: &str, os: Os, arch: Arch) -> String {
+    // `{asset_arch}` covers upstreams with docker-style suffixed asset names
+    // ("k3s" on amd64 vs "k3s-arm64"): empty on amd64, "-arm64" otherwise.
+    let asset_arch = match arch {
+        Arch::Amd64 => "",
+        Arch::Arm64 => "-arm64",
+    };
     template
         .replace("{version}", version)
         .replace("{os}", os.as_str())
         .replace("{arch}", arch.as_str())
+        .replace("{asset_arch}", asset_arch)
 }
 
 fn target_key(os: Os, arch: Arch) -> String {

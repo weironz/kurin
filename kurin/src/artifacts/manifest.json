@@ -269,8 +269,8 @@
       "name": "k3s",
       "kind": "binary",
       "version": "1.33.1+k3s1",
-      "file": "k3s",
-      "url_template": "https://github.com/k3s-io/k3s/releases/download/v{version}/k3s",
+      "file": "k3s{asset_arch}",
+      "url_template": "https://github.com/k3s-io/k3s/releases/download/v{version}/k3s{asset_arch}",
       "sha256": {
         "linux-amd64": "0f53a0ee29c837713472e5fb0a13b5841f9dca76d029b26138364b9efbac66b1",
         "linux-arm64": "ae4d5208d786b7ae3d916133419728bfc676648bd996de609e5cd55327c6f30a"
