@@ -22,7 +22,7 @@ use crate::tasks::k3s::K3S_KUBECONFIG;
 const COMMON_PATHS: &[&str] = &[
     "/var/lib/kubelet",
     "/var/lib/cni",
-    "/etc/cni/net.d",
+    "/etc/cni",
     "/opt/cni/bin",
     "/etc/containerd/config.toml",
     "/etc/sysctl.d/99-kurin.conf",
@@ -198,12 +198,41 @@ pub async fn delete_node(
         .await?;
     report(&node.name, "services stopped", out.exit_code == 0, "");
 
-    let paths = cleanup_paths(cluster)
-        .into_iter()
+    // Leftover mountpoints (projected volumes, kubelet plugins) make plain
+    // `rm -rf` fail with EBUSY and abort an `&&` chain mid-way. Lazily
+    // unmount everything under the wipe roots first, run each rm
+    // separately, then verify nothing survived.
+    let roots = cleanup_paths(cluster);
+    let re = roots
+        .iter()
+        .map(|p| p.replace('/', "\\/"))
+        .collect::<Vec<_>>()
+        .join("|");
+    let rms = roots
+        .iter()
         .map(|p| format!("rm -rf {p}"))
         .collect::<Vec<_>>()
-        .join(" && ");
-    let out = s.exec(&format!("{paths}; true")).await?;
+        .join("; ");
+    let list = roots
+        .iter()
+        .map(|p| format!("ls -d {p}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    // One pass is not enough: k3s/containerd can still be releasing
+    // projected-volume mounts when the wipe runs, and rm leaves the whole
+    // anchor dir behind on EBUSY. Re-try the umount+rm up to three times;
+    // only an empty survivor list counts as clean.
+    let out = s
+        .exec(&format!(
+            "for i in 1 2 3; do \
+               awk '$2 ~ \"^({re})\" {{print $2}}' /proc/mounts 2>/dev/null \
+                 | sort -r | xargs -r umount -l 2>/dev/null; \
+               {rms}; \
+               L=$(ls -d {list} 2>/dev/null); [ -z \"$L\" ] && exit 0; \
+               sleep 3; \
+             done; exit 1"
+        ))
+        .await?;
     report(
         &node.name,
         "artifacts removed",

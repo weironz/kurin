@@ -34,18 +34,18 @@ grep -q '"cluster-ready"' "$EVENTS" || { echo "[FAIL] no cluster-ready event"; t
 echo "[ok] cluster-ready"
 
 echo "[tier1-k3s-ops] status"
-ST=$("$BIN" status -f "$TMPCFG" 2>&1)
-echo "$ST" | grep -Eq "Ready|ready" || { echo "[FAIL] status shows no Ready node:"; echo "$ST"; exit 1; }
-echo "$ST" | grep -qiE "etcd[^a-z]*(ok|healthy|true)" || { echo "[FAIL] etcd health missing:"; echo "$ST"; exit 1; }
+ST=$("$BIN" status -f "$TMPCFG" 2>&1 || echo "STATUS-EXIT=$?")
+echo "$ST" | grep -Eq "^(node[0-9]+|[a-z0-9-]+) +True " || { echo "[FAIL] status shows no Ready node:"; echo "$ST"; exit 1; }
+echo "$ST" | grep -q "etcd: healthy" || { echo "[FAIL] etcd health missing:"; echo "$ST"; exit 1; }
 echo "[ok] status: node Ready + etcd healthy via /healthz/etcd"
 
 echo "[tier1-k3s-ops] certs check"
-CC=$("$BIN" certs check -f "$TMPCFG" 2>&1)
-echo "$CC" | grep -Eq "[0-9]+d" || { echo "[FAIL] certs check found no expiring certs:"; echo "$CC"; exit 1; }
+CC=$("$BIN" certs check -f "$TMPCFG" 2>&1 || echo "CERTS-EXIT=$?")
+echo "$CC" | grep -Eq "days_left [0-9]+" || { echo "[FAIL] certs check found no expiring certs:"; echo "$CC"; exit 1; }
 echo "$CC" | grep -q "k3s/server/tls" && echo "[ok] certs check reads k3s tls dir" || echo "[warn] cert source path not shown (table format)"
 
 echo "[tier1-k3s-ops] certs renew (k3s certificate rotate)"
-CR=$("$BIN" certs renew -f "$TMPCFG" 2>&1)
+CR=$("$BIN" certs renew -f "$TMPCFG" 2>&1 || echo "RENEW-EXIT=$?")
 echo "$CR" | grep -qiE "rotat|renew" || { echo "[FAIL] renew output:"; echo "$CR"; exit 1; }
 sleep 20
 OK=$(multipass exec "$NAME" -- sudo k3s kubectl get --raw /readyz 2>/dev/null || true)
