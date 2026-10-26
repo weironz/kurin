@@ -22,6 +22,7 @@ ssh:
     passphrase: null
 ha:
   vip: '192.168.10.100'
+  mode: kube-vip
 nodes:
   master01:
     address: '192.168.10.11'

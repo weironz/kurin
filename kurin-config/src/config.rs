@@ -94,6 +94,21 @@ pub enum CniConfig {
 pub struct HaConfig {
     /// Virtual IP for the API server when running HA.
     pub vip: Option<IpAddr>,
+    /// HA mode: `kube-vip` (default, static pod on every control plane),
+    /// `external-endpoint` (operator-managed LB; only the endpoint is
+    /// configured), or `kurin-lb` (kurin installs haproxy+keepalived on
+    /// dedicated LB nodes declared in [nodes] with role "lb").
+    #[serde(default)]
+    pub mode: HaMode,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum HaMode {
+    #[default]
+    KubeVip,
+    ExternalEndpoint,
+    KurinLb,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -129,6 +144,8 @@ pub struct NodeConfig {
 #[serde(rename_all = "kebab-case")]
 pub enum NodeRole {
     ControlPlane,
+    /// HA load balancer node (only valid with ha.mode = "kurin-lb").
+    Lb,
     #[default]
     Worker,
 }

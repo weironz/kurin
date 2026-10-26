@@ -8,7 +8,7 @@ use std::net::IpAddr;
 use ipnet::Ipv4Net;
 use semver::Version;
 
-use crate::config::{ClusterConfig, CniConfig, Distribution, NodeRole, SshAuth, CONFIG_VERSION};
+use crate::config::{ClusterConfig, CniConfig, Distribution, HaMode, NodeRole, SshAuth, CONFIG_VERSION};
 use crate::error::{ConfigError, Result};
 
 pub const DEFAULT_KUBERNETES_VERSION: &str = "1.33.1";
@@ -40,6 +40,8 @@ pub struct Cluster {
     pub zone: Option<String>,
     /// Cluster distribution (kubeadm or k3s).
     pub distribution: Distribution,
+    /// HA mode resolved from [ha] (kube-vip by default).
+    pub ha_mode: HaMode,
     pub kubernetes_version: Version,
     pub pod_cidr: Ipv4Net,
     pub service_cidr: Ipv4Net,
@@ -115,11 +117,13 @@ impl Cluster {
         }
         let zone = cfg.artifacts.zone;
         let distribution = cfg.kubernetes.distribution;
+        let ha_mode = cfg.ha.mode;
         Ok(Cluster {
             name: cfg.name,
             offline_dir,
             zone,
             distribution,
+            ha_mode,
             kubernetes_version,
             pod_cidr,
             service_cidr,
@@ -212,29 +216,69 @@ impl Cluster {
                 "at least one control-plane node is required".into(),
             ));
         }
-        match (cp, self.vip) {
-            (0, _) => unreachable!(),
-            (1, Some(_)) => {
-                return Err(invalid(
-                    "ha.vip is set but only one control-plane node exists".into(),
-                ))
+        let lb_nodes = self
+            .nodes
+            .iter()
+            .filter(|n| n.role == NodeRole::Lb)
+            .count();
+        if lb_nodes > 0 && self.ha_mode != HaMode::KurinLb {
+            return Err(invalid(
+                "role = \"lb\" nodes are only valid with ha.mode = \"kurin-lb\"".into(),
+            ));
+        }
+        match self.ha_mode {
+            HaMode::KubeVip => match (cp, self.vip) {
+                (0, _) => unreachable!(),
+                (1, Some(_)) => {
+                    return Err(invalid(
+                        "ha.vip is set but only one control-plane node exists".into(),
+                    ))
+                }
+                (n, None) if n > 1 => {
+                    // Allowed: stacked control plane; the first master is
+                    // the API SPOF. The CLI warns on join.
+                }
+                (_, Some(vip))
+                    if self
+                        .nodes
+                        .iter()
+                        .any(|n| n.address == vip || n.internal_address == vip) =>
+                {
+                    return Err(invalid(
+                        "ha.vip must not collide with any node address".into(),
+                    ))
+                }
+                _ => {}
+            },
+            HaMode::ExternalEndpoint => {
+                if cp < 2 {
+                    return Err(invalid(
+                        "ha.mode = \"external-endpoint\" needs >= 2 control-plane nodes".into(),
+                    ));
+                }
+                if self.vip.is_none() {
+                    return Err(invalid(
+                        "ha.mode = \"external-endpoint\" requires ha.vip = <your LB address>".into(),
+                    ));
+                }
             }
-            (n, None) if n > 1 => {
-                // Allowed: stacked control plane (first master is the API
-                // SPOF). The CLI warns; kubeadm joins the rest via that
-                // endpoint. spec:裸 HA without VIP is operator choice.
+            HaMode::KurinLb => {
+                if cp < 2 {
+                    return Err(invalid(
+                        "ha.mode = \"kurin-lb\" needs >= 2 control-plane nodes".into(),
+                    ));
+                }
+                if lb_nodes == 0 {
+                    return Err(invalid(
+                        "ha.mode = \"kurin-lb\" requires at least one [nodes.*] entry with role = \"lb\"".into(),
+                    ));
+                }
+                if self.vip.is_none() {
+                    return Err(invalid(
+                        "ha.mode = \"kurin-lb\" requires ha.vip for the keepalived VIP".into(),
+                    ));
+                }
             }
-            (_, Some(vip))
-                if self
-                    .nodes
-                    .iter()
-                    .any(|n| n.address == vip || n.internal_address == vip) =>
-            {
-                return Err(invalid(
-                    "ha.vip must not collide with any node address".into(),
-                ))
-            }
-            _ => {}
         }
         if self.service_cidr.contains(&self.pod_cidr.network())
             || self.pod_cidr.contains(&self.service_cidr.network())

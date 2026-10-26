@@ -17,7 +17,7 @@ pub mod model;
 use std::path::Path;
 
 pub use config::{
-    ArtifactsConfig, ClusterConfig, CniConfig, Distribution, HaConfig, KubernetesConfig,
+    ArtifactsConfig, ClusterConfig, CniConfig, Distribution, HaConfig, HaMode, KubernetesConfig,
     NetworkConfig, NodeConfig, NodeRole, SshAuth, SshDefaults, CONFIG_VERSION,
 };
 pub use error::{ConfigError, Result};

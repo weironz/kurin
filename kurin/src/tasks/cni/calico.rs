@@ -172,6 +172,7 @@ mod tests {
             offline_dir: None,
             zone: None,
             distribution: kurin_config::Distribution::K8s,
+            ha_mode: kurin_config::HaMode::KubeVip,
             kubernetes_version: "1.33.1".parse().unwrap(),
             pod_cidr: pod_cidr.parse().unwrap(),
             service_cidr: "10.233.0.0/18".parse().unwrap(),

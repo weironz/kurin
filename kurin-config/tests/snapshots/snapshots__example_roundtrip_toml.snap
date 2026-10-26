@@ -27,6 +27,7 @@ key-path = "/root/.ssh/id_ed25519"
 
 [ha]
 vip = "192.168.10.100"
+mode = "kube-vip"
 
 [nodes.master01]
 address = "192.168.10.11"

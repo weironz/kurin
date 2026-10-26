@@ -134,6 +134,8 @@ impl K3sUnit {
         let role = match node.role {
             NodeRole::ControlPlane => "server",
             NodeRole::Worker => "agent",
+            // k3s has no LB role: validation rejects ha.mode=kurin-lb for k3s.
+            NodeRole::Lb => "agent",
         };
         let rendered = templates::render(
             "systemd/k3s.service.j2",
@@ -781,6 +783,7 @@ mod tests {
             offline_dir: None,
             zone: None,
             distribution: kurin_config::Distribution::K3s,
+            ha_mode: kurin_config::HaMode::KubeVip,
             kubernetes_version: "1.33.1".parse().unwrap(),
             pod_cidr: "10.42.0.0/16".parse().unwrap(),
             service_cidr: "10.43.0.0/16".parse().unwrap(),
