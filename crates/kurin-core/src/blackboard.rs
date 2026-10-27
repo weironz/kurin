@@ -312,6 +312,20 @@ impl Blackboard {
         self.entries.read().map(|e| e.is_empty()).unwrap_or(true)
     }
 
+    /// Snapshot of the values that would be written to the backing file.
+    ///
+    /// Used by [`crate::state::RunState`] to mirror the persistent part of
+    /// the Blackboard into the run-state record; `<cluster>.bb.json` stays
+    /// the authoritative store.
+    pub fn persistent_snapshot(&self) -> BTreeMap<String, Value> {
+        let entries = self.entries.read().unwrap_or_else(|e| e.into_inner());
+        entries
+            .iter()
+            .filter(|(_, e)| e.persist != Persist::No)
+            .map(|(name, e)| (name.clone(), e.value.clone()))
+            .collect()
+    }
+
     /// Write every persistent entry to the backing file atomically, with
     /// mode 0600 (secrets live here).
     fn save(&self) -> Result<(), BlackboardError> {

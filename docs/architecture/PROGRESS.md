@@ -16,7 +16,7 @@
 | WP-06 事件 v2 / tracing / 日志 | done | 见提交 | v1 事件仅新增 `ts`；新增 v2/终端快照 | `just tier1 && just tier1-test` 后 `kurin logs --last -vv` | EventBus + JSONL + `kurin logs`；默认终端输出不变 |
 | WP-07 RunContext 与 Blackboard | done | 见提交 | 无 | `just tier2`、`just tier1-zone`、`just tier1-k3s` | 删除 artifact OnceLock；join 材料/k3s token 走 Blackboard（0600） |
 | WP-08 SSH 安全与端口转发 | todo | | | `just tier0 tier0-test` | |
-| WP-09 集群锁与 RunState v2 | todo | | | 双终端 `add nodes` 抢锁 | |
+| WP-09 集群锁与 RunState v2 | done | 见提交 | 无 | 双终端 `add nodes` 抢锁 | 标准库 `File::try_lock`；RunState v2 兼容 v1；`--resume` 校验计划指纹 |
 | WP-10 PlanBuilder / NodeSel | todo | | | | |
 | WP-11 DAG 执行器 | todo | | | tier1/tier2/tier3 全量 | |
 | WP-12 删除改为计划 | todo | | | `just tier1-k3s`、tier2 删 worker、tier3 删集群 | |
@@ -25,7 +25,7 @@
 | WP-15 Component（一） | todo | | | | |
 | WP-16 Component（二）与能力表 | todo | | | `just tier1-offline`、`just tier3-external-lb` | |
 | WP-17 ClusterApi | done | 见提交 | 无 | `just tier2-status`、tier1 标签任务 | kube 4.2 + k8s-openapi 0.28（仅 v1_33）；二进制 +62%/+65%；Docker k3s 集成测试通过 |
-| WP-18 就绪跟踪器 | todo | | | tier1 错误镜像诊断 | |
+| WP-18 就绪跟踪器 | done | 见提交 | 无 | tier1 错误镜像诊断 | Deployment/STS/DS/Job/Pod/PVC/CRD/APIService/Node 规则；变更事件 + 30s 心跳；卡住自动抓事件/日志 |
 | WP-19 kurin-state | todo | | | tier2 后检查 ConfigMap | |
 | WP-20 ClusterSpec 与秘密引用 | todo | | | | |
 | WP-21 v1alpha2 与迁移 | todo | | | | |
@@ -80,6 +80,8 @@
 ## 偏离记录
 
 - WP-00：`ScriptedSession` 在 `(exit, stdout, stderr)` 之外增加了「命令已执行但传输中断」的应答与副作用文件，用于覆盖 `Outcome::Unknown → 重新探测` 路径；`cli_output` 快照对任务耗时与阶段内行序做归一化（并发完成顺序不在 v1 契约内）。
+- WP-09：Blackboard 的权威持久化仍是 `<cluster>.bb.json`，RunState v2 的 `blackboard` 字段是写穿镜像；锁使用标准库 `File::try_lock`（MSRV 1.89+）。
+- WP-18：`track` 实现为 `kurin-kube` 自由函数而非 `ClusterApi` trait 方法（两个后端共用轮询逻辑）。
 - WP-17：`get_raw` 为 status 的 `/healthz*` 补充；`connect()` 接收 `Option<bool>`（tcp_forwarding）而非 FactsTable；musl 二进制 x86_64 9.6MB→15.7MB、aarch64 7.5MB→12.4MB。
 - WP-07：`RunContext.events` 为 `Arc<EventBus>`；`Plan::build*` 从 `run.facts` 取 facts（不再单独传 `&FactsTable`）；`upgrade::run*` 增加 `&Arc<RunContext>`；新增 `tokio-util`（纯 Rust）。
 - WP-06：`Body` 增加 `ClusterReady`；`Event::ClusterReady` 由 unit variant 变为 `{ ts }`（JSON 仅加 `ts`）；`-v` 实现为每条命令一条摘要，原始 stdout/stderr 在 `-vv`；新增 `time`/`tracing`/`tracing-subscriber`（纯 Rust）。
@@ -96,6 +98,8 @@
 
 （随 WP 完成追加）
 
+- WP-09：两个终端同时对 tier1 执行 `add nodes`，第二个立即失败并显示第一个的 pid 与命令。
+- WP-18：tier1 故意配错镜像，确认日志出现 Pod 事件与容器日志尾部及原因提示。
 - WP-17：`just tier2-status`、tier1 标签任务；`KURIN_IT_CLUSTER=<kubeconfig> cargo test -p kurin-kube --test cluster_it -- --ignored`。
 - WP-07：`just tier2`、`just tier1-zone`、`just tier1-k3s`（验证 zone/Blackboard/续跑）。
 - WP-06：`just tier1 && just tier1-test`，再执行 `target/tier1/debug/kurin logs --last -vv`，确认包含 kubeadm init 全量输出与时间戳。

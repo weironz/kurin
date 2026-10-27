@@ -351,7 +351,13 @@ fn sources_for(cluster: &kurin_config::Cluster) -> Result<ArtifactSources> {
 /// Build the operation's run context with the cluster's persisted
 /// Blackboard: `resume == true` loads it, `false` starts (and truncates)
 /// fresh. Used by operations that produce or consume run-state secrets.
-fn new_run(cluster: &kurin_config::Cluster, resume: bool) -> Result<Arc<RunContext>> {
+/// The operation id is caller-chosen so the cluster lock and the operation
+/// log share the same id.
+fn new_run_with_op_id(
+    cluster: &kurin_config::Cluster,
+    resume: bool,
+    op_id: String,
+) -> Result<Arc<RunContext>> {
     let bb = match kurin::blackboard::Blackboard::default_path(&cluster.name) {
         Some(path) => {
             kurin::blackboard::Blackboard::open(path, resume).map_err(|e| miette::miette!("{e}"))?
@@ -359,19 +365,35 @@ fn new_run(cluster: &kurin_config::Cluster, resume: bool) -> Result<Arc<RunConte
         None => kurin::blackboard::Blackboard::in_memory(),
     };
     Ok(Arc::new(
-        RunContext::new(events::new_op_id(), &cluster.name, sources_for(cluster)?)
-            .with_blackboard(bb),
+        RunContext::new(op_id, &cluster.name, sources_for(cluster)?).with_blackboard(bb),
     ))
 }
 
 /// Run context for read-only operations: no persisted Blackboard, so a
 /// `status`/`precheck`/`certs` run never truncates another op's secrets.
 fn new_ephemeral_run(cluster: &kurin_config::Cluster) -> Result<Arc<RunContext>> {
+    new_ephemeral_run_with_op_id(cluster, events::new_op_id())
+}
+
+/// [`new_ephemeral_run`] with a caller-chosen operation id.
+fn new_ephemeral_run_with_op_id(
+    cluster: &kurin_config::Cluster,
+    op_id: String,
+) -> Result<Arc<RunContext>> {
     Ok(Arc::new(RunContext::new(
-        events::new_op_id(),
+        op_id,
         &cluster.name,
         sources_for(cluster)?,
     )))
+}
+
+/// Take the cluster's mutation lock. The returned guard must stay alive for
+/// the whole operation; dropping it releases the lock.
+fn lock_cluster(
+    cluster: &kurin_config::Cluster,
+    op_id: &str,
+) -> Result<kurin::lock::ClusterLockGuard> {
+    kurin::lock::ClusterLock::acquire_with(&cluster.name, op_id)
 }
 
 #[tokio::main(flavor = "multi_thread")]
@@ -404,6 +426,13 @@ async fn run(cli: Cli) -> Result<()> {
             force_drain_failure,
         } => {
             let cluster = kurin_config::load(&file)?;
+            let op_id = events::new_op_id();
+            // `--dry-run` only reads; everything else mutates the cluster.
+            let _lock = if dry_run {
+                None
+            } else {
+                Some(lock_cluster(&cluster, &op_id)?)
+            };
             let target = with_kubernetes
                 .as_deref()
                 .map(|v| v.trim_start_matches('v'))
@@ -413,7 +442,7 @@ async fn run(cli: Cli) -> Result<()> {
                 .unwrap_or_else(|| cluster.kubernetes_version.clone());
             let pool: Arc<dyn kurin::SessionPool> =
                 Arc::new(kurin::ssh::SshSessionPool::from_cluster(&cluster)?);
-            let run = new_ephemeral_run(&cluster)?;
+            let run = new_ephemeral_run_with_op_id(&cluster, op_id)?;
             let op = OpSession::start(&run, out)?;
             op.register_cluster(&cluster);
             op.begin("upgrade", &cluster.name, "");
@@ -464,9 +493,11 @@ async fn run(cli: Cli) -> Result<()> {
             }
             CertsWhat::Renew { file, force } => {
                 let cluster = kurin_config::load(&file)?;
+                let op_id = events::new_op_id();
+                let _lock = lock_cluster(&cluster, &op_id)?;
                 let pool: Arc<dyn kurin::SessionPool> =
                     Arc::new(kurin::ssh::SshSessionPool::from_cluster(&cluster)?);
-                let run = new_ephemeral_run(&cluster)?;
+                let run = new_ephemeral_run_with_op_id(&cluster, op_id)?;
                 let op = OpSession::start(&run, out)?;
                 op.register_cluster(&cluster);
                 op.begin("certs-renew", &cluster.name, "");
@@ -576,9 +607,16 @@ async fn run(cli: Cli) -> Result<()> {
                 if cp > 1 && cluster.vip.is_none() && !out.json_enabled() {
                     eprintln!("warn: {cp} control-plane nodes without ha.vip: the first master becomes the API single point of failure");
                 }
+                let op_id = events::new_op_id();
+                // `--dry-run` (with or without `--check`) never mutates.
+                let _lock = if dry_run {
+                    None
+                } else {
+                    Some(lock_cluster(&cluster, &op_id)?)
+                };
                 let pool: Arc<dyn kurin::SessionPool> =
                     Arc::new(kurin::ssh::SshSessionPool::from_cluster(&cluster)?);
-                let run = new_run(&cluster, resume)?;
+                let run = new_run_with_op_id(&cluster, resume, op_id)?;
                 let op = OpSession::start(&run, out)?;
                 op.register_cluster(&cluster);
                 let result: Result<()> = async {
@@ -608,8 +646,7 @@ async fn run(cli: Cli) -> Result<()> {
                     run.set_facts(facts);
                     let mut plan =
                         kurin::plan::build_with_pool(&cluster, Some(pool.clone()), &run)?;
-                    let fingerprint =
-                        kurin::engine::sha256_hex(kurin::render::render_tree(&plan).as_bytes());
+                    let fingerprint = plan.fingerprint();
                     op.begin("create-cluster", &cluster.name, &fingerprint);
                     if check {
                         kurin::executor::probe(&mut plan, &pool).await?;
@@ -630,6 +667,7 @@ async fn run(cli: Cli) -> Result<()> {
                     let mut opts =
                         kurin::executor::RunOptions::default().with_default_state(&cluster.name);
                     opts.resume = resume;
+                    opts.plan_fingerprint = fingerprint.clone();
                     let mut emit = |event: kurin::Event| {
                         if out.v2() {
                             return;
@@ -810,6 +848,8 @@ async fn add_nodes(file: PathBuf, out: OutputOpts, offline: Option<PathBuf>) -> 
     if let Some(dir) = offline {
         cluster.offline_dir = Some(dir);
     }
+    let op_id = events::new_op_id();
+    let _lock = lock_cluster(&cluster, &op_id)?;
     let pool: Arc<dyn kurin::SessionPool> =
         Arc::new(kurin::ssh::SshSessionPool::from_cluster(&cluster)?);
     let zone = resolve_zone(cluster.zone.as_deref())?;
@@ -873,11 +913,9 @@ async fn add_nodes(file: PathBuf, out: OutputOpts, offline: Option<PathBuf>) -> 
         }
         None => kurin::blackboard::Blackboard::in_memory(),
     };
-    let run =
-        Arc::new(RunContext::new(events::new_op_id(), &cluster.name, sources).with_blackboard(bb));
+    let run = Arc::new(RunContext::new(op_id, &cluster.name, sources).with_blackboard(bb));
     let op = OpSession::start(&run, out)?;
     op.register_cluster(&cluster);
-    op.begin("add-nodes", &cluster.name, "");
 
     let result: Result<()> = async {
         if let Some(s) = first_session {
@@ -896,8 +934,11 @@ async fn add_nodes(file: PathBuf, out: OutputOpts, offline: Option<PathBuf>) -> 
         let facts = kurin::discover::run(&cluster, &pool).await?;
         run.set_facts(facts);
         let mut plan = kurin::plan::build_with_pool(&cluster, Some(pool.clone()), &run)?;
+        let fingerprint = plan.fingerprint();
+        op.begin("add-nodes", &cluster.name, &fingerprint);
         let mut opts = kurin::executor::RunOptions::default().with_default_state(&cluster.name);
         opts.resume = false;
+        opts.plan_fingerprint = fingerprint;
         let mut emit = |event: kurin::Event| {
             if out.v2() {
                 return;
@@ -929,6 +970,8 @@ async fn add_nodes(file: PathBuf, out: OutputOpts, offline: Option<PathBuf>) -> 
 
 async fn delete_node_cmd(name: String, file: PathBuf, out: OutputOpts) -> Result<()> {
     let cluster = kurin_config::load(&file)?;
+    let op_id = events::new_op_id();
+    let _lock = lock_cluster(&cluster, &op_id)?;
     let node = cluster
         .nodes
         .iter()
@@ -936,7 +979,7 @@ async fn delete_node_cmd(name: String, file: PathBuf, out: OutputOpts) -> Result
         .ok_or_else(|| miette::miette!("node {name:?} is not declared in {}", file.display()))?;
     let pool: Arc<dyn kurin::SessionPool> =
         Arc::new(kurin::ssh::SshSessionPool::from_cluster(&cluster)?);
-    let run = new_ephemeral_run(&cluster)?;
+    let run = new_ephemeral_run_with_op_id(&cluster, op_id)?;
     let op = OpSession::start(&run, out)?;
     op.register_cluster(&cluster);
     op.begin("delete-node", &cluster.name, "");
@@ -967,9 +1010,11 @@ async fn delete_node_cmd(name: String, file: PathBuf, out: OutputOpts) -> Result
 
 async fn delete_cluster_cmd(file: PathBuf, out: OutputOpts) -> Result<()> {
     let cluster = kurin_config::load(&file)?;
+    let op_id = events::new_op_id();
+    let _lock = lock_cluster(&cluster, &op_id)?;
     let pool: Arc<dyn kurin::SessionPool> =
         Arc::new(kurin::ssh::SshSessionPool::from_cluster(&cluster)?);
-    let run = new_ephemeral_run(&cluster)?;
+    let run = new_ephemeral_run_with_op_id(&cluster, op_id)?;
     let op = OpSession::start(&run, out)?;
     op.register_cluster(&cluster);
     op.begin("delete-cluster", &cluster.name, "");

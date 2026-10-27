@@ -324,6 +324,7 @@ impl SessionPool for ScriptedPool {
 
 /// A run context for tests: embedded manifest, global zone, in-memory
 /// blackboard, seeded facts.
+#[allow(dead_code)] // not every integration binary needs a run context
 pub fn run(
     cluster: &kurin_config::Cluster,
     facts: kurin::facts::FactsTable,

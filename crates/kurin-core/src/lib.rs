@@ -14,6 +14,7 @@ pub mod engine;
 pub mod events;
 pub mod executor;
 pub mod facts;
+pub mod lock;
 pub mod plan;
 pub mod render;
 pub mod run;

@@ -5,6 +5,17 @@ All notable changes to kurin. Format follows Keep a Changelog; semver.
 ## 0.4.0 - 2026-10-27 (unreleased)
 
 ### Added
+- Mutating operations are mutually exclusive per cluster: `create cluster`,
+  `add nodes`, `delete node`, `delete cluster`, `upgrade` and `certs renew`
+  take an OS file lock on `$XDG_STATE_HOME/kurin/locks/<cluster>.lock`
+  (fallback `~/.local/state`). A second invocation fails immediately and
+  names the holder's pid, operation id, command line and start time.
+  Read-only commands never lock. `--resume` now refuses a changed plan:
+  the run state records a `sha256` fingerprint of the task keys and their
+  descriptions, and a mismatch reports
+  `计划已变化，请去掉 --resume 重新运行（已收敛的任务会被检查跳过）`.
+  RunState is v2 (`op_id`, `plan_fingerprint`, `done`, `blackboard`, mode
+  0600); v1 files still resume with no fingerprint.
 - `kurin-kube` ClusterApi (WP-17): one interface for `apply` (server-side,
   field manager `kurin`), `delete`, `get`/`list`, raw apiserver paths and pod
   logs, with two interchangeable backends — a kube-rs client over an SSH

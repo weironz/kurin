@@ -64,6 +64,9 @@ pub struct RunOptions {
     /// Operation id carried by the envelopes this run publishes. Empty when
     /// the caller uses [`run_with_bus`] with a bus that already has one.
     pub op_id: String,
+    /// Plan fingerprint (`Plan::fingerprint`). Stored in the run state and
+    /// compared on `--resume`; empty for operations without a plan.
+    pub plan_fingerprint: String,
 }
 
 impl RunOptions {
@@ -115,10 +118,20 @@ pub async fn run_with_bus(
     } else {
         opts.cluster.clone()
     };
-    let mut state = match opts.state_file {
+    let state = match opts.state_file {
         Some(path) => RunState::open(path, cluster, opts.resume)?,
         None => RunState::disabled(),
     };
+    if opts.resume {
+        state.check_fingerprint(&opts.plan_fingerprint)?;
+    }
+    let op_id = if opts.op_id.is_empty() {
+        run.op_id.clone()
+    } else {
+        opts.op_id.clone()
+    };
+    let mut state = state.with_identity(op_id, opts.plan_fingerprint.clone());
+    state.set_blackboard_snapshot(run.bb.persistent_snapshot());
     // One subscription for the whole run: stages are serial, and the
     // executor drains it while tasks run, so the bound is never reached in
     // practice (lagging consumers are the Web/SSE case, which resumes from
@@ -161,7 +174,7 @@ pub async fn run_with_bus(
                 // Every task has published its terminal event by the time
                 // its join completes; drain what is still queued.
                 while let Ok(envelope) = rx.try_recv() {
-                    handle_envelope(&envelope, emit, &mut state);
+                    handle_envelope(&envelope, emit, &mut state, &run.bb);
                 }
                 break;
             }
@@ -183,7 +196,7 @@ pub async fn run_with_bus(
                 }
                 ev = rx.recv() => {
                     if let Some(envelope) = ev {
-                        handle_envelope(&envelope, emit, &mut state);
+                        handle_envelope(&envelope, emit, &mut state, &run.bb);
                     }
                 }
             }
@@ -207,24 +220,31 @@ pub async fn run_with_bus(
         });
     }
 
+    state.set_blackboard_snapshot(run.bb.persistent_snapshot());
     state.flush()?;
     bus.publish(Body::ClusterReady);
     // The terminal envelopes were published after the last stage loop;
     // drain them so the v1 stream still ends with `cluster-ready`.
     while let Ok(envelope) = rx.try_recv() {
-        handle_envelope(&envelope, emit, &mut state);
+        handle_envelope(&envelope, emit, &mut state, &run.bb);
     }
     Ok(())
 }
 
 /// Persist done records eagerly (a SIGINT between tasks must find a complete
 /// snapshot) and adapt the envelope to the frozen v1 event stream.
-fn handle_envelope(envelope: &Envelope, emit: &mut impl FnMut(Event), state: &mut RunState) {
+fn handle_envelope(
+    envelope: &Envelope,
+    emit: &mut impl FnMut(Event),
+    state: &mut RunState,
+    bb: &crate::blackboard::Blackboard,
+) {
     match &envelope.body {
         Body::TaskDone { key, .. }
         | Body::TaskReconciled { key, .. }
         | Body::TaskSkipped { key, .. } => {
             state.mark_done(key);
+            state.set_blackboard_snapshot(bb.persistent_snapshot());
             if let Err(e) = state.flush() {
                 eprintln!("warn: {e:?}");
             }
@@ -1129,6 +1149,7 @@ mod tests {
                 state_file: Some(path.clone()),
                 resume: true,
                 op_id: String::new(),
+                plan_fingerprint: String::new(),
             },
         )
         .await
@@ -1167,6 +1188,7 @@ mod tests {
                 state_file: Some(path.clone()),
                 resume: false,
                 op_id: String::new(),
+                plan_fingerprint: String::new(),
             },
         )
         .await

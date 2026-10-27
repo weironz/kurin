@@ -32,6 +32,19 @@
 | 跨 minor +1 | ✅ | ❌ 拒绝 |
 | `upgrade --offline <dir>` | ✅ | ❌ 拒绝 |
 
+## 互斥与续跑
+
+变更操作（`create cluster`、`add nodes`、`delete node`、`delete cluster`、
+`upgrade`、`certs renew`）对同一集群互斥：锁文件位于
+`$XDG_STATE_HOME/kurin/locks/<cluster>.lock`（回退 `~/.local/state`），
+第二个进程立即失败并显示持有者的 pid、操作 id、命令行与开始时间。
+只读命令（`status`、`precheck`、`certs check`、`logs`、`artifact`、
+`config`）不加锁；`--dry-run` 同样不加锁。
+
+`create cluster --resume` 会校验计划指纹（任务 key + `describe()` 的
+sha256）。计划变化时拒绝续跑并提示去掉 `--resume`；v1 状态文件没有
+指纹，仍可续跑。
+
 ## status（以首控制面为锚）
 
 | | k8s | k3s |

@@ -44,6 +44,9 @@ pub mod executor {
 pub mod facts {
     pub use kurin_core::facts::*;
 }
+pub mod lock {
+    pub use kurin_core::lock::*;
+}
 pub mod plan {
     pub use kurin_components::plan::{build, build_with_pool};
     pub use kurin_core::plan::{Plan, StageNode};
