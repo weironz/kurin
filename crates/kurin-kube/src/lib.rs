@@ -313,7 +313,7 @@ pub async fn connect(
     flavor: Flavor,
     tcp_forwarding: Option<bool>,
     pin_local_apiserver: bool,
-    log: &mut dyn FnMut(&str),
+    log: &mut (dyn FnMut(&str) + Send),
 ) -> Result<Connected> {
     let mut sessions = Vec::new();
     let mut last_err = None;

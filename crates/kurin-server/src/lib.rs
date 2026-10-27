@@ -15,6 +15,7 @@
 
 mod api;
 mod auth;
+mod collector;
 mod config;
 mod error;
 mod guard;
@@ -31,6 +32,11 @@ use std::time::Duration;
 use axum::Router;
 
 pub use auth::TokenStore;
+pub use collector::{
+    Collector, CollectorSettings, KurinStatusProvider, RefreshOutcome, StatusProvider,
+    DEFAULT_CERT_INTERVAL, DEFAULT_CONCURRENCY, DEFAULT_INTERVAL, DEFAULT_REFRESH_DEDUPE,
+    DEFAULT_TIMEOUT, STALE_AFTER,
+};
 pub use config::{
     default_data_dir, default_listen, validate, ServeOptions, TlsPaths, DEFAULT_LISTEN,
 };
@@ -45,7 +51,8 @@ pub use session::{SessionStore, SESSION_COOKIE, SESSION_TTL};
 pub use state::AppState;
 pub use store::{
     ClusterRecord, ConfigRevision, Lifecycle, NewOperation, OperationFilter, OperationRecord,
-    OperationState, RevisionSummary, Store, StoreError, StoreOptions, SECRET_SENTINEL,
+    OperationState, RevisionSummary, SnapshotRecord, Store, StoreError, StoreOptions,
+    SECRET_SENTINEL,
 };
 
 /// Failures of `kurin serve` itself (bad arguments, IO).
@@ -135,12 +142,12 @@ pub async fn serve(opts: ServeOptions) -> Result<(), ServeError> {
             opts.listen
         );
     }
+    let collector_task = startup.state.collector().start();
 
     let app: Router = router(startup.state.clone());
     let handle = axum_server::Handle::new();
     let draining = drain(handle.clone(), startup.state.clone());
     let drain_task = tokio::spawn(draining);
-
     match opts.tls.as_ref() {
         Some(tls) => {
             install_crypto_provider();
@@ -159,6 +166,9 @@ pub async fn serve(opts: ServeOptions) -> Result<(), ServeError> {
         }
     }
     let _ = drain_task.await;
+    // The drain flipped the collector's cancellation token; joining keeps
+    // a late scheduling round from racing the process exit.
+    let _ = collector_task.await;
     startup.state.runner().finish_shutdown().await;
     Ok(())
 }

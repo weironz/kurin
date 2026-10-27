@@ -32,6 +32,7 @@ pub fn router() -> Router<AppState> {
             "/api/v1/clusters/{name}/config",
             get(clusters::get_config).put(clusters::put_config),
         )
+        .route("/api/v1/clusters/{name}/refresh", post(clusters::refresh))
         .route(
             "/api/v1/clusters/{name}/operations",
             post(operations::submit),

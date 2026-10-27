@@ -19,6 +19,7 @@ mod error;
 mod operation;
 mod schema;
 mod secret;
+mod snapshot;
 
 pub use cluster::{ClusterRecord, ConfigRevision, Lifecycle, RevisionSummary};
 pub use error::StoreError;
@@ -26,6 +27,7 @@ pub use operation::{
     is_read_only_kind, NewOperation, OperationFilter, OperationRecord, OperationState, StoredEvent,
 };
 pub use secret::SECRET_SENTINEL;
+pub use snapshot::SnapshotRecord;
 
 use std::fs;
 use std::os::unix::fs::DirBuilderExt;

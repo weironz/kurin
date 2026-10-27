@@ -14,6 +14,7 @@ kurin-components.workspace = true
 kurin-config.workspace = true
 kurin-core.workspace = true
 kurin-ops.workspace = true
+kurin-ssh.workspace = true
 miette.workspace = true
 semver.workspace = true
 rand.workspace = true

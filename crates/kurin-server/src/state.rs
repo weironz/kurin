@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
 
 use crate::auth::TokenStore;
+use crate::collector::Collector;
 use crate::config::ServeOptions;
 use crate::host::HostAllowlist;
 use crate::ops::{BusRegistry, OpRunner, OperationBackend};
@@ -25,6 +26,7 @@ struct Inner {
     secure_cookies: bool,
     store: Store,
     runner: OpRunner,
+    collector: Collector,
 }
 
 impl AppState {
@@ -47,6 +49,7 @@ impl AppState {
             registry.clone(),
         );
         runner.recover_interrupted()?;
+        let collector = Collector::new(store.clone());
         Ok(Self(Arc::new(Inner {
             token: Mutex::new(token),
             sessions: SessionStore::new(),
@@ -56,6 +59,7 @@ impl AppState {
             secure_cookies: opts.tls.is_some(),
             store,
             runner,
+            collector,
         })))
     }
 
@@ -67,6 +71,11 @@ impl AppState {
     /// The operation runner.
     pub fn runner(&self) -> &OpRunner {
         &self.0.runner
+    }
+
+    /// The status collector (WP-53).
+    pub fn collector(&self) -> &Collector {
+        &self.0.collector
     }
 
     /// Bus registry used by the process-wide tracing router.
@@ -126,6 +135,9 @@ impl AppState {
     /// finish (UI §7).
     pub fn begin_shutdown(&self) {
         self.0.shutdown.store(true, Ordering::SeqCst);
+        // Draining stops the collector loop too; in-flight collections
+        // finish their write without starting new ones.
+        self.0.collector.shutdown();
     }
 
     /// True once the shutdown started.

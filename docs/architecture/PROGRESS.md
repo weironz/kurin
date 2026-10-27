@@ -57,7 +57,7 @@
 | WP-50 kurin-server 骨架与认证 | done | 见提交 | 无（纯新增 crate 与 `serve` 子命令） | 无（仅回环监听自测） | axum 0.8 + axum-server(rustls/ring)；错误信封 `camelCase` 对齐 WP-60 前端契约；403 `forbidden-host` 为 §6.10 Host 规则新增状态码 |
 | WP-51 Store 与配置修订 | done | 见提交 | 无 | 无（纯本地 DB） | rusqlite WAL + 单写线程/读池；user_version 迁移；秘密哨兵；base_rev 409；镜像 0600 |
 | WP-52 OpRunner/事件持久化/SSE | done | 见提交 | 无 | `scripts/api-smoke.sh <tier1.toml>` | SSE 先订阅后补读/seq 去重/心跳；JSONL 日志分页；取消/重试；重启标记 interrupted；并发上限 |
-| WP-53 Collector | todo | | | 3 集群总览 | |
+| WP-53 Collector | done | 见提交 | 无 | 导入 3 集群（1 不可达）核对总览 | 抖动间隔/超时/并发/失败保留/证书 6h 降频/多 CP 回退/刷新去重/操作期间暂停；五态健康 |
 | WP-54 其余 API | todo | | | | |
 | WP-55 类型生成与静态资源 | todo | | | | |
 | WP-60 前端脚手架 | done | 见提交 | 无 | 无 | 提前实施（先用手写 provisional DTO 对 mock 开发，WP-55 替换为 ts-rs 生成类型）；34 个 Vitest 用例通过 |
@@ -90,6 +90,7 @@
 - WP-34：`upgrade --offline <包URI>`/`add nodes --offline <包URI>` 在变更期明确拒绝（分发留给 WP-35）；`oci://` 来源报错并指向 `package pull`；`artifacts.offline-dir` 与 `packages.base` 互斥。
 - WP-33：`inspect --json` 改为 `--manifest`（全局 `--json` 与子命令长选项冲突），`list` 用 `--format text|json`；`prune` 需全量重哈希（3.7GiB 约 2 分钟）。
 - WP-32：`kurin artifact` 现在产出 OCI layout（旧目录树由 WP-34 兼容读取）；镜像按所选架构携带子 manifest，上游 index 原样保留；修复 busybox URL 模板（Docker Hub tag 无 `v` 前缀）。
+- WP-53：`STALE_AFTER = 180s`；`GET /clusters` 沿用后端 snake_case（前端 camelCase 对齐留给 WP-54/55 ts-rs）；`connect()` 的 log 回调加 `Send`。
 - WP-52：schema V3 让 `one_active_op` 排除 precheck/status（只读操作不加锁）；操作 ID 用时间戳+随机后缀；EventBus 丢弃事件时以 seq 跳变等价实现 Lagged 断开；新增 `serve --max-concurrent-ops`。
 - WP-51：本 WP 只提供 Rust store API，未接入 HTTP/AppState（WP-52 集成）；`ApiError::Internal` 为增量变体。
 - WP-43：内置 addon 目录为空（WP-46），已知内置名在 `resolve_selection` 中延后并告警；`ApplyRequest.helm` 改为 Option；`CONTROL_ARTIFACTS` 特例移除，helm 由引擎 `artifacts()` 声明。
@@ -141,6 +142,7 @@
 - WP-34：`just tier1-offline`（旧 bundle 不回归）；`kurin package create base -o file:///tmp/base.tar.zst && kurin create cluster -f cfg --offline file:///tmp/base.tar.zst --dry-run`。
 - WP-33：本地 zot 容器三形态互转（layout→zot→tar→verify→inspect，二次 push 零发送，错误凭据 401）；已清理容器。
 - WP-32：`kurin package create base --arch amd64,arm64 -o file:///tmp/base.tar.zst`，再 `kurin package inspect file:///tmp/base.tar.zst`（真实网络下载约 10 分钟；本地假上游测试已覆盖校验路径）。
+- WP-53：导入 3 个集群（1 个不可达），等待一轮采集后核对总览五态与 `collect_error`；刷新去重与操作期间暂停。
 - WP-52：`cargo build -p kurin --features ui && scripts/api-smoke.sh <tier1-config.toml>`（导入 → precheck → create → SSE 日志 → status → delete）。
 - WP-51：`cargo test -p kurin-server --test store`；`rusqlite bundled` 的 musl/zig 交叉编译需在发布机验证。
 - WP-43：tier1 带 `[addons.x]` 创建，观察 addons 阶段任务与 hooks；`kurin addon remove`（WP-44 CLI 落地后）。

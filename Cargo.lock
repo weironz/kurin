@@ -2549,6 +2549,7 @@ dependencies = [
  "kurin-config",
  "kurin-core",
  "kurin-ops",
+ "kurin-ssh",
  "miette",
  "rand",
  "rusqlite",
