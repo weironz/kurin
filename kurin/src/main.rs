@@ -360,7 +360,7 @@ async fn run(cli: Cli) -> Result<()> {
                 }
                 let pool: std::sync::Arc<dyn kurin::SessionPool> =
                     std::sync::Arc::new(kurin::ssh::SshSessionPool::from_cluster(&cluster)?);
-                let mut plan = kurin::Plan::build_with_pool(&cluster, Some(pool.clone()))?;
+                let mut plan = kurin::plan::build_with_pool(&cluster, Some(pool.clone()))?;
                 if check {
                     kurin::executor::probe(&mut plan, &pool).await?;
                 }
@@ -511,7 +511,7 @@ async fn add_nodes(file: PathBuf, json: bool, offline: Option<PathBuf>) -> Resul
     }
 
     // Same plan/executor as create: converged nodes skip, new nodes install.
-    let mut plan = kurin::Plan::build_with_pool(
+    let mut plan = kurin::plan::build_with_pool(
         &cluster,
         Some(std::sync::Arc::new(
             kurin::ssh::SshSessionPool::from_cluster(&cluster)?,

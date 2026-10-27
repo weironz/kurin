@@ -1,12 +1,49 @@
 [workspace]
 resolver = "2"
-members = ["kurin", "kurin-config"]
+members = ["crates/*", "kurin"]
 
 [workspace.package]
 version = "0.4.0"
 edition = "2021"
 license = "Apache-2.0"
 repository = "https://github.com/weironz/kurin"
+
+[workspace.dependencies]
+kurin-config = { path = "crates/kurin-config" }
+kurin-core = { path = "crates/kurin-core" }
+kurin-ssh = { path = "crates/kurin-ssh" }
+kurin-artifact = { path = "crates/kurin-artifact" }
+kurin-components = { path = "crates/kurin-components" }
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yml = "0.0.12"
+thiserror = "2"
+miette = { version = "7", features = ["fancy"] }
+petgraph = "0.8"
+minijinja = "2"
+rust-embed = "8"
+async-trait = "0.1"
+tokio = { version = "1", features = [
+    "rt-multi-thread",
+    "macros",
+    "sync",
+    "time",
+    "process",
+    "fs",
+    "signal",
+] }
+clap = { version = "4", features = ["derive"] }
+semver = { version = "1", features = ["serde"] }
+sha2 = "0.10"
+russh = "0.64.1"
+backon = "1.6.0"
+tempfile = "3.27.0"
+rcgen = "0.14"
+bcrypt = "0.17"
+toml = "0.8"
+ipnet = { version = "2", features = ["serde"] }
+insta = { version = "1", features = ["toml"] }
 
 [profile.release]
 lto = true

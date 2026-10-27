@@ -1,0 +1,28 @@
+[package]
+name = "kurin-components"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Kurin built-in components: distro, runtime, CNI, registry, HA and post-install tasks"
+
+[dependencies]
+kurin-config.workspace = true
+kurin-core.workspace = true
+kurin-artifact.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_yml.workspace = true
+miette.workspace = true
+petgraph.workspace = true
+minijinja.workspace = true
+rust-embed.workspace = true
+async-trait.workspace = true
+tokio.workspace = true
+semver.workspace = true
+sha2.workspace = true
+rcgen.workspace = true
+bcrypt.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

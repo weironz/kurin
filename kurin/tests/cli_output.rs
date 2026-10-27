@@ -22,7 +22,7 @@ use std::sync::Arc;
 use kurin::artifact::Arch;
 use kurin::executor::{run_with, RunOptions};
 use kurin::render::event_json_line;
-use kurin::{Event, Plan};
+use kurin::{plan, Event};
 use support::{Reply, Rule, ScriptedPool, ScriptedSession};
 
 /// The admin.conf a converged control plane serves over `cat` (fake
@@ -201,7 +201,7 @@ async fn create_cluster_output_and_event_lines() {
     let pool = Arc::new(ScriptedPool::new(vec![master, worker]));
     let dyn_pool: Arc<dyn kurin::SessionPool> = pool.clone();
 
-    let mut plan = Plan::build_with_pool(&cluster, Some(dyn_pool.clone())).unwrap();
+    let mut plan = plan::build_with_pool(&cluster, Some(dyn_pool.clone())).unwrap();
     let mut events = Vec::new();
     let mut emit = |event: Event| events.push(event);
     run_with(&mut plan, &dyn_pool, &mut emit, RunOptions::default())
@@ -336,7 +336,7 @@ async fn create_cluster_output_and_event_lines() {
     let worker = ScriptedSession::new("worker01", rules());
     let pool = Arc::new(ScriptedPool::new(vec![master, worker]));
     let dyn_pool: Arc<dyn kurin::SessionPool> = pool.clone();
-    let mut plan = Plan::build_with_pool(&cluster, Some(dyn_pool.clone())).unwrap();
+    let mut plan = plan::build_with_pool(&cluster, Some(dyn_pool.clone())).unwrap();
     let mut events = Vec::new();
     let mut emit = |event: Event| events.push(event);
     let err = run_with(&mut plan, &dyn_pool, &mut emit, RunOptions::default())

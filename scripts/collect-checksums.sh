@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # collect-checksums.sh — fetch upstream sha256 values for every artifact
-# pinned in kurin/src/version.rs (kubernetes, containerd, runc, crictl,
+# pinned in crates/kurin-artifact/src/version.rs (kubernetes, containerd, runc, crictl,
 # cni-plugins, calico, kube-vip, pause) for both linux/amd64 and linux/arm64.
 #
 # Sources, in preference order per component:
@@ -16,12 +16,12 @@
 # exists upstream and reports nothing else.
 #
 # Output (one line per artifact):  name version arch sha256 url
-# The resulting table is embedded in kurin/src/version.rs as compile-time data.
+# The resulting table is embedded in crates/kurin-artifact/src/version.rs as compile-time data.
 
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-SRC="$ROOT/kurin/src/version.rs"
+SRC="$ROOT/crates/kurin-artifact/src/version.rs"
 
 # Parse a `pub const NAME: &str = "value";` line out of version.rs so this
 # script never holds a second copy of the pins.

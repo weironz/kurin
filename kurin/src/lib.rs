@@ -1,4 +1,8 @@
-//! kurin library: everything the CLI and future API layer calls.
+//! kurin library facade: preserves the historical `kurin::...` paths for the
+//! CLI and integration tests while the implementation lives in the split
+//! workspace crates.
+//!
+//! The thin binary in `main.rs` only parses argv and picks an output sink.
 
 // `result_large_err` is a performance hint, not a correctness rule. Our
 // miette-based error carries file/span context required for rustc-style
@@ -7,28 +11,64 @@
 // conspicuous place instead of per-fn.
 #![allow(clippy::result_large_err)]
 
-//! The thin binary in `main.rs` only parses argv and picks an output sink.
+pub mod artifact {
+    pub use kurin_artifact::artifact::*;
+}
+pub mod artifact_bundle {
+    pub use kurin_artifact::artifact_bundle::*;
+}
+pub mod certs {
+    pub use kurin_components::certs::*;
+}
+pub mod dynamic_manifest {
+    pub use kurin_artifact::dynamic_manifest::*;
+}
+pub mod engine {
+    pub use kurin_core::engine::*;
+}
+pub mod executor {
+    pub use kurin_core::executor::*;
+}
+pub mod plan {
+    pub use kurin_components::plan::{build, build_with_pool};
+    pub use kurin_core::plan::{Plan, StageNode};
+}
+pub mod precheck {
+    pub use kurin_components::precheck::*;
+}
+pub mod render {
+    pub use kurin_core::render::*;
+}
+pub mod ssh {
+    pub use kurin_ssh::*;
+}
+pub mod state {
+    pub use kurin_core::state::*;
+}
+pub mod status {
+    pub use kurin_components::status::*;
+}
+pub mod tasks {
+    pub use kurin_components::tasks::*;
+}
+pub mod teardown {
+    pub use kurin_components::teardown::*;
+}
+pub mod templates {
+    pub use kurin_components::templates::*;
+}
+pub mod upgrade {
+    pub use kurin_components::upgrade::*;
+}
+pub mod version {
+    pub use kurin_artifact::version::*;
+}
+pub mod zone {
+    pub use kurin_artifact::zone::*;
+}
 
-pub mod artifact;
-pub mod artifact_bundle;
-pub mod certs;
-pub mod dynamic_manifest;
-pub mod engine;
-pub mod executor;
-pub mod plan;
-pub mod precheck;
-pub mod render;
-pub mod ssh;
-pub mod state;
-pub mod status;
-pub mod tasks;
-pub mod teardown;
-pub mod templates;
-pub mod upgrade;
-pub mod version;
-pub mod zone;
-
-pub use engine::{Drift, Event, ExecOutput, Outcome, Session, Stage, Task};
-pub use executor::{run, SessionPool};
-pub use plan::Plan;
-pub use state::RunState;
+pub use kurin_components::plan::{build, build_with_pool};
+pub use kurin_core::engine::{Drift, Event, ExecOutput, Outcome, Session, Stage, Task};
+pub use kurin_core::executor::{run, SessionPool};
+pub use kurin_core::plan::Plan;
+pub use kurin_core::state::RunState;

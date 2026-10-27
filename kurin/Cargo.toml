@@ -11,26 +11,21 @@ name = "kurin"
 path = "src/main.rs"
 
 [dependencies]
-kurin-config = { path = "../kurin-config" }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-serde_yml = { version = "0.0.12" }
-thiserror = "2"
-miette = { version = "7", features = ["fancy"] }
-petgraph = "0.8"
-minijinja = "2"
-rust-embed = "8"
-async-trait = "0.1"
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "process", "fs", "signal"] }
-clap = { version = "4", features = ["derive"] }
-semver = { version = "1", features = ["serde"] }
-sha2 = "0.10"
-russh = "0.64.1"
-backon = "1.6.0"
-futures = "0.3.34"
-tempfile = "3.27.0"
-rcgen = "0.14"
-bcrypt = "0.17"
+kurin-config.workspace = true
+kurin-core.workspace = true
+kurin-ssh.workspace = true
+kurin-artifact.workspace = true
+kurin-components.workspace = true
+serde_json.workspace = true
+miette.workspace = true
+tokio.workspace = true
+clap.workspace = true
+semver.workspace = true
+
 [dev-dependencies]
+async-trait.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tempfile.workspace = true
 insta = { version = "1", features = ["yaml", "json"] }
 regex = "1"

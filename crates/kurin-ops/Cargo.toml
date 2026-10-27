@@ -1,0 +1,9 @@
+[package]
+name = "kurin-ops"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Kurin operations: create, add-nodes, delete, upgrade, certs, status"
+
+[dependencies]

@@ -4,7 +4,7 @@ executor exists) a real two-pass apply proving idempotency.
 
 Policy (fixed by the W1 plan):
   * always: dry-run plan is complete and deterministic;
-  * if kurin/src/ssh.rs is absent, the execution half is SKIPPED with a printed
+  * if crates/kurin-ssh/src/ssh.rs is absent, the execution half is SKIPPED with a printed
     reason and the script still succeeds;
   * if it is present, `kurin create cluster` (real apply) must run preflight +
     prepare on all nodes, and a second run must report every task skipped.
@@ -151,7 +151,7 @@ def main() -> int:
         print(f"[info] plan tasks: {len(tasks)}")
 
         # --- 2. real execution (needs Track D's ssh executor) -----------------
-        ssh_mod = pathlib.Path(args.repo) / "kurin/src/ssh.rs"
+        ssh_mod = pathlib.Path(args.repo) / "crates/kurin-ssh/src/ssh.rs"
         if args.skip_exec or not ssh_mod.exists():
             reason = "forced by --skip-exec" if args.skip_exec else f"{ssh_mod} not present (Track D pending)"
             print(f"[skip] execution/idempotency checks: {reason}")

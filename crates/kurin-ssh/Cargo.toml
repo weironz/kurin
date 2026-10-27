@@ -1,0 +1,16 @@
+[package]
+name = "kurin-ssh"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Kurin SSH transport (russh)"
+
+[dependencies]
+kurin-config.workspace = true
+kurin-core.workspace = true
+miette.workspace = true
+async-trait.workspace = true
+tokio.workspace = true
+russh.workspace = true
+backon.workspace = true

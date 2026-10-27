@@ -9,7 +9,7 @@
 |---|---|---|---|---|---|
 | WP-00 行为基线快照 | done | 见提交 | 建立基线（50 个快照） | 无 | 20 个配置样例；记录到基线中的 kubeadm 轨道阶段标签错位见备注 |
 | WP-01 修复 upgrade drain 判定 | done | 见提交 | 无（CLI 新增 `--force-drain-failure`） | `just tier2-upgrade-minor`（含人为 drain 失败场景） | 行为变更已写入 CHANGELOG；`run_offline` 保留旧签名 |
-| WP-02 workspace 拆分 | todo | | | | |
+| WP-02 workspace 拆分 | done | 见提交 | 无 | 无 | 依赖图 config←core←{ssh,artifact}←components←bin；`just check`/`build`/`release-musl` 通过 |
 | WP-03 提权 become/sudo | todo | | | `e2e/tier1/nonroot.sh` | |
 | WP-04 节点 facts 与按节点架构 | todo | | | tier1/tier2 不回归；`e2e/tier1/mixed-arch.md` | |
 | WP-05 流式 exec 与上传 | todo | | | `just tier1-offline` | |
@@ -80,6 +80,7 @@
 ## 偏离记录
 
 - WP-00：`ScriptedSession` 在 `(exit, stdout, stderr)` 之外增加了「命令已执行但传输中断」的应答与副作用文件，用于覆盖 `Outcome::Unknown → 重新探测` 路径；`cli_output` 快照对任务耗时与阶段内行序做归一化（并发完成顺序不在 v1 契约内）。
+- WP-02：`kurin-core` 的 `tempfile` 是运行时依赖（`state.rs` 原子写状态文件）；`kurin` 移除已无源码使用的 `futures` 直接依赖；`kurin/tests` 通过 facade 原样保留；`Plan::build*` 改为 `kurin::plan::build*`。
 - WP-00 基线记录到的现有行为（未修改）：kubeadm 轨道把 `kubeadm-init` 放在 `vip` stage、`api-ready` 放在 `bootstrap`、join 任务放在 `api-ready`，`join` stage 为空；顺序正确，仅标签错位。WP-10 修正时需逐条解释快照变化。
 
 ## 待人工 e2e

@@ -13,6 +13,7 @@
 
 use std::path::PathBuf;
 
+use kurin::plan;
 use kurin::render::render_tree;
 use kurin::Plan;
 use serde_json::json;
@@ -100,7 +101,7 @@ fn plan_matrix(plan: &Plan) -> serde_json::Value {
 fn plan_snapshots_for_the_config_fixture_matrix() {
     for name in FIXTURES {
         let cluster = load_fixture(name);
-        let plan = Plan::build(&cluster)
+        let plan = plan::build(&cluster)
             .unwrap_or_else(|e| panic!("fixture {name} must build a plan: {e:?}"));
         insta::assert_snapshot!(format!("{name}.tree"), render_tree(&plan));
         insta::assert_json_snapshot!(format!("{name}.json"), plan_matrix(&plan));

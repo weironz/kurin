@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # check-mirrors.sh — continuous validation of the CN mirror zone.
 #
-# Verifies, entry by entry, the CN_MIRRORS table in kurin/src/zone.rs:
+# Verifies, entry by entry, the CN_MIRRORS table in crates/kurin-artifact/src/zone.rs:
 #
 #   1. registry mirrors (registry.k8s.io / quay.io / ghcr.io / docker.io ->
 #      *.m.daocloud.io): for every image entry in
-#      kurin/src/artifacts/manifest.json (plus the kube-vip ref pinned in
-#      kurin/src/version.rs and a docker.io calico sample, so all four mirror
+#      crates/kurin-artifact/src/artifacts/manifest.json (plus the kube-vip ref pinned in
+#      crates/kurin-artifact/src/version.rs and a docker.io calico sample, so all four mirror
 #      families are covered) fetch the OCI index/manifest digest from BOTH
 #      the upstream registry and its domestic mirror — anonymous token flow:
 #      HEAD the manifest endpoint, read the www-authenticate realm, GET
@@ -27,9 +27,9 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-ZONE_SRC="$ROOT/kurin/src/zone.rs"
-MANIFEST="$ROOT/kurin/src/artifacts/manifest.json"
-VERSION_SRC="$ROOT/kurin/src/version.rs"
+ZONE_SRC="$ROOT/crates/kurin-artifact/src/zone.rs"
+MANIFEST="$ROOT/crates/kurin-artifact/src/artifacts/manifest.json"
+VERSION_SRC="$ROOT/crates/kurin-artifact/src/version.rs"
 
 QUICK=0
 case "${1:-}" in

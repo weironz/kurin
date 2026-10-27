@@ -1,0 +1,17 @@
+[package]
+name = "kurin-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Kurin engine: tasks, plan data, DAG executor and run state"
+
+[dependencies]
+kurin-config.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+miette.workspace = true
+petgraph.workspace = true
+async-trait.workspace = true
+tokio.workspace = true
+tempfile.workspace = true
