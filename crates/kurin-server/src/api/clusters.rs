@@ -322,6 +322,34 @@ fn current_spec(store: &crate::store::Store, name: &str) -> Option<kurin_config:
 }
 
 #[derive(Serialize, TS)]
+pub(crate) struct ArchiveResponse {
+    name: String,
+    lifecycle: String,
+}
+
+/// `POST /api/v1/clusters/{name}/archive`: stop managing the cluster
+/// without touching the remote hosts (UI §8.1 dangerous zone). The
+/// collector skips archived clusters and no operation may run on them.
+pub(crate) async fn archive(
+    State(state): State<AppState>,
+    AxumPath(name): AxumPath<String>,
+) -> Result<Json<ArchiveResponse>, ApiError> {
+    let store = state.store();
+    store.get_cluster(&name)?.ok_or(ApiError::NotFound)?;
+    if let Some(active) = store.active_operation(&name)? {
+        return Err(ApiError::Conflict(format!(
+            "集群有活动操作 {}，不能移除纳管",
+            active.id
+        )));
+    }
+    let record = store.set_lifecycle(&name, Lifecycle::Archived)?;
+    Ok(Json(ArchiveResponse {
+        name: record.name,
+        lifecycle: record.lifecycle.as_str().to_string(),
+    }))
+}
+
+#[derive(Serialize, TS)]
 pub(crate) struct ConfigView {
     #[ts(type = "number")]
     rev: i64,

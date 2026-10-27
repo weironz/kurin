@@ -984,3 +984,64 @@ async fn the_real_backend_answers_plan_operations_offline() {
         }
     }
 }
+
+// ── POST /clusters/{name}/archive ──────────────────────────────────────
+
+#[tokio::test]
+async fn archive_stops_managing_without_touching_the_remote() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = state_with(dir.path(), Arc::new(NoopBackend));
+    import(&state, "single");
+    let app = kurin_server::router(state.clone());
+    let cookie = login(app.clone(), dir.path()).await;
+
+    let request = authed(
+        Method::POST,
+        "/api/v1/clusters/single/archive",
+        &cookie,
+        json!({}),
+    );
+    let response = send(app, request).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = json_body(response).await;
+    assert_eq!(body["lifecycle"], "archived");
+    assert_eq!(
+        state
+            .store()
+            .get_cluster("single")
+            .unwrap()
+            .unwrap()
+            .lifecycle,
+        kurin_server::Lifecycle::Archived
+    );
+}
+
+#[tokio::test]
+async fn archive_is_rejected_while_an_operation_is_active() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = state_with(dir.path(), Arc::new(NoopBackend));
+    import(&state, "single");
+    state
+        .store()
+        .insert_operation(kurin_server::store::NewOperation {
+            id: "01JDYWIZE2EACTIVE".into(),
+            cluster: Some("single".into()),
+            kind: "create".into(),
+            config_rev: Some(1),
+            params: "{}".into(),
+            retry_of: None,
+            actor: "test".into(),
+        })
+        .unwrap();
+    let app = kurin_server::router(state);
+    let cookie = login(app.clone(), dir.path()).await;
+
+    let request = authed(
+        Method::POST,
+        "/api/v1/clusters/single/archive",
+        &cookie,
+        json!({}),
+    );
+    let response = send(app, request).await;
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+}
