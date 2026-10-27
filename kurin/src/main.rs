@@ -340,6 +340,15 @@ fn resolve_zone(config_zone: Option<&str>) -> Result<kurin::zone::Zone> {
     Ok(zone)
 }
 
+/// Load a config file through the full pipeline: kurin-config's
+/// structural checks plus every enabled component's validation rules
+/// (the rules that moved out of kurin-config with WP-15).
+fn load_config(file: &std::path::Path) -> Result<kurin_config::Cluster> {
+    let cluster = kurin_config::load(file)?;
+    kurin::components::validate(&cluster)?;
+    Ok(cluster)
+}
+
 /// Artifact sources for one operation: effective zone, embedded manifest
 /// and the cluster's offline dir (a `--offline` flag is applied to the
 /// cluster before this is called).
@@ -428,7 +437,7 @@ async fn run(cli: Cli) -> Result<()> {
             offline,
             force_drain_failure,
         } => {
-            let cluster = kurin_config::load(&file)?;
+            let cluster = load_config(&file)?;
             let op_id = events::new_op_id();
             // `--dry-run` only reads; everything else mutates the cluster.
             let _lock = if dry_run {
@@ -478,7 +487,7 @@ async fn run(cli: Cli) -> Result<()> {
         } => build_artifacts(dir, arch, with_kubernetes).await,
         Commands::Certs { what } => match what {
             CertsWhat::Check { file, warn_days } => {
-                let cluster = kurin_config::load(&file)?;
+                let cluster = load_config(&file)?;
                 let pool: Arc<dyn kurin::SessionPool> =
                     Arc::new(kurin::ssh::SshSessionPool::from_cluster(&cluster)?);
                 let run = new_ephemeral_run(&cluster)?;
@@ -495,7 +504,7 @@ async fn run(cli: Cli) -> Result<()> {
                 result
             }
             CertsWhat::Renew { file, force } => {
-                let cluster = kurin_config::load(&file)?;
+                let cluster = load_config(&file)?;
                 let op_id = events::new_op_id();
                 let _lock = lock_cluster(&cluster, &op_id)?;
                 let pool: Arc<dyn kurin::SessionPool> =
@@ -510,7 +519,7 @@ async fn run(cli: Cli) -> Result<()> {
             }
         },
         Commands::Precheck { file } => {
-            let cluster = kurin_config::load(&file)?;
+            let cluster = load_config(&file)?;
             let pool: Arc<dyn kurin::SessionPool> =
                 Arc::new(kurin::ssh::SshSessionPool::from_cluster(&cluster)?);
             let run = new_ephemeral_run(&cluster)?;
@@ -537,7 +546,7 @@ async fn run(cli: Cli) -> Result<()> {
             result
         }
         Commands::Status { file } => {
-            let cluster = kurin_config::load(&file)?;
+            let cluster = load_config(&file)?;
             let pool: Arc<dyn kurin::SessionPool> =
                 Arc::new(kurin::ssh::SshSessionPool::from_cluster(&cluster)?);
             let run = new_ephemeral_run(&cluster)?;
@@ -599,7 +608,7 @@ async fn run(cli: Cli) -> Result<()> {
                 resume,
                 offline,
             } => {
-                let mut cluster = kurin_config::load(&file)?;
+                let mut cluster = load_config(&file)?;
                 if let Some(dir) = offline {
                     cluster.offline_dir = Some(dir);
                 }
@@ -850,7 +859,7 @@ async fn build_artifacts(
 }
 
 async fn add_nodes(file: PathBuf, out: OutputOpts, offline: Option<PathBuf>) -> Result<()> {
-    let mut cluster = kurin_config::load(&file)?;
+    let mut cluster = load_config(&file)?;
     if let Some(dir) = offline {
         cluster.offline_dir = Some(dir);
     }
@@ -978,7 +987,7 @@ async fn add_nodes(file: PathBuf, out: OutputOpts, offline: Option<PathBuf>) -> 
 }
 
 async fn delete_node_cmd(name: String, file: PathBuf, out: OutputOpts) -> Result<()> {
-    let cluster = kurin_config::load(&file)?;
+    let cluster = load_config(&file)?;
     let op_id = events::new_op_id();
     let _lock = lock_cluster(&cluster, &op_id)?;
     let node = cluster
@@ -1018,7 +1027,7 @@ async fn delete_node_cmd(name: String, file: PathBuf, out: OutputOpts) -> Result
 }
 
 async fn delete_cluster_cmd(file: PathBuf, out: OutputOpts) -> Result<()> {
-    let cluster = kurin_config::load(&file)?;
+    let cluster = load_config(&file)?;
     let op_id = events::new_op_id();
     let _lock = lock_cluster(&cluster, &op_id)?;
     let pool: Arc<dyn kurin::SessionPool> =

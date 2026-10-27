@@ -106,6 +106,12 @@ All notable changes to kurin. Format follows Keep a Changelog; semver.
   before publication.
 
 ### Changed
+- Internal: the os, runtime and distro areas now contribute to the create
+  plan through a `Component` trait and an explicit registry in
+  `kurin-components` (WP-15) instead of planner functions; the k3s
+  distribution's validation rules moved from `kurin-config` into the
+  `distro/k3s` component with identical error text. No user-visible
+  change: plan snapshots, CLI output and `--json` events are byte-identical.
 - `--json` v1 events gain exactly one field, `ts` (UTC milliseconds from
   the v2 envelope). The frozen v1 field sets are otherwise unchanged
   (docs/v1.0-gates.md §2 allows additive fields). The default terminal

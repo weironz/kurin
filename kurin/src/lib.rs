@@ -26,6 +26,9 @@ pub mod blackboard {
 pub mod certs {
     pub use kurin_components::certs::*;
 }
+pub mod components {
+    pub use kurin_components::component::*;
+}
 pub mod discover {
     pub use kurin_components::discover::*;
 }

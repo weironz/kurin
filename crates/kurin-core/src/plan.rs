@@ -344,9 +344,13 @@ fn barrier_edges(spans: &[Range<usize>]) -> Vec<(TaskIdx, TaskIdx)> {
     edges
 }
 
+/// One slot in the builder: the task, its phase and (for per-node track
+/// adds) its position — `(track, node)`, `node` being the node's
+/// config-order index.
 struct TaskSlot {
     phase: usize,
     planned: PlannedTask,
+    track: Option<(u32, u32)>,
 }
 
 /// Builder for a [`Plan`]: declares the operation's phases, adds tasks and
@@ -431,12 +435,45 @@ impl<'a> PlanBuilder<'a> {
         PhaseHandle(idx)
     }
 
-    /// Add a task to `phase`; returns its builder-local index.
+    /// Add a task to `phase`; returns its builder-local index. The task
+    /// keeps its call order inside the phase (see [`Self::add_track`]
+    /// for the per-node alternative).
     pub fn add(&mut self, phase: PhaseHandle, task: Arc<dyn Task>) -> TaskIdx {
         let idx = self.slots.len();
         self.slots.push(TaskSlot {
             phase: phase.0,
             planned: PlannedTask { task, drift: None },
+            track: None,
+        });
+        idx
+    }
+
+    /// Add a task to `phase` at an explicit per-node track position.
+    ///
+    /// The planner's component loop is component-major (each component
+    /// adds its whole sweep in turn), but the frozen plan snapshots pin a
+    /// node-major layout for the per-node tracks: all of one node's os
+    /// and runtime tasks precede the next node's. `add_track` lets a
+    /// flat loop express that layout: within a phase, tracked tasks come
+    /// first, ordered by `(track, node, call order)` — the node is the
+    /// task's [`Task::node`], which must name a node of the builder's
+    /// cluster — and plain [`Self::add`] calls keep their call order
+    /// after them.
+    pub fn add_track(&mut self, phase: PhaseHandle, task: Arc<dyn Task>, track: u32) -> TaskIdx {
+        let node = task.node();
+        let node_idx = self
+            .cluster
+            .nodes
+            .iter()
+            .position(|n| n.name == node)
+            .unwrap_or_else(|| {
+                panic!("add_track: task node {node:?} is not part of the builder's cluster")
+            });
+        let idx = self.slots.len();
+        self.slots.push(TaskSlot {
+            phase: phase.0,
+            planned: PlannedTask { task, drift: None },
+            track: Some((track, node_idx as u32)),
         });
         idx
     }
@@ -454,8 +491,10 @@ impl<'a> PlanBuilder<'a> {
         });
     }
 
-    /// Flatten the builder into a [`Plan`]: tasks grouped in phase order,
-    /// default phase barriers plus explicit edges, rolling groups remapped.
+    /// Flatten the builder into a [`Plan`]: tasks grouped in phase order
+    /// (per-node track adds ordered inside their phase, see
+    /// [`Self::add_track`]), default phase barriers plus explicit edges,
+    /// rolling groups remapped.
     pub fn finish(self) -> Plan {
         let PlanBuilder {
             op,
@@ -468,6 +507,18 @@ impl<'a> PlanBuilder<'a> {
         let mut per_phase: Vec<Vec<TaskIdx>> = vec![Vec::new(); phases.len()];
         for (idx, slot) in slots.iter().enumerate() {
             per_phase[slot.phase].push(idx);
+        }
+        // Per-node track ordering (see [`PlanBuilder::add_track`]):
+        // tracked tasks first, by `(track, node, call order)`; plain
+        // adds keep their call order after them.
+        for group in &mut per_phase {
+            let (mut tracked, plain): (Vec<TaskIdx>, Vec<TaskIdx>) = group
+                .iter()
+                .copied()
+                .partition(|&i| slots[i].track.is_some());
+            tracked.sort_by_key(|&i| (slots[i].track, i));
+            tracked.extend(plain);
+            *group = tracked;
         }
 
         let mut slots: Vec<Option<TaskSlot>> = slots.into_iter().map(Some).collect();
@@ -715,6 +766,82 @@ role = "registry"
         assert_eq!(groups[1].tasks.len(), 1);
         assert_eq!(groups[3].phase.id, "prepare");
         assert_eq!(groups[3].tasks.len(), 2);
+    }
+
+    /// A task whose node is configurable, for track-ordering tests.
+    struct NodeTask {
+        id: &'static str,
+        node: &'static str,
+    }
+
+    #[async_trait]
+    impl Task for NodeTask {
+        fn id(&self) -> String {
+            format!("{}@{}", self.id, self.node)
+        }
+        fn stage(&self) -> Stage {
+            Stage::Prepare
+        }
+        fn node(&self) -> &str {
+            self.node
+        }
+        fn describe(&self) -> String {
+            self.id.into()
+        }
+        async fn check(&self, _session: &dyn Session) -> miette::Result<Drift> {
+            Ok(Drift::InSync)
+        }
+        async fn apply(&self, _session: &dyn Session) -> miette::Result<Outcome> {
+            Ok(Outcome::Verified)
+        }
+    }
+
+    #[test]
+    fn track_adds_order_node_major_inside_a_phase() {
+        // A component-major loop (every component adding its whole sweep
+        // in turn) must still come out node-major: all of one node's
+        // tracked tasks before the next node's, later tracks after the
+        // band, and plain adds last in call order.
+        let cluster = cluster();
+        let run = run(&cluster);
+        let mut b = PlanBuilder::new(OpKind::Create, &cluster, FactsTable::new(), &run, None);
+        let prepare = b.phase("prepare");
+        for node in ["cp1", "cp2", "w1"] {
+            b.add_track(prepare, Arc::new(NodeTask { id: "a", node }), 1);
+        }
+        for node in ["cp1", "cp2", "w1"] {
+            b.add_track(prepare, Arc::new(NodeTask { id: "b", node }), 1);
+        }
+        // A later sweep (cri-o / k3s units) lands after every member's band.
+        for node in ["cp1", "w1"] {
+            b.add_track(prepare, Arc::new(NodeTask { id: "late", node }), 2);
+        }
+        let plain = b.add(
+            prepare,
+            Arc::new(NodeTask {
+                id: "plain",
+                node: "cp2",
+            }),
+        );
+
+        let plan = b.finish();
+        let ids: Vec<String> = plan.tasks.iter().map(|t| t.task.id()).collect();
+        assert_eq!(
+            ids,
+            [
+                "a@cp1",
+                "b@cp1",
+                "a@cp2",
+                "b@cp2",
+                "a@w1",
+                "b@w1", //
+                "late@cp1",
+                "late@w1",
+                "plain@cp2",
+            ]
+        );
+        // Builder-local indices survive the per-phase reordering.
+        assert_eq!(plan.tasks[plain].task.id(), "plain@cp2");
     }
 
     #[test]

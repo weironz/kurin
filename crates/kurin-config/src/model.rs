@@ -1,6 +1,9 @@
 //! Internal model: the only thing the executor ever sees.
-//! `Cluster::from_config` merges defaults; `validate` is the business-rule
-//! gate. Every cross-field conflict is a hard error before any SSH happens.
+//! `Cluster::from_config` merges defaults; `validate` is the structural
+//! gate. Every cross-field conflict is a hard error before any SSH
+//! happens. Component-owned rules (the distributions' constraints) live
+//! in the `Component` implementations in `kurin-components` (WP-15);
+//! the CLI runs them right after this crate's load pipeline.
 
 use std::collections::{BTreeMap, HashMap};
 use std::fmt;
@@ -247,23 +250,9 @@ impl Cluster {
     pub fn validate(&self) -> Result<()> {
         let invalid = |hint: String| ConfigError::invalid(self.source.clone(), hint);
 
-        if self.distribution == Distribution::K3s && self.runtime == RuntimeKind::Crio {
-            return Err(invalid(
-                "k3s embeds containerd; kubernetes.runtime = \"crio\" needs distribution = \"k8s\""
-                    .into(),
-            ));
-        }
-        if self.distribution == Distribution::K3s {
-            // K3s embeds containerd and (in this build) ships its own
-            // flannel. Calico/Cilium with k3s needs --flannel-backend=none
-            // wiring that this build does not do.
-            if !matches!(self.cni, CniConfig::Flannel | CniConfig::None) {
-                return Err(invalid(
-                    "kubernetes.distribution = \"k3s\" supports network.cni = \"flannel\" or \"none\" only"
-                        .into(),
-                ));
-            }
-        }
+        // Distribution-level rules (k3s's embedded containerd and its
+        // CNI constraints) moved into the `distro/k3s` component with
+        // WP-15; kurin-config keeps the structural checks below.
         // calico/flannel/cilium images are all pinned in the offline bundle;
         // kube-ovn's chart-rendered fleet is not (mirrors rewrite only).
         if self.offline_dir.is_some() && matches!(self.cni, CniConfig::KubeOvn) {

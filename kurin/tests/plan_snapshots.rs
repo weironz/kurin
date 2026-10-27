@@ -56,8 +56,9 @@ fn offline_bundle_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/offline-bundle")
 }
 
-/// Load a fixture through the `kurin_config::load` pipeline
-/// (`parse_str` is its in-memory twin), injecting the offline-dir
+/// Load a fixture through the same pipeline the CLI runs: kurin-config's
+/// structural checks (`parse_str` is the in-memory twin of its `load`)
+/// plus the component validation pass, injecting the offline-dir
 /// placeholder when present.
 fn load_fixture(name: &str) -> kurin_config::Cluster {
     let path = fixture_path(name);
@@ -67,8 +68,11 @@ fn load_fixture(name: &str) -> kurin_config::Cluster {
         OFFLINE_DIR_PLACEHOLDER,
         &offline_bundle_dir().display().to_string(),
     );
-    kurin_config::parse_str(&path, &src)
-        .unwrap_or_else(|e| panic!("fixture {name} must load through kurin_config: {e:?}"))
+    let cluster = kurin_config::parse_str(&path, &src)
+        .unwrap_or_else(|e| panic!("fixture {name} must load through kurin_config: {e:?}"));
+    kurin::components::validate(&cluster)
+        .unwrap_or_else(|e| panic!("fixture {name} must pass component validation: {e:?}"));
+    cluster
 }
 
 /// Stage -> task matrix as JSON: the ordered `id` list plus each task's
