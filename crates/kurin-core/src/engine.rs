@@ -205,6 +205,21 @@ pub enum Stage {
     Cleanup,
     /// Teardown: control-machine state (run state, blackboard, join cache).
     Local,
+    /// Upgrade: per-node kubelet version gate.
+    VersionCheck,
+    /// Upgrade: mark the node unschedulable.
+    Cordon,
+    /// Upgrade: install the target kubeadm/kubelet/kubectl binaries.
+    InstallBins,
+    /// Upgrade: `kubeadm upgrade apply` (first control plane) or
+    /// `kubeadm upgrade node` (every other node).
+    KubeadmUpgrade,
+    /// Upgrade: restart kubelet and confirm it is active.
+    RestartKubelet,
+    /// Upgrade: wait for the node's Ready condition.
+    ReadyGate,
+    /// Upgrade: mark the node schedulable again.
+    Uncordon,
 }
 
 impl Stage {
@@ -226,6 +241,13 @@ impl Stage {
             Stage::Reset => "reset",
             Stage::Cleanup => "cleanup",
             Stage::Local => "local",
+            Stage::VersionCheck => "version-check",
+            Stage::Cordon => "cordon",
+            Stage::InstallBins => "install-bins",
+            Stage::KubeadmUpgrade => "kubeadm-upgrade",
+            Stage::RestartKubelet => "restart-kubelet",
+            Stage::ReadyGate => "ready-gate",
+            Stage::Uncordon => "uncordon",
         }
     }
 
@@ -248,6 +270,13 @@ impl Stage {
             "reset" => Stage::Reset,
             "cleanup" => Stage::Cleanup,
             "local" => Stage::Local,
+            "version-check" => Stage::VersionCheck,
+            "cordon" => Stage::Cordon,
+            "install-bins" => Stage::InstallBins,
+            "kubeadm-upgrade" => Stage::KubeadmUpgrade,
+            "restart-kubelet" => Stage::RestartKubelet,
+            "ready-gate" => Stage::ReadyGate,
+            "uncordon" => Stage::Uncordon,
             _ => return None,
         })
     }

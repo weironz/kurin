@@ -1,0 +1,34 @@
+---
+source: kurin/tests/upgrade.rs
+expression: render_plan(&plan)
+---
+├── stage: discover (2 tasks)
+│   ├── discover/facts@cp1 :: arch=amd64 os=? cpu=0 mem=0MiB
+│   └── discover/facts@w1 :: arch=amd64 os=? cpu=0 mem=0MiB
+├── stage: preflight (0 tasks)
+├── stage: artifacts (0 tasks)
+├── stage: first-cp (8 tasks)
+│   ├── version-check/version-check@cp1 :: check cp1 kubelet version (target v1.33.13)
+│   ├── cordon/cordon@cp1 :: cordon cp1
+│   ├── drain/drain@cp1 :: drain cp1 (via cp1)
+│   ├── install-bins/install-bins@cp1 :: install kubeadm/kubelet/kubectl v1.33.13 on cp1
+│   ├── kubeadm-upgrade/kubeadm-upgrade@cp1 :: kubeadm upgrade apply v1.33.13 on cp1
+│   ├── restart-kubelet/restart-kubelet@cp1 :: restart kubelet on cp1
+│   ├── ready-gate/ready-gate@cp1 :: wait for cp1 to be Ready
+│   └── uncordon/uncordon@cp1 :: uncordon cp1
+├── stage: control-plane (0 tasks)
+├── stage: workers (8 tasks)
+│   ├── version-check/version-check@w1 :: check w1 kubelet version (target v1.33.13)
+│   ├── cordon/cordon@w1 :: cordon w1
+│   ├── drain/drain@w1 :: drain w1 (via cp1)
+│   ├── install-bins/install-bins@w1 :: install kubeadm/kubelet/kubectl v1.33.13 on w1
+│   ├── kubeadm-upgrade/kubeadm-upgrade@w1 :: kubeadm upgrade node on w1
+│   ├── restart-kubelet/restart-kubelet@w1 :: restart kubelet on w1
+│   ├── ready-gate/ready-gate@w1 :: wait for w1 to be Ready
+│   └── uncordon/uncordon@w1 :: uncordon w1
+├── stage: addons (0 tasks)
+└── stage: post (1 tasks)
+    └── post/summary@cp1 :: print the post-upgrade node table
+
+rolling groups:
+- max_parallel=1 [version-check/version-check@w1, cordon/cordon@w1, drain/drain@w1, install-bins/install-bins@w1, kubeadm-upgrade/kubeadm-upgrade@w1, restart-kubelet/restart-kubelet@w1, ready-gate/ready-gate@w1, uncordon/uncordon@w1]

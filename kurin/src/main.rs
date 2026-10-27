@@ -469,7 +469,6 @@ async fn run(cli: Cli) -> Result<()> {
             let run = new_ephemeral_run_with_op_id(&cluster, op_id)?;
             let op = OpSession::start(&run, out)?;
             op.register_cluster(&cluster);
-            op.begin("upgrade", &cluster.name, "");
             let result: Result<()> = async {
                 // Facts first: upgrades resolve binaries per discovered arch.
                 let facts = kurin::discover::run(&cluster, &pool).await?;
@@ -477,16 +476,39 @@ async fn run(cli: Cli) -> Result<()> {
                     batch,
                     force_drain_failure,
                 };
-                if dry_run {
-                    kurin::upgrade::plan(&cluster, &target, &pool, &facts).await
-                } else if let Some(offline) = offline {
-                    kurin::upgrade::run_offline_with(
-                        &cluster, &target, &offline, &pool, opts, &facts, &run,
+                // Every path builds the same plan; only the artifact source
+                // differs (cache, bundle, or none for a dry run).
+                let plan = if dry_run {
+                    kurin::upgrade::plan(&cluster, &target, &pool, &facts, opts, &run).await?
+                } else if let Some(offline) = offline.as_deref() {
+                    kurin::upgrade::prepare_offline(
+                        &cluster, &target, offline, &pool, opts, &facts, &run,
                     )
-                    .await
+                    .await?
                 } else {
-                    kurin::upgrade::run(&cluster, &target, &pool, opts, &facts, &run).await
+                    kurin::upgrade::prepare_online(&cluster, &target, &pool, opts, &facts, &run)
+                        .await?
+                };
+                op.begin("upgrade", &cluster.name, &plan.fingerprint());
+                if dry_run {
+                    let tree = kurin::render::render_tree(&plan);
+                    if out.json_enabled() && !out.v2() {
+                        let plan = serde_json::json!({ "plan": tree });
+                        println!("{}", serde_json::to_string_pretty(&plan).into_diagnostic()?);
+                    } else if !out.v2() {
+                        print!("{tree}");
+                    }
+                    return Ok(());
                 }
+                let mut emit = |event: kurin::Event| {
+                    if out.v2() {
+                        return;
+                    }
+                    if out.json_enabled() {
+                        println!("{}", kurin::render::event_json_line(&event));
+                    }
+                };
+                kurin::upgrade::execute(plan, &pool, &run, &mut emit).await
             }
             .await;
             op.finish(&result);

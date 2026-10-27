@@ -20,7 +20,7 @@
 | WP-10 PlanBuilder / NodeSel | done | 见提交 | 无（快照零变化） | 无 | Phase/PlanBuilder/NodeSel/OpKind；移除 petgraph；保留既有阶段标签错位待 WP-11/12 修正 |
 | WP-11 DAG 执行器 | done | 见提交 | CLI sysctl-failure 快照新增 blocked skip 行 | tier1/tier2/tier3 全量 | 入度表 + 就绪队列；全局 32/节点 4；Strict/BestEffort；rolling；取消；计划指纹 |
 | WP-12 删除改为计划 | done | 见提交 | 新增 8 个 teardown 计划快照 | `just tier1-k3s`、`e2e/tier1/k3s-delete.sh`、tier2 删 worker、tier3 删集群 | 全部步骤 BestEffort；锚点不可达仍清理；`--dry-run [--check]` |
-| WP-13 升级改为计划 | todo | | | `just tier2-upgrade-minor`、`e2e/tier2/upgrade-offline.sh` | |
+| WP-13 升级改为计划 | done | 见提交 | 新增 3 个 upgrade 计划快照 | `just tier2-upgrade-minor`、`e2e/tier2/upgrade-offline.sh` | 每节点任务链 + rolling；drain 失败阻塞后续节点/批次；dry-run 输出计划树 |
 | WP-14 kurin-ops | todo | | | `just tier2-certs`、`just tier2-status`、`just tier1-k3s-ops` | |
 | WP-15 Component（一） | done | 见提交 | 无（快照零变化） | 无 | Component trait/registry；os/runtime/distro 七个组件；`PlanBuilder::add_track` 保持 per-node 布局 |
 | WP-16 Component（二）与能力表 | todo | | | `just tier1-offline`、`just tier3-external-lb` | |
@@ -81,6 +81,7 @@
 
 - WP-00：`ScriptedSession` 在 `(exit, stdout, stderr)` 之外增加了「命令已执行但传输中断」的应答与副作用文件，用于覆盖 `Outcome::Unknown → 重新探测` 路径；`cli_output` 快照对任务耗时与阶段内行序做归一化（并发完成顺序不在 v1 契约内）。
 - WP-15：为保持快照的 per-node 任务布局，`PlanBuilder` 增加 `add_track`（phase 内按 track/node/调用序重排）；k3s 校验规则移入 `distro/k3s`，错误文本逐字节一致。
+- WP-13：首个控制面现在也 cordon/drain/ready-gate/uncordon；`restart-kubelet` 失败严格中止；`preflight/artifacts/addons` 空阶段保留；`upgrade --resume` CLI 开关未加（执行器已带指纹）。
 - WP-12：teardown 步骤行仍由任务自身 tracing 输出（成功格式与旧版一致）；`local-state-cleanup` 使用 `local` 伪节点；delete cluster 仍只处理 worker+control-plane；不可达节点不再中断整个删除。
 - WP-11：取消由 `OpSession::finish` 发布唯一 `OpFinished{Cancelled}`；BestEffort 仍发 v1 `TaskFailed` 并额外发 v2 `TaskWarn`；多失败错误文本不再带 stage 名。
 - WP-10：为保持快照逐字节一致，`plan_os`/`plan_runtime`/`plan_images` 接收 `&Node` 并按节点交错；k3s 分支集中在 `plan_k3s`；现有阶段标签错位（kubeadm-init 在 vip 等）保留并加注释。
@@ -103,6 +104,7 @@
 （随 WP 完成追加）
 
 - WP-15：纯重构，快照零变化；回归 `just tier1`/`tier2` 即可。
+- WP-13：`just tier2-upgrade-minor`、`e2e/tier2/upgrade-offline.sh`。
 - WP-12：`just tier1-k3s`（含 delete）、`e2e/tier1/k3s-delete.sh`、tier2 删除 worker、tier3 删除集群。
 - WP-11：`just tier1 && just tier1-test && just tier1-down`、`just tier2 ...`、`just tier3 ...`（执行器最高风险，必须全量回归）。
 - WP-10：结构性重构，快照零变化；回归 `just tier1`/`tier2` 即可。

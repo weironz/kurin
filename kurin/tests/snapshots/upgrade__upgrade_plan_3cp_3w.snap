@@ -1,0 +1,71 @@
+---
+source: kurin/tests/upgrade.rs
+expression: render_plan(&plan)
+---
+├── stage: discover (6 tasks)
+│   ├── discover/facts@cp1 :: arch=amd64 os=? cpu=0 mem=0MiB
+│   ├── discover/facts@cp2 :: arch=amd64 os=? cpu=0 mem=0MiB
+│   ├── discover/facts@cp3 :: arch=amd64 os=? cpu=0 mem=0MiB
+│   ├── discover/facts@w1 :: arch=amd64 os=? cpu=0 mem=0MiB
+│   ├── discover/facts@w2 :: arch=amd64 os=? cpu=0 mem=0MiB
+│   └── discover/facts@w3 :: arch=amd64 os=? cpu=0 mem=0MiB
+├── stage: preflight (0 tasks)
+├── stage: artifacts (0 tasks)
+├── stage: first-cp (8 tasks)
+│   ├── version-check/version-check@cp1 :: check cp1 kubelet version (target v1.33.13)
+│   ├── cordon/cordon@cp1 :: cordon cp1
+│   ├── drain/drain@cp1 :: drain cp1 (via cp1)
+│   ├── install-bins/install-bins@cp1 :: install kubeadm/kubelet/kubectl v1.33.13 on cp1
+│   ├── kubeadm-upgrade/kubeadm-upgrade@cp1 :: kubeadm upgrade apply v1.33.13 on cp1
+│   ├── restart-kubelet/restart-kubelet@cp1 :: restart kubelet on cp1
+│   ├── ready-gate/ready-gate@cp1 :: wait for cp1 to be Ready
+│   └── uncordon/uncordon@cp1 :: uncordon cp1
+├── stage: control-plane (16 tasks)
+│   ├── version-check/version-check@cp2 :: check cp2 kubelet version (target v1.33.13)
+│   ├── cordon/cordon@cp2 :: cordon cp2
+│   ├── drain/drain@cp2 :: drain cp2 (via cp1)
+│   ├── install-bins/install-bins@cp2 :: install kubeadm/kubelet/kubectl v1.33.13 on cp2
+│   ├── kubeadm-upgrade/kubeadm-upgrade@cp2 :: kubeadm upgrade node on cp2
+│   ├── restart-kubelet/restart-kubelet@cp2 :: restart kubelet on cp2
+│   ├── ready-gate/ready-gate@cp2 :: wait for cp2 to be Ready
+│   ├── uncordon/uncordon@cp2 :: uncordon cp2
+│   ├── version-check/version-check@cp3 :: check cp3 kubelet version (target v1.33.13)
+│   ├── cordon/cordon@cp3 :: cordon cp3
+│   ├── drain/drain@cp3 :: drain cp3 (via cp1)
+│   ├── install-bins/install-bins@cp3 :: install kubeadm/kubelet/kubectl v1.33.13 on cp3
+│   ├── kubeadm-upgrade/kubeadm-upgrade@cp3 :: kubeadm upgrade node on cp3
+│   ├── restart-kubelet/restart-kubelet@cp3 :: restart kubelet on cp3
+│   ├── ready-gate/ready-gate@cp3 :: wait for cp3 to be Ready
+│   └── uncordon/uncordon@cp3 :: uncordon cp3
+├── stage: workers (24 tasks)
+│   ├── version-check/version-check@w1 :: check w1 kubelet version (target v1.33.13)
+│   ├── cordon/cordon@w1 :: cordon w1
+│   ├── drain/drain@w1 :: drain w1 (via cp1)
+│   ├── install-bins/install-bins@w1 :: install kubeadm/kubelet/kubectl v1.33.13 on w1
+│   ├── kubeadm-upgrade/kubeadm-upgrade@w1 :: kubeadm upgrade node on w1
+│   ├── restart-kubelet/restart-kubelet@w1 :: restart kubelet on w1
+│   ├── ready-gate/ready-gate@w1 :: wait for w1 to be Ready
+│   ├── uncordon/uncordon@w1 :: uncordon w1
+│   ├── version-check/version-check@w2 :: check w2 kubelet version (target v1.33.13)
+│   ├── cordon/cordon@w2 :: cordon w2
+│   ├── drain/drain@w2 :: drain w2 (via cp1)
+│   ├── install-bins/install-bins@w2 :: install kubeadm/kubelet/kubectl v1.33.13 on w2
+│   ├── kubeadm-upgrade/kubeadm-upgrade@w2 :: kubeadm upgrade node on w2
+│   ├── restart-kubelet/restart-kubelet@w2 :: restart kubelet on w2
+│   ├── ready-gate/ready-gate@w2 :: wait for w2 to be Ready
+│   ├── uncordon/uncordon@w2 :: uncordon w2
+│   ├── version-check/version-check@w3 :: check w3 kubelet version (target v1.33.13)
+│   ├── cordon/cordon@w3 :: cordon w3
+│   ├── drain/drain@w3 :: drain w3 (via cp1)
+│   ├── install-bins/install-bins@w3 :: install kubeadm/kubelet/kubectl v1.33.13 on w3
+│   ├── kubeadm-upgrade/kubeadm-upgrade@w3 :: kubeadm upgrade node on w3
+│   ├── restart-kubelet/restart-kubelet@w3 :: restart kubelet on w3
+│   ├── ready-gate/ready-gate@w3 :: wait for w3 to be Ready
+│   └── uncordon/uncordon@w3 :: uncordon w3
+├── stage: addons (0 tasks)
+└── stage: post (1 tasks)
+    └── post/summary@cp1 :: print the post-upgrade node table
+
+rolling groups:
+- max_parallel=1 [version-check/version-check@cp2, cordon/cordon@cp2, drain/drain@cp2, install-bins/install-bins@cp2, kubeadm-upgrade/kubeadm-upgrade@cp2, restart-kubelet/restart-kubelet@cp2, ready-gate/ready-gate@cp2, uncordon/uncordon@cp2, version-check/version-check@cp3, cordon/cordon@cp3, drain/drain@cp3, install-bins/install-bins@cp3, kubeadm-upgrade/kubeadm-upgrade@cp3, restart-kubelet/restart-kubelet@cp3, ready-gate/ready-gate@cp3, uncordon/uncordon@cp3]
+- max_parallel=1 [version-check/version-check@w1, cordon/cordon@w1, drain/drain@w1, install-bins/install-bins@w1, kubeadm-upgrade/kubeadm-upgrade@w1, restart-kubelet/restart-kubelet@w1, ready-gate/ready-gate@w1, uncordon/uncordon@w1, version-check/version-check@w2, cordon/cordon@w2, drain/drain@w2, install-bins/install-bins@w2, kubeadm-upgrade/kubeadm-upgrade@w2, restart-kubelet/restart-kubelet@w2, ready-gate/ready-gate@w2, uncordon/uncordon@w2, version-check/version-check@w3, cordon/cordon@w3, drain/drain@w3, install-bins/install-bins@w3, kubeadm-upgrade/kubeadm-upgrade@w3, restart-kubelet/restart-kubelet@w3, ready-gate/ready-gate@w3, uncordon/uncordon@w3]

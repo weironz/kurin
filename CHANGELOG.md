@@ -168,6 +168,18 @@ All notable changes to kurin. Format follows Keep a Changelog; semver.
   runs k3s's own `/usr/local/bin/k3s-uninstall.sh` when present (falling
   back to `systemctl disable --now k3s`), and both commands remove leftover
   CNI devices, the pod-CIDR route and kube-proxy/CNI iptables chains.
+- `kurin upgrade` runs as a plan through the executor (WP-13, ADR-02).
+  Each node is a task chain — `version-check` → `cordon` → `drain` →
+  `install-bins` → `kubeadm-upgrade` (first control plane `apply`, the rest
+  `node`) → `restart-kubelet` → `ready-gate` → `uncordon`. The first
+  control plane runs alone, the remaining control planes roll one at a
+  time, and workers roll in `--batch` groups. `upgrade --dry-run` now
+  prints the plan tree (the current → target version header is unchanged),
+  `--offline` reuses the same plan with the bundle as the artifact source,
+  and nodes already at the target are `InSync` (no cordon, drain, install
+  or restart). A failed drain still aborts the node and blocks every later
+  node/batch, and never uncordons; `--force-drain-failure` keeps the old
+  warn-and-continue behavior.
 
 ### Fixed
 - `kurin upgrade`: a failed `kubectl drain` now aborts that node's upgrade
