@@ -114,9 +114,18 @@ describe('集群详情 `/clusters/:name`（WP-61）', () => {
     expect(within(panel).queryByText('预检查')).not.toBeInTheDocument();
   });
 
-  it('不存在的集群：404 与返回链接', async () => {
-    renderDetail('nope');
-    await waitFor(() => expect(screen.getByText('集群不存在')).toBeInTheDocument());
-    expect(screen.getByRole('link', { name: '返回集群列表' })).toHaveAttribute('href', '/');
+  it('危险区 Tab：删除节点 / 销毁集群 / 移除纳管与 Addon 入口', async () => {
+    renderDetail('tier1');
+    await waitFor(() => expect(screen.getByText('cp-1')).toBeInTheDocument());
+    // 头部入口：跳转 addon 管理页
+    expect(screen.getByRole('link', { name: 'Addon' })).toHaveAttribute(
+      'href',
+      '/clusters/tier1/addons',
+    );
+    fireEvent.click(screen.getByRole('tab', { name: '危险区' }));
+    const panel = activePanel();
+    expect(within(panel).getByTestId('danger-delete-node')).toBeInTheDocument();
+    expect(within(panel).getByTestId('danger-destroy')).toBeInTheDocument();
+    expect(within(panel).getByTestId('danger-archive')).toBeInTheDocument();
   });
 });

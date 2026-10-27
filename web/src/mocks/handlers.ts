@@ -571,8 +571,11 @@ const mockRegistered = new Set<string>();
 const mockConfigs = new Map<string, string>();
 const mockRevs = new Map<string, number>();
 const mockWizardOps = new Map<string, Record<string, unknown>>();
+/** 每个集群的已安装 addon 清单（WP-64：install/remove 会改它）。 */
+const mockInstalledAddons = new Map<string, Record<string, unknown>>();
+/** 已归档的集群（archive handler 写入，409 语义由服务端持有，这里简化为幂等成功）。 */
+const mockArchived = new Set<string>();
 let mockOpSeq = 1;
-
 /** 已建立会话的标记（测试与 dev 都从无 cookie 开始）。 */
 let sessionEstablished = false;
 
@@ -582,6 +585,8 @@ export function resetSessionState(): void {
   mockConfigs.clear();
   mockRevs.clear();
   mockWizardOps.clear();
+  mockInstalledAddons.clear();
+  mockArchived.clear();
   mockOpSeq = 1;
 }
 
@@ -648,7 +653,10 @@ export const handlers = [
         { status: 404 },
       );
     }
-    return HttpResponse.json(detail);
+    // WP-64：archive 后 lifecycle 变为 archived（采集与操作都会停）。
+    return HttpResponse.json(
+      mockArchived.has(name) ? { ...detail, lifecycle: 'archived' } : detail,
+    );
   }),
 
   // 操作列表
@@ -869,7 +877,16 @@ export const handlers = [
   http.post('/api/v1/clusters/:name/operations', async ({ request, params }) => {
     if (!sessionEstablished) return unauthorized();
     const name = params['name'] as string;
-    const body = (await request.json()) as { kind?: string };
+    const body = (await request.json()) as { kind?: string; confirm?: string };
+    if (
+      (body.kind === 'delete-node' || body.kind === 'delete-cluster') &&
+      body.confirm !== name
+    ) {
+      return HttpResponse.json(
+        { code: 'invalid-request', message: `破坏性操作需要 confirm 字段等于集群名 "${name}"` },
+        { status: 400 },
+      );
+    }
     const id = `01JDYWIZARD${String(mockOpSeq++).padStart(6, '0')}`;
     const record = {
       id,
@@ -939,5 +956,105 @@ export const handlers = [
       },
     });
     return HttpResponse.json({ operation: id, state: 'succeeded', cluster: name }, { status: 202 });
+  }),
+
+  // ── WP-64：已安装清单 / addon 操作 / archive ──
+
+  // GET /clusters/{name}/addons：快照里的清单（install/remove 会更新 mock 状态）。
+  http.get('/api/v1/clusters/:name/addons', ({ params }) => {
+    if (!sessionEstablished) return unauthorized();
+    const name = params['name'] as string;
+    const addons = mockInstalledAddons.get(name) ?? {};
+    const empty = Object.keys(addons).length === 0;
+    return HttpResponse.json({
+      cluster: name,
+      addons,
+      note: empty ? '集群还没有 addon 记录（或尚未采集）' : '',
+    });
+  }),
+
+  // POST /clusters/{name}/addons：安装 → 202 + 操作回执。
+  http.post('/api/v1/clusters/:name/addons', async ({ request, params }) => {
+    if (!sessionEstablished) return unauthorized();
+    const name = params['name'] as string;
+    const body = (await request.json()) as { addon?: string; version?: string };
+    const addons = mockInstalledAddons.get(name) ?? {};
+    addons[body.addon ?? ''] = {
+      version: body.version ?? '0.0.0',
+      status: 'installed',
+    };
+    mockInstalledAddons.set(name, addons);
+    const id = `01JDYADDONS${String(mockOpSeq++).padStart(5, '0')}`;
+    return HttpResponse.json(
+      { operation: id, state: 'queued', cluster: name },
+      { status: 202 },
+    );
+  }),
+
+  // PUT /clusters/{name}/addons：升级 → 202 + 操作回执。
+  http.put('/api/v1/clusters/:name/addons', async ({ request, params }) => {
+    if (!sessionEstablished) return unauthorized();
+    const name = params['name'] as string;
+    const body = (await request.json()) as { addon?: string; version?: string };
+    const addons = mockInstalledAddons.get(name) ?? {};
+    if (addons[body.addon ?? ''] == null) {
+      return HttpResponse.json(
+        { code: 'not-found', message: `addon ${body.addon} 未安装` },
+        { status: 404 },
+      );
+    }
+    addons[body.addon ?? ''] = { version: body.version ?? '0.0.0', status: 'installed' };
+    const id = `01JDYADDONS${String(mockOpSeq++).padStart(5, '0')}`;
+    return HttpResponse.json(
+      { operation: id, state: 'queued', cluster: name },
+      { status: 202 },
+    );
+  }),
+
+  // DELETE /clusters/{name}/addons：卸载（confirm 必须等于集群名）。
+  http.delete('/api/v1/clusters/:name/addons', async ({ request, params }) => {
+    if (!sessionEstablished) return unauthorized();
+    const name = params['name'] as string;
+    const body = (await request.json()) as { addon?: string; confirm?: string };
+    if (body.confirm !== name) {
+      return HttpResponse.json(
+        { code: 'invalid-request', message: `卸载 addon 需要 confirm 字段等于集群名 "${name}"` },
+        { status: 400 },
+      );
+    }
+    const addons = mockInstalledAddons.get(name) ?? {};
+    if (addons[body.addon ?? ''] == null) {
+      return HttpResponse.json(
+        { code: 'not-found', message: `addon ${body.addon} 未安装` },
+        { status: 404 },
+      );
+    }
+    delete addons[body.addon ?? ''];
+    const id = `01JDYADDONS${String(mockOpSeq++).padStart(5, '0')}`;
+    return HttpResponse.json(
+      { operation: id, state: 'queued', cluster: name },
+      { status: 202 },
+    );
+  }),
+
+  // POST /clusters/{name}/archive：移除纳管（有活动操作时 409）。
+  http.post('/api/v1/clusters/:name/archive', ({ params }) => {
+    if (!sessionEstablished) return unauthorized();
+    const name = params['name'] as string;
+    const detail = mockClusterDetails[name];
+    if (detail == null) {
+      return HttpResponse.json(
+        { code: 'not-found', message: `集群 ${name} 不存在` },
+        { status: 404 },
+      );
+    }
+    if (detail.activeOperation != null) {
+      return HttpResponse.json(
+        { code: 'conflict', message: `集群有活动操作 ${detail.activeOperation.id}，不能移除纳管` },
+        { status: 409 },
+      );
+    }
+    mockArchived.add(name);
+    return HttpResponse.json({ name, lifecycle: 'archived' });
   }),
 ];

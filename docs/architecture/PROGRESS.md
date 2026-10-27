@@ -139,7 +139,9 @@
 - WP-39：签名包校验、篡改 blob 拒绝、未签名包在 signature 模式拒绝（`cargo test -p kurin-artifact --test transfer`）；CI 工作流需在 tag 上人工验证。
 - WP-49：`just tier3-registry zot`、`docker-registry`、`external`（external 指向 zot）。
 - WP-63：tier1 真实 create 过程中刷新页面，确认日志从断点继续；`pnpm --dir web test:e2e`。
+- WP-64：Playwright `addons.spec.ts` 覆盖安装/卸载与三个危险操作；tier1 页面安装/卸载 metrics-server。
 - WP-62：Playwright `wizard.spec.ts` 在 mock 后端走完 9 步并提交；tier1 真实创建。
+- WP-64：addon 操作的 `values` 由服务端写入 `[addons.<name>.values]`（WP-54 遗漏）；`POST /clusters/{name}/archive` 为 WP-54 遗漏的端点，WP-64 补齐。
 - WP-55：`just release-musl` 后 `kurin serve` 打开页面；`just ts-bindings` 漂移测试。
 - WP-54：tier1 上 `/nodes/probe` 真实节点、`/addons` 安装后采集、`/packages/create-base` → push 到本地 zot。
 - WP-48：`just tier1-cilium`、`e2e/tier1/kube-ovn.sh`、`just tier1-cni-takeover cilium|kube-ovn`、`just tier1-offline-cni cilium`。
@@ -161,7 +163,9 @@
 - WP-39：签名包校验、篡改 blob 拒绝、未签名包在 signature 模式拒绝（`cargo test -p kurin-artifact --test transfer`）；CI 工作流需在 tag 上人工验证。
 - WP-49：`just tier3-registry zot`、`docker-registry`、`external`（external 指向 zot）。
 - WP-63：tier1 真实 create 过程中刷新页面，确认日志从断点继续；`pnpm --dir web test:e2e`。
+- WP-64：Playwright `addons.spec.ts` 覆盖安装/卸载与三个危险操作；tier1 页面安装/卸载 metrics-server。
 - WP-62：Playwright `wizard.spec.ts` 在 mock 后端走完 9 步并提交；tier1 真实创建。
+- WP-64：addon 操作的 `values` 由服务端写入 `[addons.<name>.values]`（WP-54 遗漏）；`POST /clusters/{name}/archive` 为 WP-54 遗漏的端点，WP-64 补齐。
 - WP-55：`just release-musl` 后 `kurin serve` 打开页面；`just ts-bindings` 漂移测试。
 - WP-54：tier1 上 `/nodes/probe` 真实节点、`/addons` 安装后采集、`/packages/create-base` → push 到本地 zot。
 - WP-48：`just tier1-cilium`、`e2e/tier1/kube-ovn.sh`、`just tier1-cni-takeover cilium|kube-ovn`、`just tier1-offline-cni cilium`。

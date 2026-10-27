@@ -440,14 +440,6 @@ export interface AddonCatalogResponse {
   addons: AddonCatalogEntry[];
 }
 
-/** `GET /clusters/{name}/addons` 已装项。 */
-export interface InstalledAddon {
-  name: string;
-  version: string;
-  status: 'installed' | 'failed' | 'unknown';
-  valuesSummary?: string;
-}
-
 /* ------------------------------ 包 (§7, M3) ------------------------------- */
 
 /** `GET /packages` 的一行（WP-54 `PackageView`，snake_case）。 */

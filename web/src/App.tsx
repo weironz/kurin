@@ -30,6 +30,7 @@ function useSession() {
 const ClustersPage = lazy(() => import('./pages/ClustersPage'));
 const ClusterDetailPage = lazy(() => import('./pages/ClusterDetailPage'));
 const NewClusterPage = lazy(() => import('./wizard/WizardPage'));
+const AddonsPage = lazy(() => import('./pages/AddonsPage'));
 const OperationsPage = lazy(() => import('./pages/OperationsPage'));
 const OperationDetailPage = lazy(() => import('./pages/OperationDetailPage'));
 const PackagesPage = lazy(() => import('./pages/PackagesPage'));
@@ -79,6 +80,7 @@ export function App() {
               <Route path="clusters/new" element={lazily(NewClusterPage)} />
               <Route path="clusters/:name" element={lazily(ClusterDetailPage)} />
               <Route path="operations" element={lazily(OperationsPage)} />
+              <Route path="clusters/:name/addons" element={lazily(AddonsPage)} />
               <Route path="operations/:id" element={lazily(OperationDetailPage)} />
               <Route path="packages" element={lazily(PackagesPage)} />
               <Route path="about" element={lazily(AboutPage)} />

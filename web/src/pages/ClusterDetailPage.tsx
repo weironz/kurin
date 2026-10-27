@@ -38,6 +38,7 @@ import {
   operationStateColor,
   operationStateLabel,
 } from '../utils/operation';
+import { ClusterDangerZone } from './ClusterDangerZone';
 
 /* ------------------------- 节点：期望 vs 观测合并 ------------------------- */
 
@@ -402,9 +403,10 @@ export default function ClusterDetailPage() {
       <Typography.Title level={3} style={{ marginBottom: 4 }}>
         {t('page.clusterDetail.title')}
       </Typography.Title>
-      <Space align="center" style={{ marginBottom: 8 }}>
+      <Space align="center" style={{ marginBottom: 8 }} wrap>
         <Typography.Text code>{name}</Typography.Text>
         <Typography.Text type="secondary">{t('page.clusterDetail.description')}</Typography.Text>
+        <Link to={`/clusters/${encodeURIComponent(name)}/addons`}>{t('addons.link')}</Link>
       </Space>
       {isLoading ? (
         <Skeleton active title={false} paragraph={{ rows: 8 }} />
@@ -465,6 +467,11 @@ export default function ClusterDetailPage() {
                 key: 'operations',
                 label: t('clusterDetail.tab.operations'),
                 children: <OperationsTab name={name} />,
+              },
+              {
+                key: 'danger',
+                label: t('clusterDetail.tab.danger'),
+                children: <ClusterDangerZone detail={data} />,
               },
             ]}
           />
