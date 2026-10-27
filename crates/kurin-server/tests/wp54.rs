@@ -600,7 +600,7 @@ async fn addon_install_submits_an_operation() {
         Method::POST,
         "/api/v1/clusters/addons/addons",
         &cookie,
-        json!({ "addon": "metrics-server" }),
+        json!({ "addon": "metrics-server", "values": ["replicas=2"] }),
     );
     let response = send(app.clone(), request).await;
     assert_eq!(response.status(), StatusCode::ACCEPTED);
@@ -608,7 +608,7 @@ async fn addon_install_submits_an_operation() {
     let operation = body["operation"].as_str().expect("operation id");
     let record = state.store().get_operation(operation).unwrap().unwrap();
     assert_eq!(record.kind, "addon-install");
-    // The stored revision now enables the addon.
+    // The stored revision now enables the addon with the submitted values.
     let revision = state.store().current_revision("addons").unwrap().unwrap();
     assert!(
         revision.toml.contains("[addons.metrics-server]"),
@@ -616,6 +616,11 @@ async fn addon_install_submits_an_operation() {
         revision.toml
     );
     assert!(revision.toml.contains("enabled = true"));
+    assert!(
+        revision.toml.contains("replicas = 2"),
+        "revision missing the submitted values: {}",
+        revision.toml
+    );
 }
 
 #[tokio::test]

@@ -1000,6 +1000,23 @@ async fn submit_addon_op(
         _ => unreachable!(),
     }
 
+    // `values` are `key=value` assignments from the UI's schema form:
+    // write them under `[addons.<name>.values]` so the operation renders
+    // exactly the submitted values (the engine reads the revision).
+    for assignment in &body.values {
+        let (path, raw) = kurin_config::quick::patch::split_assignment(assignment)
+            .map_err(|e| ApiError::BadRequest(e.to_string()))?;
+        if path.is_empty() {
+            return Err(ApiError::BadRequest("addon values 的键不能为空".into()));
+        }
+        kurin_config::quick::patch::set_path(
+            &mut doc,
+            &format!("addons.{}.values.{path}", body.addon),
+            kurin_config::quick::patch::parse_literal(raw),
+        )
+        .map_err(|e| ApiError::BadRequest(e.to_string()))?;
+    }
+
     // Validate the edited document before anything touches the cluster.
     let document = doc.to_string();
     let edited = load_spec(&document)?;
