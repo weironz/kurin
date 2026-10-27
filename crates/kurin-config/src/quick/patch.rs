@@ -1049,3 +1049,49 @@ mod tests {
         assert!(text.contains("password = { env = \"W1_PASS\" }"), "{text}");
     }
 }
+
+#[cfg(test)]
+mod zone_regression {
+    use super::*;
+
+    #[test]
+    fn zone_patch_accepts_cn_and_rejects_global() {
+        let mut patch = ConfigPatch {
+            name: Some("x".into()),
+            zone: Some("cn".into()),
+            ssh: SshPatch {
+                user: Some("root".into()),
+                auth: Some(SshAuthPatch::PrivateKey {
+                    key_path: "/tmp/key".into(),
+                    passphrase_env: None,
+                }),
+                ..Default::default()
+            },
+            nodes: vec![PatchNode {
+                name: Some("n1".into()),
+                address: "10.0.0.1".parse().unwrap(),
+                role: crate::config::NodeRole::ControlPlane,
+                internal_address: None,
+                user: None,
+                port: None,
+                labels: Default::default(),
+                auth: None,
+            }],
+            ..ConfigPatch::default()
+        };
+        let merged = merge(None, &patch).expect("merge");
+        assert!(
+            merged.document.contains("version = \"v1alpha2\""),
+            "document lost the version: {}",
+            merged.document
+        );
+        assert!(merged.document.contains("zone = \"cn\""));
+
+        patch.zone = Some("global".into());
+        let error = merge(None, &patch).expect_err("global is not a stored zone");
+        assert!(
+            error.to_string().contains("only accepts \"cn\""),
+            "unexpected error: {error}"
+        );
+    }
+}

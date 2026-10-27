@@ -262,8 +262,11 @@ pub(crate) async fn render_config(
     let document = match kurin_config::quick::merge(None, &patch) {
         Ok(merged) => merged.document,
         Err(error) => match document_from(&error) {
-            Some(document) => document,
-            None => return Err(diagnostics_from(&error)),
+            // Some errors (e.g. `artifacts.zone` validation) carry an empty
+            // source text; re-parsing "" would mask the real hint as a
+            // bogus "missing version" diagnostic.
+            Some(document) if !document.trim().is_empty() => document,
+            _ => return Err(diagnostics_from(&error)),
         },
     };
     let (valid, diagnostics) = match load_spec(&document) {
