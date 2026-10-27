@@ -2411,6 +2411,7 @@ dependencies = [
  "bcrypt",
  "futures-util",
  "http",
+ "insta",
  "kurin-core",
  "miette",
  "oci-client",

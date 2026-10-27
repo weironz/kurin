@@ -2,24 +2,32 @@
 //! keepalived on nodes whose role is `lb`. `external-endpoint` mode
 //! installs nothing (the operator owns the LB); its only cluster effect is
 //! the API endpoint, which the plan already points at `ha.vip`.
+//!
+//! Offline runs install the daemons from the os package's repository
+//! tar uploaded to `/opt/kurin/repo/<id>` (WP-38, 04 §3.4).
+
+use std::sync::Arc;
 
 use kurin_config::{Cluster, Node};
 use miette::Result;
 
+use crate::tasks::os_repo::NodeOsRepo;
 use crate::tasks::prepare::sha256_hex;
 use crate::templates;
 use kurin_core::engine::{Drift, Outcome, Session, Stage, Task};
+use kurin_core::run::RunContext;
 
 const HAPROXY_CFG: &str = "/etc/haproxy/haproxy.cfg";
 const KEEPALIVED_CFG: &str = "/etc/keepalived/keepalived.conf";
 const HAPROXY_STATS_SOCKET: &str = "/var/run/haproxy.sock";
-
 pub struct ExternalLb {
     node_name: String,
+    node: Node,
     priority: u16,
     haproxy: String,
     keepalived: String,
     rendered_hash: String,
+    run: Arc<RunContext>,
 }
 
 impl ExternalLb {
@@ -30,7 +38,12 @@ impl ExternalLb {
         &self.keepalived
     }
 
-    pub fn new(cluster: &Cluster, node: &Node, ordinal: usize) -> Result<Self> {
+    pub fn new(
+        cluster: &Cluster,
+        node: &Node,
+        ordinal: usize,
+        run: &Arc<RunContext>,
+    ) -> Result<Self> {
         let vip = cluster
             .vip
             .ok_or_else(|| miette::miette!("ha.mode=kurin-lb requires ha.vip"))?;
@@ -80,10 +93,12 @@ impl ExternalLb {
             sha256_hex(format!("{}|{}", haproxy.trim_end(), keepalived.trim_end()).as_bytes());
         Ok(Self {
             node_name: node.name.clone(),
+            node: node.clone(),
             priority: 200u16.saturating_sub(ordinal as u16 * 20),
             haproxy,
             keepalived,
             rendered_hash,
+            run: Arc::clone(run),
         })
     }
 
@@ -136,22 +151,37 @@ impl Task for ExternalLb {
     }
 
     async fn apply(&self, session: &dyn Session) -> Result<Outcome> {
-        // Packages are distro-owned (not our binary-first set): apt/dnf is
-        // the documented escape hatch for OS-provided daemons.
-        let out = session
-            .exec(
-                "if command -v apt-get >/dev/null; then \
-                   DEBIAN_FRONTEND=noninteractive apt-get update -qq && \
-                   DEBIAN_FRONTEND=noninteractive apt-get install -y -qq haproxy keepalived; \
-                 elif command -v dnf >/dev/null; then dnf install -y -q haproxy keepalived; \
-                 else echo 'no package manager for haproxy/keepalived' >&2; exit 1; fi",
-            )
-            .await?;
-        if !out.ok() {
+        // Packages are distro-owned (not our binary-first set): online
+        // runs use apt/dnf (the documented escape hatch for OS-provided
+        // daemons); offline runs install from the os package's
+        // repository (WP-38).
+        let install_ok = if self.run.sources.is_offline() {
+            let os = self
+                .run
+                .facts_snapshot()
+                .get(&self.node_name)
+                .map(|f| f.os.clone())
+                .unwrap_or_default();
+            let repo = NodeOsRepo::resolve(&self.run, &self.node, &os).await?;
+            repo.install(session, &["haproxy".to_string(), "keepalived".to_string()])
+                .await?;
+            true
+        } else {
+            session
+                .exec(
+                    "if command -v apt-get >/dev/null; then \
+                       DEBIAN_FRONTEND=noninteractive apt-get update -qq && \
+                       DEBIAN_FRONTEND=noninteractive apt-get install -y -qq haproxy keepalived; \
+                     elif command -v dnf >/dev/null; then dnf install -y -q haproxy keepalived; \
+                     else echo 'no package manager for haproxy/keepalived' >&2; exit 1; fi",
+                )
+                .await?
+                .ok()
+        };
+        if !install_ok {
             return Err(miette::miette!(
-                "haproxy/keepalived install failed on {}: {}",
-                self.node_name,
-                out.stderr.lines().last().unwrap_or("")
+                "haproxy/keepalived install failed on {}",
+                self.node_name
             ));
         }
 
@@ -228,6 +258,14 @@ role = "lb"
         .unwrap()
     }
 
+    fn run() -> Arc<RunContext> {
+        Arc::new(RunContext::new(
+            kurin_core::events::new_op_id(),
+            "t",
+            Default::default(),
+        ))
+    }
+
     #[test]
     fn rendered_configs_end_with_newline() {
         // haproxy refuses a config whose last line lacks LF ("file might
@@ -239,7 +277,7 @@ role = "lb"
             .iter()
             .find(|n| n.role == kurin_config::NodeRole::Lb)
             .unwrap();
-        let t = ExternalLb::new(&c, lb, 0).unwrap();
+        let t = ExternalLb::new(&c, lb, 0, &run()).unwrap();
         assert!(
             t.haproxy().ends_with('\n'),
             "haproxy config must end with LF"

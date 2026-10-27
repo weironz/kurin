@@ -247,7 +247,7 @@ impl Component for KernelDeps {
         for node in b.nodes().k8s().collect::<Vec<_>>() {
             b.add_track(
                 prepare,
-                Arc::new(tasks::kernel_deps::KernelDeps::new(node)),
+                Arc::new(tasks::kernel_deps::KernelDeps::new(node, b.run())),
                 tracks::OS_K8S_MEMBER,
             );
         }

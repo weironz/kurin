@@ -161,7 +161,7 @@ impl Component for KurinLb {
             return Ok(());
         }
         for (ordinal, lb) in b.nodes().role(NodeRole::Lb).enumerate() {
-            let task = tasks::external_lb::ExternalLb::new(b.cluster(), lb, ordinal)?;
+            let task = tasks::external_lb::ExternalLb::new(b.cluster(), lb, ordinal, b.run())?;
             let phase = b.phase("images");
             b.add(phase, Arc::new(task));
         }

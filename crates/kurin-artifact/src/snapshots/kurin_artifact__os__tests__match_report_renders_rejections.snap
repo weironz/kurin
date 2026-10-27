@@ -1,0 +1,7 @@
+---
+source: crates/kurin-artifact/src/os.rs
+expression: "report.render(&info(\"rocky\", \"9.4\"), Arch::Amd64)"
+---
+no os package matches rocky 9.4 (amd64)
+  - file:///tmp/os-ubuntu-24.04.tar.zst: ubuntu-24.04 (amd64) — OS mismatch
+  - file:///tmp/os-rocky-9.tar.zst: rocky-9 (arm64) — architecture mismatch

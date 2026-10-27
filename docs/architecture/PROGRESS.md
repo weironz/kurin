@@ -42,7 +42,7 @@
 | WP-35 preload 分发基于包 | done | 见提交 | 新增 package-base 计划快照 | `just tier1-offline` × `oci-layout://`/`file://`/`oci://` | Blob 流式上传 + 单镜像 layout tar；k3s agent images；`--max-upload-parallel` |
 | WP-36 registry 分发与 mirror | done | 见提交 | 计划快照 phase 顺序变化（registry 前移）+ 3 个 mirror 渲染快照 | `e2e/tier3/registry.sh zot`；`KURIN_DISCONNECTED=1 KURIN_BASE_PACKAGE=…` | external registry；controller push；节点按 digest fetch；containerd/CRI-O/k3s mirror；`delivery=auto` |
 | WP-37 离线 CNI 补齐 | done | 见提交 | 能力表快照（kube-ovn offline=bundle） | `just tier1-offline-cni flannel/cilium/kube-ovn` | kube-ovn 两个镜像真实 pin；离线拒绝移除；镜像集由组件 artifacts 派生 |
-| WP-38 OS 依赖包 | todo | | | `e2e/tier1/rocky.sh` 离线变体 | |
+| WP-38 OS 依赖包 | done | 见提交 | 新增 os 包/匹配/安装脚本快照 | `just tier1-rocky-offline` | 容器化 deb/rpm 闭包 + 仓库元数据；节点本地源安装；离线匹配诊断；CI 矩阵；ghcr 镜像核实 |
 | WP-39 签名/SBOM/发布 | done | 见提交 | 无 | 签名包校验/篡改拒绝/未签名拒绝（本地测试） | SBOM referrer；cosign simple-signing（p256）；push/pull 携带 referrer；CI 签名发布工作流 |
 | WP-40 addon.yaml 规范 | done | 见提交 | 无 | 无 | 41 个 addon 专项测试；schema 漂移测试；目录/内嵌/包三种加载；修复 package 文件集两级索引 bug |
 | WP-41 addon 渲染 | done | 见提交 | 新增 4 个渲染快照 | 无（纯本地渲染） | 03 §4.4 上下文；values 合并/校验；秘密脱敏；未声明镜像拒绝 |
@@ -85,6 +85,7 @@
 - WP-16：`storage/*` 标为 online-only（镜像在 bundle 但 bootstrap 不预载，WP-47 接管）；`ha/kube-vip` 镜像 pin 在版本表而非 manifest，标 online-only；`capabilities` 为隐藏命令且恒出 JSON。
 - WP-50：Host 拒绝用 403 `forbidden-host`（§7 清单外）；错误/DTO 采用顶层 `{code,message,diagnostics?}` + camelCase（对齐 WP-60 前端）；默认白名单含 `[::1]`；会话 TTL 24h；新增 `GET /session` 与 `GET /api/v1/healthz`。
 - WP-39：`sigstore` crate 不可用（会引入第二套加密栈/Fulcio/rekor），按 04 §6 预案用 `p256` 实现 cosign simple-signing；新增依赖仅 `p256`（已在依赖图中）。
+- WP-38：04 §4 的 `package create base --with-os` 未实现（os 行来自独立 os 包或 base 自带 os 行）；arm64 容器路径仅由 CI/qemu 覆盖。
 - WP-37：kube-ovn 镜像 pin 取自 Docker Hub 上游 manifest；`--cni all` 的 base 包含全部 CNI 镜像（双架构）。
 - WP-36：`registry` 阶段前移到 `artifacts` 之前（节点需先从仓库取文件），所有计划快照的 phase 顺序随之变化；多架构镜像按上游完整 index 推送；Harbor 仅 kubeadm 轨道。
 - WP-35：上传闸门为 run 级（stage 串行，实际等价）；`--dry-run` 配 `oci://` 源会先拉包做覆盖校验；为 Blob 变体改动了 `kurin-ssh`/core/ops/main。
@@ -129,6 +130,7 @@
 （随 WP 完成追加）
 - WP-39：签名包校验、篡改 blob 拒绝、未签名包在 signature 模式拒绝（`cargo test -p kurin-artifact --test transfer`）；CI 工作流需在 tag 上人工验证。
 - WP-49：`just tier3-registry zot`、`docker-registry`、`external`（external 指向 zot）。
+- WP-38：`just tier1-rocky-offline`（先构建 os 包；或分步 `package create os` + `rocky-offline.sh`）。
 - WP-37：`just bundle` 后 `just tier1-offline-cni flannel`、`cilium`、`kube-ovn`（需 multipass）。
 - WP-36：`e2e/tier3/registry.sh zot`；完全断网 3 节点：`KURIN_DISCONNECTED=1 KURIN_BASE_PACKAGE=oci-layout:///abs/base e2e/tier3/registry.sh zot`。
 - WP-35：`just tier1-offline oci-layout:///tmp/kurin-pkg`、`file:///tmp/kurin-base.tar.zst`、`oci://127.0.0.1:5000/kurin/base:v1.33.1-kubeadm`（三种来源各一次）。
@@ -142,6 +144,7 @@
 - WP-50：`kurin serve` 回环冒烟（一次性登录链接、`/session`、401/403/400、TLS h2）；`cargo clippy -p kurin --features ui`。
 - WP-39：签名包校验、篡改 blob 拒绝、未签名包在 signature 模式拒绝（`cargo test -p kurin-artifact --test transfer`）；CI 工作流需在 tag 上人工验证。
 - WP-49：`just tier3-registry zot`、`docker-registry`、`external`（external 指向 zot）。
+- WP-38：`just tier1-rocky-offline`（先构建 os 包；或分步 `package create os` + `rocky-offline.sh`）。
 - WP-37：`just bundle` 后 `just tier1-offline-cni flannel`、`cilium`、`kube-ovn`（需 multipass）。
 - WP-36：`e2e/tier3/registry.sh zot`；完全断网 3 节点：`KURIN_DISCONNECTED=1 KURIN_BASE_PACKAGE=oci-layout:///abs/base e2e/tier3/registry.sh zot`。
 - WP-35：`just tier1-offline oci-layout:///tmp/kurin-pkg`、`file:///tmp/kurin-base.tar.zst`、`oci://127.0.0.1:5000/kurin/base:v1.33.1-kubeadm`（三种来源各一次）。

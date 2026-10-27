@@ -209,6 +209,16 @@ release ver *title:
 tier1-offline-cni cni="flannel":
     e2e/tier1/offline-cni.sh "{{cni}}" /tmp/kurin-bundle
 
+
+# tier-1 rocky offline (WP-38): base + rocky-9 os package, egress blocked.
+# Builds the os package first (needs docker/podman); override with the
+# env/arg if it was built elsewhere.
+tier1-rocky-offline os="oci-layout:///tmp/kurin-os-rocky9":
+    CARGO_TARGET_DIR=target/os cargo build -p kurin
+    test -d /tmp/kurin-os-rocky9 || target/os/debug/kurin package create os \
+        --target rocky-9 --arch amd64 -o "oci-layout:///tmp/kurin-os-rocky9"
+    e2e/tier1/rocky-offline.sh "{{os}}"
+
 # tier-3 k3s × external-endpoint (3 servers behind a script-managed haproxy)
 tier3-k3s-external-endpoint:
     e2e/tier3/k3s-external-endpoint.sh

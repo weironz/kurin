@@ -136,10 +136,10 @@ pub(crate) fn apply_offline_override(spec: &mut Cluster, value: &str) {
 /// (WP-34 step 3). Both delivery strategies execute from the package:
 /// preload streams payloads to each node (WP-35), registry pushes them
 /// once and lets the nodes fetch (WP-36).
-///
-/// `mutating` is false for `--dry-run` runs, which plan and validate
-/// without touching a node.
-pub(crate) fn validate_payload(
+/// Offline runs additionally require every node to match an os package
+/// (WP-38, 04 §4): `kernel_deps` / `external_lb` install system
+/// packages, so a node with no matching repository cannot converge.
+pub(crate) async fn validate_payload(
     spec: &Cluster,
     facts: &FactsTable,
     payload: &Payload,
@@ -155,6 +155,27 @@ pub(crate) fn validate_payload(
     if !gaps.is_empty() {
         let report = kurin_components::component::coverage::render_gaps(uri, &meta, &gaps);
         return Err(miette::miette!("{}", report.trim_end()));
+    }
+
+    // WP-38: an offline run must find a matching os package for every
+    // node — validation time, not mid-install.
+    if spec.packages.offline_dir.is_some() || spec.packages.base.is_some() {
+        let sources = crate::sources_for(spec)?;
+        for node in &spec.nodes {
+            let Some(node_facts) = facts.get(&node.name) else {
+                continue;
+            };
+            let matched =
+                kurin_artifact::os::resolve(&sources, &node_facts.os, node_facts.arch).await?;
+            if matched.matched.is_none() {
+                return Err(miette::miette!(
+                    "offline install has no os package for node {} ({}): {}",
+                    node.name,
+                    node_facts.os.label(),
+                    matched.render(&node_facts.os, node_facts.arch)
+                ));
+            }
+        }
     }
     Ok(())
 }
@@ -279,13 +300,17 @@ role = "control-plane"
         }
     }
 
-    #[test]
-    fn online_runs_have_nothing_to_validate() {
+    #[tokio::test]
+    async fn online_runs_have_nothing_to_validate() {
         let spec = spec();
         let facts = FactsTable::new();
-        assert!(validate_payload(&spec, &facts, &Payload::Online, true).is_ok());
+        assert!(validate_payload(&spec, &facts, &Payload::Online, true)
+            .await
+            .is_ok());
         // The legacy path is untouched by validation (no behaviour
         // change for old bundles).
-        assert!(validate_payload(&spec, &facts, &Payload::Legacy, true).is_ok());
+        assert!(validate_payload(&spec, &facts, &Payload::Legacy, true)
+            .await
+            .is_ok());
     }
 }

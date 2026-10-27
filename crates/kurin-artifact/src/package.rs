@@ -266,6 +266,7 @@ pub struct PackageBuilder {
     components: Vec<PackageComponent>,
     files: Vec<PackageFile>,
     images: Vec<PackageImage>,
+    os: Vec<PackageOs>,
 }
 
 impl PackageBuilder {
@@ -282,6 +283,7 @@ impl PackageBuilder {
             components: Vec::new(),
             files: Vec::new(),
             images: Vec::new(),
+            os: Vec::new(),
         }
     }
 
@@ -319,6 +321,23 @@ impl PackageBuilder {
     /// Add one image.
     pub fn add_image(&mut self, image: PackageImage) {
         self.images.push(image);
+    }
+
+    /// Add one OS dependency repository (04 §3.4 `os` kind): the repo
+    /// tar joins the arch's file-set manifest as a file layer, and the
+    /// package metadata gains the matching `os` row (WP-38).
+    pub fn add_os_repo(
+        &mut self,
+        os: impl Into<String>,
+        arch: crate::artifact::Arch,
+        file: PackageFile,
+    ) {
+        self.os.push(PackageOs {
+            os: os.into(),
+            arch: arch.as_str().to_string(),
+            digest: file.digest.to_string(),
+        });
+        self.files.push(file);
     }
 
     /// The `kurin-package.json` document this builder will write.
@@ -361,7 +380,7 @@ impl PackageBuilder {
                 })
                 .collect(),
             charts: Vec::new(),
-            os: Vec::new(),
+            os: self.os.clone(),
         }
     }
 
@@ -379,6 +398,14 @@ impl PackageBuilder {
     /// The layout tag: `v<version>-<distribution>` for base packages
     /// (04 §3.4 naming, `kurin/base:v1.33.1-kubeadm`).
     fn layout_tag(&self) -> String {
+        if self.kind == PackageKind::Os {
+            // `kurin/os/rocky-9:2026.10` (04 §3.4): no distribution
+            // suffix on os packages.
+            return self
+                .tag
+                .clone()
+                .unwrap_or_else(|| format!("v{}", self.version));
+        }
         self.tag
             .clone()
             .unwrap_or_else(|| format!("v{}-{}", self.version, self.distribution))
@@ -1176,6 +1203,20 @@ pub fn inspect_summary(source: &PackageSource) -> Result<String, PackageError> {
             image.used_by.join(", ")
         )
         .unwrap();
+    }
+    if !meta.os.is_empty() {
+        writeln!(out, "os:        {}", meta.os.len()).unwrap();
+        for row in &meta.os {
+            let digest = row.digest.trim_start_matches("sha256:");
+            writeln!(
+                out,
+                "  {} ({}) sha256:{}…",
+                row.os,
+                row.arch,
+                &digest[..digest.len().min(12)]
+            )
+            .unwrap();
+        }
     }
     Ok(out)
 }
@@ -2080,5 +2121,51 @@ mod tests {
     #[test]
     fn empty_json_digest_matches_the_spec() {
         assert_eq!(digest_of(EMPTY_JSON).to_string(), EMPTY_JSON_DIGEST);
+    }
+
+    #[test]
+    fn os_package_builder_records_rows_and_tag() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache_dir = tempfile::tempdir().unwrap();
+        let cache = BlobStore::open(cache_dir.path());
+        let payload = b"repo-tar-bytes";
+        let digest = cache.put_bytes(payload).unwrap();
+
+        let mut builder = PackageBuilder::new(PackageKind::Os, "rocky-9", "2026.10", "any")
+            .with_created("2026-10-28T00:00:00Z")
+            .with_kurin(">=0.4.0, <0.6.0");
+        builder.add_os_repo(
+            "rocky-9",
+            crate::artifact::Arch::Amd64,
+            PackageFile {
+                name: "os/rocky-9".into(),
+                kind: ArtifactKind::Binary,
+                version: "2026.10".into(),
+                arch: crate::artifact::Arch::Amd64,
+                digest: digest.clone(),
+                size: payload.len() as u64,
+                title: "os/rocky-9/repo.tar".into(),
+                upstream: "container:rockylinux:9".into(),
+            },
+        );
+        let out = dir.path().join("os");
+        let report = builder
+            .build(&cache, &PackageOutput::Layout(out.clone()))
+            .unwrap();
+        assert_eq!(report.tag, "v2026.10");
+
+        let source = PackageSource::open(&format!("oci-layout://{}", out.display())).unwrap();
+        let meta = source.manifest().unwrap();
+        assert_eq!(meta.kind, PackageKind::Os);
+        assert_eq!(meta.distribution, "any");
+        assert_eq!(meta.os.len(), 1);
+        assert_eq!(meta.os[0].os, "rocky-9");
+        assert_eq!(meta.os[0].arch, "amd64");
+        assert_eq!(meta.os[0].digest, digest.to_string());
+        assert_eq!(meta.artifacts[0].name, "os/rocky-9");
+
+        let summary = inspect_summary(&source).unwrap();
+        assert!(summary.contains("os:        1"), "{summary}");
+        assert!(summary.contains("rocky-9 (amd64)"), "{summary}");
     }
 }

@@ -290,6 +290,25 @@ enum PackageCreateWhat {
         #[arg(short, long)]
         output: String,
     },
+    /// One target OS's dependency-package repository (04 §3.4, WP-38):
+    /// downloaded inside a container of that distro (docker/podman)
+    /// with its repository metadata, for air-gapped system packages.
+    Os {
+        /// Target OS: one of ubuntu-24.04, debian-12, rocky-9.
+        #[arg(long)]
+        target: String,
+        /// Architecture(s) to build for, comma-separated (default: this
+        /// machine's). arm64 downloads run under qemu.
+        #[arg(long)]
+        arch: Option<String>,
+        /// Package version (default: the current month, e.g. 2026.10).
+        #[arg(long)]
+        version: Option<String>,
+        /// Output target: `oci-layout://DIR`, `file://X.tar` or
+        /// `file://X.tar.zst`.
+        #[arg(short, long)]
+        output: String,
+    },
 }
 
 /// Output format of `kurin package list`.
@@ -611,6 +630,12 @@ async fn run(cli: Cli) -> Result<()> {
                     cni,
                     output,
                 } => package_create_base(kubernetes, distribution, arch, cni, output).await,
+                PackageCreateWhat::Os {
+                    target,
+                    arch,
+                    version,
+                    output,
+                } => package_create_os(target, arch, version, output).await,
             },
             PackageWhat::Inspect {
                 source,
@@ -1203,6 +1228,56 @@ async fn package_create_base(
         report.output.display(),
         report.files,
         report.images
+    );
+    eprintln!("index: {}", report.index);
+    eprintln!("sbom:  {}", report.sbom.display());
+    Ok(())
+}
+
+/// `kurin package create os --target … --arch …` (WP-38, 04 §3.4).
+async fn package_create_os(
+    target: String,
+    arch: Option<String>,
+    version: Option<String>,
+    output: String,
+) -> Result<()> {
+    use kurin::os as os_pkg;
+
+    let target = os_pkg::OsTarget::parse(&target).map_err(|e| miette::miette!("{e:?}"))?;
+    let mut arches: Vec<kurin::arch::Arch> = match arch.as_deref() {
+        Some(list) => list
+            .split(',')
+            .map(|a| a.trim())
+            .filter(|a| !a.is_empty())
+            .map(|a| match a {
+                "amd64" | "x86_64" => Ok(kurin::arch::Arch::Amd64),
+                "arm64" | "aarch64" => Ok(kurin::arch::Arch::Arm64),
+                other => Err(miette::miette!("unknown arch {other:?} (amd64|arm64)")),
+            })
+            .collect::<miette::Result<Vec<_>>>()?,
+        None => vec![kurin::arch::Arch::host()?],
+    };
+    arches.dedup();
+
+    let out = kurin::package::PackageOutput::parse(&output)?;
+    let store = kurin::artifact::ArtifactStore::open_default()?;
+    let opts = os_pkg::OsPackage {
+        target,
+        arches,
+        version: version.unwrap_or_else(os_pkg::calver),
+    };
+    let engine = os_pkg::detect_container_engine()
+        .await
+        .map_err(|e| miette::miette!("{e:?}"))?;
+    eprintln!("[package] downloading closure via {engine}");
+    let report = os_pkg::create_os(&store, &opts, &out)
+        .await
+        .map_err(|e| miette::miette!("{e:?}"))?;
+    eprintln!(
+        "package os {} [{}] written to {}",
+        report.tag,
+        opts.target.label(),
+        report.output.display(),
     );
     eprintln!("index: {}", report.index);
     eprintln!("sbom:  {}", report.sbom.display());

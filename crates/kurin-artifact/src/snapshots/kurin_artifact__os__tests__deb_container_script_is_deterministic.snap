@@ -1,0 +1,16 @@
+---
+source: crates/kurin-artifact/src/os.rs
+expression: script
+---
+set -eu
+export DEBIAN_FRONTEND=noninteractive
+apt-get update -qq
+mkdir -p /work/repo/partial
+: > /work/status
+apt-get -y -qq --no-install-recommends \
+-o Dir::State::status=/work/status -o Dir::Cache::archives=/work/repo \
+install --download-only conntrack socat ebtables ipset ipvsadm haproxy keepalived nfs-common
+rm -rf /work/repo/partial
+apt-get install -y -qq --no-install-recommends dpkg-dev >/dev/null
+cd /work/repo
+dpkg-scanpackages -m . > Packages

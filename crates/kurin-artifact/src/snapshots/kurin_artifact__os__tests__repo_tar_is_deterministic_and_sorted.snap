@@ -1,0 +1,21 @@
+---
+source: crates/kurin-artifact/src/os.rs
+expression: names
+---
+[
+    (
+        "a.rpm",
+        0,
+        420,
+    ),
+    (
+        "b.rpm",
+        0,
+        420,
+    ),
+    (
+        "repodata/repomd.xml",
+        0,
+        420,
+    ),
+]

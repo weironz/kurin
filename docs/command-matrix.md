@@ -162,9 +162,17 @@ referrer 形式挂在包 index 上随包传输（WP-39）；`verify --key` 校�
 `--password-env`（或 `~/.docker/config.json`）；`oci://` 里回环地址默认
 HTTP，远程仓库默认 HTTPS，`oci://http://…` 可显式指定。
 
+`kurin package create os --target ubuntu-24.04|debian-12|rocky-9
+[--arch amd64,arm64] [--version 2026.10]`（WP-38）在对应发行版的容器里
+（制作机的 docker/podman，arm64 走 qemu）下载依赖闭包并生成仓库元数据
+（deb 用 `dpkg-scanpackages`，rpm 用 `createrepo_c`），输出为 `os` 包。
+节点侧离线安装：仓库 tar 上传 `/opt/kurin/repo/<id>`，apt 用
+`[trusted=yes] file:` 源、dnf 用 `--repofrompath`，完成后移除临时源。
+离线模式下按 facts 自动匹配；匹配不到是校验期错误。
+
 | | amd64 | arm64 |
 |---|---|---|
-| `package create base -o …` | ✅ | `--arch arm64` |
+| `package create os --target … -o …` | ✅ | `--arch arm64`（qemu） |
 | `package inspect <src> [--manifest] [--sbom]` | ✅ | ✅ |
 | `package verify <src> [--key PUB]` | ✅ | ✅ |
 | `package push <src> <dst>` / `package pull` | ✅ | ✅ |

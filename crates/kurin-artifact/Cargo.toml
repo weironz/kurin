@@ -35,3 +35,4 @@ p256 = { version = "0.14", default-features = false, features = ["ecdsa", "pem",
 [dev-dependencies]
 tempfile.workspace = true
 bcrypt.workspace = true
+insta.workspace = true

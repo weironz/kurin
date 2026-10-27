@@ -1,24 +1,33 @@
 //! prepare/kernel-deps: kernel-space tools kubeadm requires that cannot be
 //! shipped as portable static binaries (conntrack, socat, ebtables, ipset,
 //! ipvsadm). Online: apt/dnf fallback (spec'd escape hatch for kernel deps);
-//! offline bundles carry the .deb payloads — the artifact store first, then
-//! distro install when the store has no package for the target.
+//! offline runs install from the matched os package's repository tar
+//! uploaded to `/opt/kurin/repo/<id>` (WP-38, 04 §3.4).
+
+use std::sync::Arc;
 
 use kurin_config::Node;
 use miette::Result;
 
 use kurin_core::engine::{Drift, Outcome, Session, Stage, Task};
+use kurin_core::run::RunContext;
+
+use crate::tasks::os_repo::NodeOsRepo;
 
 const REQUIRED: &[&str] = &["conntrack", "socat"];
 const RECOMMENDED: &[&str] = &["ebtables", "ipset", "ipvsadm"];
 
 pub struct KernelDeps {
     node: Node,
+    run: Arc<RunContext>,
 }
 
 impl KernelDeps {
-    pub fn new(node: &Node) -> Self {
-        Self { node: node.clone() }
+    pub fn new(node: &Node, run: &Arc<RunContext>) -> Self {
+        Self {
+            node: node.clone(),
+            run: Arc::clone(run),
+        }
     }
 }
 
@@ -69,6 +78,23 @@ impl Task for KernelDeps {
             if RECOMMENDED.contains(&m) {
                 pkgs.push(m);
             }
+        }
+
+        // Offline runs install from the os package's repository (WP-38):
+        // resolve the node's match, upload the repo tar, install from it.
+        if self.run.sources.is_offline() {
+            let os = self
+                .run
+                .facts_snapshot()
+                .get(&self.node.name)
+                .map(|f| f.os.clone())
+                .unwrap_or_default();
+            let repo = NodeOsRepo::resolve(&self.run, &self.node, &os).await?;
+            let names: Vec<String> = pkgs
+                .iter()
+                .map(|t| kurin_artifact::os::package_name(os.family, t))
+                .collect();
+            return repo.install(session, &names).await;
         }
 
         // Binary-name -> package-name per family: rpm distros ship

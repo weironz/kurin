@@ -133,7 +133,10 @@ pub fn stage_tasks(
         .filter(|n| n.role == NodeRole::Lb)
         .enumerate()
     {
-        out.push((Stage::Vip, Arc::new(ExternalLb::new(cluster, lb, ordinal)?)));
+        out.push((
+            Stage::Vip,
+            Arc::new(ExternalLb::new(cluster, lb, ordinal, run)?),
+        ));
     }
     out.push((
         Stage::Bootstrap,

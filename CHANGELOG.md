@@ -43,6 +43,35 @@ All notable changes to kurin. Format follows Keep a Changelog; semver.
   `AddonRemoveTask::keep_crds` back `remove --keep-crds` (recorded CRDs
   survive the uninstall).
 
+### Added (WP-38)
+- `kurin package create os --target ubuntu-24.04|debian-12|rocky-9
+  [--arch amd64,arm64] [--version 2026.10]`: builds the `os` dependency
+  package (04 §3.4) by downloading the closure (conntrack, socat,
+  ebtables, ipset, ipvsadm, haproxy, keepalived, nfs utilities) inside
+  a container of the target distribution (docker/podman; arm64 under
+  qemu) and generating the repository metadata (`dpkg-scanpackages` /
+  `createrepo_c`). The repository tar is carried per arch with a
+  `kurin-package.json` os row; `package inspect` lists the rows.
+- node side: offline runs install system packages from the matched os
+  repository — the tar is uploaded to `/opt/kurin/repo/<id>`
+  (content-addressed, shared between tasks), apt installs through a
+  temporary `[trusted=yes] file:` source scoped so unreachable mirrors
+  cannot break it, dnf through `--repofrompath` (per-invocation, no
+  config to remove); the temporary apt source list is removed after
+  the install. `kernel_deps` and `external_lb` use it; online runs
+  keep the previous apt/dnf path.
+- os packages are matched from node facts (OS id + version prefix,
+  arch), consulting `[packages] os` first and the base package's os
+  rows second; an offline run with no match for any node fails in the
+  validation phase with per-candidate rejection reasons.
+- CI (`.github/workflows/os-packages.yml`) builds ubuntu-24.04,
+  debian-12, rocky-9 × amd64/arm64 os packages and pushes them to
+  `ghcr.io/weironz/kurin/os/<target>` (arm64 via qemu).
+- ghcr domestic-mirror verification recorded in 04 §7 (2026-10-28):
+  `ghcr.m.daocloud.io` (digest parity, existing zone entry) and
+  `ghcr.nju.edu.cn` (reachability) are usable; the NJU fallback is now
+  probed by `scripts/check-mirrors.sh`.
+
 ### Added (WP-36)
 - registry-based distribution (04 §5.2): `[registry] kind = "external"`
   accepts `address`, `ca-file`, `username`, `password` and `namespace`

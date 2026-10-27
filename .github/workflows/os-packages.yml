@@ -1,0 +1,75 @@
+name: os-packages
+
+# WP-38 (04 §7): build the official `os` dependency packages for every
+# supported target OS x architecture and push them to ghcr.io.
+# arm64 downloads run inside the target-distro container under qemu
+# (docker/binfmt or podman handle it transparently on the runner).
+#
+# Tags follow the package version (`v2026.10`); the workflow also runs
+# on dispatch for a mid-month refresh of the distro repositories.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "package version (default: current month, e.g. 2026.10)"
+        required: false
+        type: string
+
+env:
+  REGISTRY: ghcr.io
+  OWNER: weironz
+
+jobs:
+  os-packages:
+    runs-on: self-hosted
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [ubuntu-24.04, debian-12, rocky-9]
+        arch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v4
+      - name: toolchain
+        run: |
+          export PATH="$HOME/.cargo/bin:/usr/local/bin:$PATH"
+          rustup component add clippy rustfmt
+      - name: build kurin
+        run: |
+          export PATH="$HOME/.cargo/bin:/usr/local/bin:$PATH"
+          CARGO_TARGET_DIR=target/release-musl cargo build --release \
+            --target x86_64-unknown-linux-musl -p kurin
+      - name: build + push the os package
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET: ${{ matrix.target }}
+          ARCH: ${{ matrix.arch }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.cargo/bin:/usr/local/bin:$PATH"
+          BIN=target/release-musl/x86_64-unknown-linux-musl/release/kurin
+          REPO="$REGISTRY/$OWNER/kurin/os/$TARGET"
+          VER="${VERSION:-$(date -u +%Y.%m)}"
+
+          # registry credentials for `kurin package push` (it reads the
+          # Docker config, like the docker CLI)
+          AUTH=$(printf '%s:%s' "${{ github.actor }}" "$GH_TOKEN" | base64 -w0)
+          mkdir -p ~/.docker
+          printf '{"auths":{"%s":{"auth":"%s"}}}\n' "$REGISTRY" "$AUTH" > ~/.docker/config.json
+
+          "$BIN" package create os --target "$TARGET" --arch "$ARCH" \
+            ${VERSION:+--version "$VER"} \
+            -o "oci-layout://release-dist/os-$TARGET-$ARCH"
+          "$BIN" package push "oci-layout://release-dist/os-$TARGET-$ARCH" \
+            "oci://$REPO:v$VER"
+          # prove the round trip before the job goes green
+          "$BIN" package pull "oci://$REPO:v$VER" \
+            "oci-layout://release-dist/pulled-os-$TARGET-$ARCH"
+          "$BIN" package verify "oci-layout://release-dist/pulled-os-$TARGET-$ARCH"

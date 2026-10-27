@@ -228,7 +228,7 @@ trusted-keys = ["/etc/kurin/cosign.pub"]                   # verify = "signature
 ## 7. 项目发布的官方包
 
 - CI 为每个支持的 K8s 补丁版本 × 发行版构建 `base` 包，为每个内置 addon 构建 `addon` 包，为每个支持的 OS 构建 `os` 包（在对应发行版容器里下载依赖），推送到 `ghcr.io/weironz/kurin/…` 并签名。
-- 国内访问：在 `zone = "cn"` 时把 `ghcr.io` 改写到 ghcr 的国内镜像（是否可用需在 WP-38 中核实，并纳入 `scripts/check-mirrors.sh`）。
+- 国内访问：在 `zone = "cn"` 时把 `ghcr.io` 改写到 ghcr 的国内镜像。**WP-38 核实结论（2026-10-28）**：`ghcr.m.daocloud.io`（CN_MIRRORS 表中已有条目，digest 与上游一致）可用，是默认改写目标；备选 `ghcr.nju.edu.cn`（南京大学 e-Science 缓存代理，把 `ghcr.io` 域名替换即可、匿名拉取）经核实可解析、可拉取，作为 `scripts/check-mirrors.sh` 的可达性观察项。两者都失效时的回退：`kurin package pull` 经代理后以 `oci-layout://` / `file://` 形态使用——包的三种形态等价（§3.3）。
 - 在线安装默认仍使用二进制内嵌的清单（行为不变）。`[packages] base = "oci://…"` 是可选项，让用户无需升级 kurin 就能使用新的 K8s 补丁版本。
 
 ---

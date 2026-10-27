@@ -1,0 +1,11 @@
+---
+source: crates/kurin-components/src/tasks/os_repo.rs
+expression: script
+---
+set -e
+mkdir -p /opt/kurin/repo/aabbccddeeff0011/repo
+tar -xf /opt/kurin/repo/aabbccddeeff0011/repo.tar -C /opt/kurin/repo/aabbccddeeff0011/repo
+printf '%s\n' 'deb [trusted=yes] file:/opt/kurin/repo/aabbccddeeff0011/repo ./' > /etc/apt/sources.list.d/kurin-os.list
+apt-get -qq update -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/kurin-os.list -o Dir::Etc::sourceparts=- -o APT::Get::List-Cleanup=0
+DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/kurin-os.list -o Dir::Etc::sourceparts=- conntrack socat
+rm -f /etc/apt/sources.list.d/kurin-os.list

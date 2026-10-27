@@ -92,7 +92,7 @@ pub(crate) async fn prepare(
     // With the architectures known, the base package must cover the
     // cluster (WP-34 step 3); a mutating run additionally stops at the
     // delivery boundary (WP-35 lands preload).
-    crate::packages::validate_payload(&spec, &facts, &payload, !dry_run)?;
+    crate::packages::validate_payload(&spec, &facts, &payload, !dry_run).await?;
     Ok(Prepared {
         run,
         lock,

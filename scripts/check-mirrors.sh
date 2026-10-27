@@ -200,6 +200,15 @@ if [ "$QUICK" = "1" ]; then
             *) fail "reach/$mhost" "HTTP $code" ;;
         esac
     done
+    # WP-38: the NJU ghcr fallback (04 §7) — reachability only; it is
+    # a caching proxy, so digest parity is upstream's guarantee, not
+    # checked here.
+    code=$(curl -sS -o /dev/null --max-time 15 -w '%{http_code}' \
+           "https://ghcr.nju.edu.cn/v2/" 2>/dev/null || echo 000)
+    case "$code" in
+        200|401) ok "reach/ghcr.nju.edu.cn" "HTTP $code (ghcr fallback, 04 §7)" ;;
+        *) fail "reach/ghcr.nju.edu.cn" "HTTP $code (ghcr fallback, 04 §7)" ;;
+    esac
     [ "$FAILED" -eq 0 ] || exit 2
     exit 0
 fi

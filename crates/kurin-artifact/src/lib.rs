@@ -8,6 +8,7 @@ pub mod artifact_bundle;
 pub mod deploy;
 pub mod dynamic_manifest;
 pub mod oci;
+pub mod os;
 pub mod package;
 pub mod preload;
 pub mod referrer;
