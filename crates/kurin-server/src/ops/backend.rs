@@ -21,7 +21,7 @@ use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 use tracing::Instrument;
 
-use crate::store::{OperationState, Store};
+use crate::store::{Lifecycle, OperationState, Store};
 
 /// Everything one backend invocation needs.
 pub struct OpContext {
@@ -106,8 +106,40 @@ impl OperationBackend for KurinBackend {
     }
 }
 
+/// Lifecycle transitions around a mutating operation: (start, success,
+/// failure). Read-only and addon/upgrade operations leave it alone.
+fn lifecycle_for(kind: &str) -> Option<(Lifecycle, Lifecycle, Lifecycle)> {
+    match kind {
+        "create" => Some((Lifecycle::Provisioning, Lifecycle::Active, Lifecycle::Draft)),
+        "add-nodes" => Some((
+            Lifecycle::Provisioning,
+            Lifecycle::Active,
+            Lifecycle::Active,
+        )),
+        "delete-cluster" => Some((Lifecycle::Deleting, Lifecycle::Deleted, Lifecycle::Active)),
+        _ => None,
+    }
+}
+
 impl KurinBackend {
     async fn run(&self, ctx: OpContext) -> miette::Result<(OperationState, Option<Value>)> {
+        let cluster = ctx.cluster.clone();
+        let Some((start, success, failure)) = lifecycle_for(&ctx.kind) else {
+            return self.run_inner(ctx).await;
+        };
+        // Best-effort: a missing cluster row must not mask the operation's
+        // own error.
+        let _ = self.store.set_lifecycle(&cluster, start);
+        let outcome = self.run_inner(ctx).await;
+        let next = match &outcome {
+            Ok((OperationState::Succeeded, _)) => success,
+            _ => failure,
+        };
+        let _ = self.store.set_lifecycle(&cluster, next);
+        outcome
+    }
+
+    async fn run_inner(&self, ctx: OpContext) -> miette::Result<(OperationState, Option<Value>)> {
         let spec = self
             .load_spec(&ctx.cluster)
             .map_err(|e| miette::miette!("{e}"))?;
@@ -559,5 +591,32 @@ impl KurinBackend {
             _ => return Ok(None),
         };
         Ok(Some((OperationState::Succeeded, Some(report))))
+    }
+}
+
+#[cfg(test)]
+mod lifecycle_tests {
+    use super::*;
+
+    #[test]
+    fn lifecycle_transitions_cover_create_add_and_delete() {
+        assert_eq!(
+            lifecycle_for("create"),
+            Some((Lifecycle::Provisioning, Lifecycle::Active, Lifecycle::Draft))
+        );
+        assert_eq!(
+            lifecycle_for("add-nodes"),
+            Some((
+                Lifecycle::Provisioning,
+                Lifecycle::Active,
+                Lifecycle::Active
+            ))
+        );
+        assert_eq!(
+            lifecycle_for("delete-cluster"),
+            Some((Lifecycle::Deleting, Lifecycle::Deleted, Lifecycle::Active))
+        );
+        assert_eq!(lifecycle_for("upgrade"), None);
+        assert_eq!(lifecycle_for("precheck"), None);
     }
 }

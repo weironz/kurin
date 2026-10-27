@@ -1106,3 +1106,98 @@ async fn add_nodes_rejects_a_duplicate_name() {
     let response = send(app, request).await;
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 }
+
+#[tokio::test]
+async fn render_reports_the_real_hint_when_the_error_has_no_source_text() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = state_with(dir.path(), Arc::new(NoopBackend));
+    let app = kurin_server::router(state);
+    let cookie = login(app.clone(), dir.path()).await;
+
+    // `artifacts.zone` only accepts "cn"; the ConfigError carries an empty
+    // source text, so render must not re-parse "" and report "missing version".
+    let request = authed(
+        Method::POST,
+        "/api/v1/configs/render",
+        &cookie,
+        json!({
+            "name": "z",
+            "kubernetes": "1.33.1",
+            "distribution": "kubeadm",
+            "cni": "calico",
+            "zone": "global",
+            "ssh": { "user": "root", "key": "/tmp/key" },
+            "nodes": [{ "name": "n1", "address": "192.0.2.10", "role": "control-plane" }]
+        }),
+    );
+    let response = send(app, request).await;
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let body = json_body(response).await;
+    let messages = body["diagnostics"]
+        .as_array()
+        .expect("diagnostics")
+        .iter()
+        .filter_map(|item| item["message"].as_str())
+        .collect::<Vec<_>>();
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("only accepts \"cn\"")),
+        "unexpected diagnostics: {messages:?}"
+    );
+}
+
+#[tokio::test]
+async fn operation_detail_exposes_the_structured_result() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = state_with(dir.path(), Arc::new(NoopBackend));
+    import(&state, "single");
+    state
+        .store()
+        .insert_operation(kurin_server::store::NewOperation {
+            id: "01JDYPRECHECKRESULT".into(),
+            cluster: Some("single".into()),
+            kind: "precheck".into(),
+            config_rev: Some(1),
+            params: "{}".into(),
+            retry_of: None,
+            actor: "test".into(),
+        })
+        .unwrap();
+    state
+        .store()
+        .set_operation_result(
+            "01JDYPRECHECKRESULT",
+            r#"{"checks":[{"node":"n1","check":"swap","status":"ok","detail":""}],"failed":0,"warned":0}"#,
+        )
+        .unwrap();
+    let app = kurin_server::router(state);
+    let cookie = login(app.clone(), dir.path()).await;
+
+    let request = authed_get("/api/v1/operations/01JDYPRECHECKRESULT", &cookie);
+    let response = send(app, request).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = json_body(response).await;
+    assert_eq!(body["result"]["checks"][0]["check"], "swap");
+    assert_eq!(body["result"]["failed"], 0);
+}
+
+#[tokio::test]
+async fn cluster_detail_exposes_desired_nodes_and_the_config_summary() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = state_with(dir.path(), Arc::new(NoopBackend));
+    import(&state, "single");
+    let app = kurin_server::router(state);
+    let cookie = login(app.clone(), dir.path()).await;
+
+    let request = authed_get("/api/v1/clusters/single", &cookie);
+    let response = send(app, request).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = json_body(response).await;
+    let nodes = body["desired_nodes"].as_array().expect("desired_nodes");
+    assert!(nodes.iter().any(|node| node["name"] == "master01"));
+    assert!(nodes.iter().any(|node| node["role"] == "control-plane"));
+    assert_eq!(body["config_summary"]["distribution"], "kubeadm");
+    assert_eq!(body["config_summary"]["cni"], "calico");
+    assert_eq!(body["config_summary"]["pod_cidr"], "10.233.64.0/18");
+}

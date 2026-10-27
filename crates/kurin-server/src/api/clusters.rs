@@ -240,6 +240,9 @@ pub(crate) struct ClusterDetail {
     /// The collector's last snapshot row (report JSON included).
     snapshot: Option<SnapshotView>,
     revisions: Vec<RevisionSummary>,
+    desired_nodes: Vec<DesiredNodeView>,
+    observed_nodes: Vec<ObservedNodeView>,
+    config_summary: ConfigSummaryView,
 }
 
 /// The raw snapshot row, as persisted by the collector (WP-53).
@@ -279,10 +282,16 @@ pub(crate) async fn detail(
     let snapshot = store.get_snapshot(&name).ok().flatten();
     let active = store.active_operation(&name)?.map(|operation| operation.id);
     let revisions = store.list_revisions(&name).unwrap_or_default();
+    let desired = desired_nodes(spec.as_ref());
+    let observed = observed_nodes(snapshot.as_ref());
+    let config_summary = ConfigSummaryView::from_spec(spec.as_ref());
     Ok(Json(ClusterDetail {
         cluster: ClusterView::overview(&record, spec.as_ref(), snapshot.as_ref(), active),
         snapshot: snapshot.map(SnapshotView::from),
         revisions,
+        desired_nodes: desired,
+        observed_nodes: observed,
+        config_summary,
     }))
 }
 
@@ -418,6 +427,172 @@ pub(crate) async fn add_nodes(
         }),
     )
         .into_response())
+}
+
+/// One desired node, from the current configuration revision.
+#[derive(Serialize, TS)]
+pub(crate) struct DesiredNodeView {
+    name: String,
+    address: String,
+    role: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    internal_address: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    arch: Option<String>,
+}
+
+/// One observed node, from the collector's snapshot report.
+#[derive(Serialize, TS)]
+pub(crate) struct ObservedNodeView {
+    name: String,
+    ready: bool,
+    roles: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    os_image: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    arch: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(type = "number")]
+    cpu_cores: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(type = "number")]
+    memory_mb: Option<u64>,
+}
+
+/// The configuration fields the detail page's read-only summary shows.
+#[derive(Serialize, TS)]
+pub(crate) struct ConfigSummaryView {
+    distribution: String,
+    kubernetes_version: String,
+    runtime: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    zone: Option<String>,
+    cni: String,
+    pod_cidr: String,
+    service_cidr: String,
+    ha_mode: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    vip: Option<String>,
+}
+
+impl ConfigSummaryView {
+    fn from_spec(spec: Option<&kurin_config::Cluster>) -> Self {
+        let Some(spec) = spec else {
+            return Self {
+                distribution: String::new(),
+                kubernetes_version: String::new(),
+                runtime: String::new(),
+                zone: None,
+                cni: String::new(),
+                pod_cidr: String::new(),
+                service_cidr: String::new(),
+                ha_mode: String::new(),
+                vip: None,
+            };
+        };
+        let cni = serde_json::to_value(&spec.cni)
+            .ok()
+            .and_then(|value| {
+                value
+                    .get("kind")
+                    .and_then(|kind| kind.as_str())
+                    .map(str::to_string)
+            })
+            .unwrap_or_default();
+        let ha_mode = serde_json::to_value(spec.ha_mode)
+            .ok()
+            .and_then(|value| value.as_str().map(str::to_string))
+            .unwrap_or_default();
+        Self {
+            distribution: match spec.distribution {
+                kurin_config::Distribution::K8s => "kubeadm".to_string(),
+                kurin_config::Distribution::K3s => "k3s".to_string(),
+            },
+            kubernetes_version: spec.kubernetes_version.to_string(),
+            runtime: match spec.runtime {
+                kurin_config::RuntimeKind::Containerd => "containerd".to_string(),
+                kurin_config::RuntimeKind::Crio => "cri-o".to_string(),
+            },
+            zone: spec.packages.zone.clone(),
+            cni,
+            pod_cidr: spec.pod_cidr.to_string(),
+            service_cidr: spec.service_cidr.to_string(),
+            ha_mode,
+            vip: spec.vip.map(|vip| vip.to_string()),
+        }
+    }
+}
+
+/// Desired nodes from the lowered spec.
+fn desired_nodes(spec: Option<&kurin_config::Cluster>) -> Vec<DesiredNodeView> {
+    spec.map(|spec| {
+        spec.nodes
+            .iter()
+            .map(|node| DesiredNodeView {
+                name: node.name.clone(),
+                address: node.address.to_string(),
+                role: serde_json::to_value(node.role)
+                    .ok()
+                    .and_then(|value| value.as_str().map(str::to_string))
+                    .unwrap_or_else(|| "worker".to_string()),
+                internal_address: (node.internal_address != node.address)
+                    .then(|| node.internal_address.to_string()),
+                arch: node.arch.clone(),
+            })
+            .collect()
+    })
+    .unwrap_or_default()
+}
+
+/// Observed nodes from the snapshot report's `nodes` array.
+fn observed_nodes(snapshot: Option<&SnapshotRecord>) -> Vec<ObservedNodeView> {
+    let Some(report) = snapshot
+        .and_then(|row| row.report.as_deref())
+        .and_then(parse_report)
+    else {
+        return Vec::new();
+    };
+    report
+        .get("nodes")
+        .and_then(serde_json::Value::as_array)
+        .map(|nodes| {
+            nodes
+                .iter()
+                .map(|node| ObservedNodeView {
+                    name: node
+                        .get("name")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or_default()
+                        .to_string(),
+                    ready: node
+                        .get("ready")
+                        .and_then(serde_json::Value::as_bool)
+                        .unwrap_or(false),
+                    roles: node
+                        .get("roles")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or_default()
+                        .to_string(),
+                    version: node
+                        .get("kubelet_version")
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::to_string),
+                    os_image: node
+                        .get("os_image")
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::to_string),
+                    arch: node
+                        .get("arch")
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::to_string),
+                    cpu_cores: node.get("cpu_cores").and_then(serde_json::Value::as_u64),
+                    memory_mb: node.get("memory_mb").and_then(serde_json::Value::as_u64),
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 #[derive(Serialize, TS)]

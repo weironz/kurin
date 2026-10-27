@@ -58,6 +58,10 @@ pub(crate) struct OperationView {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(type = "number")]
     last_seq: Option<u64>,
+    /// Structured result attached by the backend (precheck report, plan
+    /// view, package report). The wizard and operation detail read it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    result: Option<Value>,
 }
 
 impl OperationView {
@@ -68,6 +72,10 @@ impl OperationView {
             kind: record.kind,
             state: record.state.as_str().to_string(),
             config_rev: record.config_rev,
+            result: record
+                .result
+                .as_deref()
+                .and_then(|text| serde_json::from_str(text).ok()),
             params: serde_json::from_str(&record.params)
                 .unwrap_or_else(|_| Value::Object(Default::default())),
             retry_of: record.retry_of,

@@ -284,11 +284,16 @@ impl Collector {
         };
         let active: Vec<&ClusterRecord> = clusters
             .iter()
-            .filter(|record| record.lifecycle == Lifecycle::Active)
+            .filter(|record| {
+                matches!(
+                    record.lifecycle,
+                    Lifecycle::Active | Lifecycle::Provisioning
+                )
+            })
             .collect();
 
         let mut state = self.lock_state();
-        // Clusters that left `active` (archived, deleted…) stop collecting;
+        // Clusters that left active/provisioning (archived, deleted…) stop collecting;
         // their refresh bookkeeping goes with them.
         state.retain(|name, _| active.iter().any(|record| record.name == *name));
 
