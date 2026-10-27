@@ -635,6 +635,10 @@ kind: Config
             registry_username: None,
             registry_password: None,
             registry_data_dir: "/var/lib/kurin/registry".into(),
+            storage_kind: None,
+            storage_default: false,
+            storage_server: None,
+            storage_path: None,
             source: String::new(),
         }
     }
@@ -745,6 +749,10 @@ mod summary_tests {
             registry_username: None,
             registry_password: None,
             registry_data_dir: "/var/lib/kurin/registry".into(),
+            storage_kind: None,
+            storage_default: false,
+            storage_server: None,
+            storage_path: None,
             source: String::new(),
         }
     }

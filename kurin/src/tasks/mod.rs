@@ -11,3 +11,4 @@ pub mod post;
 pub mod preflight;
 pub mod prepare;
 pub mod registry;
+pub mod storage;

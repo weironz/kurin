@@ -3,6 +3,12 @@ version = 2
 [plugins."io.containerd.grpc.v1.cri"]
   sandbox_image = "{{ pause_image }}"
 
+[plugins."io.containerd.grpc.v1.cri".registry]
+  # hosts.toml layout for registry mirrors/auth (mirrors for hub mirrors are
+  # looked up here by kurin's `pod-cidr === hub` rules orderly instead of
+  # the config.toml legacy `[plugins.registry.mirrors]` duplicates).
+  config_path = "/etc/containerd/certs.d"
+
 [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc]
   runtime_type = "io.containerd.runc.v2"
 

@@ -1,5 +1,29 @@
 # 进度日志
 
+## 对标 kubekey：precheck / registry / storage（2026-10-27）
+
+- **`kurin precheck`**（gap #1）：只读主机体检，单次 SSH 往返，per-check
+  ok/warn/FAIL；角色相关端口（CP 6443/2379/2380/10257/10259、LB 6443/8404、
+  worker 10250/30000）；swap、内核模块（可加载即可）、sysctl（模块提供的键
+  在模块可加载时视为 ok）、内存/CPU/磁盘、NTP、SELinux、运行时 socket、
+  hostname 解析；`--json` 逐条事件 + precheck-done 汇总。e2e：干净 VM 全绿、
+  开 swap 报 FAIL、swapoff 恢复。
+- **私有 registry 三种实现**（gap #2，`role = "registry"` 节点，
+  `Stage::Registry`）：`docker-registry`（distribution 3.1.2 二进制）、
+  `zot`（2.1.22 二进制，开 `docker2s2` 兼容）、`harbor`（2.14.6 离线安装器 +
+  其自带 docker/compose）。kurin 生成一次 CA，给每个 registry 节点签 leaf；
+  trust 写 containerd `certs.d/<upstream>/hosts.toml`（mirror + CA + basic auth）
+  与 `certs.d/<reg>:port/`；seed 把 bundle 选中镜像按原始 repo 路径推进 registry。
+  **三种实现 tier-3 e2e 全 GREEN**（含断上游后经 mirror 拉取、二次运行全 skip）。
+  关键坑：containerd 必须设置 `registry.config_path`（否则 certs.d 不生效）、
+  zot 415（schema2 兼容）、distribution `auth` 顶层键、harbor 命名空间限制
+  （seed 到 `library` + kubeadm `imageRepository`）、CA 曾每 task 重铸、
+  harbor.yml 需从模板 sed、base64 表的 `UVWYYZ` 错字。
+- **存储插件**（gap #3）：`[storage] kind = "local-path" | "nfs"`，
+  local-path（rancher v0.0.31，含 busybox helper）与 NFS subdir provisioner
+  （v4.0.2）内嵌 manifest，StorageClass 命名 `kurin-local-path`/`kurin-nfs`，
+  `default = true` 加默认注解；nfs 校验要求 server+path。
+
 ## 离线 CNI 矩阵 + k3s×external-endpoint + 发布工程（2026-10-27）
 
 - **离线 CNI 补齐**：flannel（2 镜像）+ cilium（3 镜像，版本取自 cilium-cli

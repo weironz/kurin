@@ -163,6 +163,21 @@ impl KubeadmInit {
                 },
                 advertise_address => advertise,
                 control_plane_endpoint => endpoint,
+                // Harbor registries keep reshaped names (project/repo);
+                // kubeadm's imageRepository covers the control-plane pulls.
+                // distribution/zot (flat-mirror mode) leave this empty.
+                image_repository => match cluster.registry_kind {
+                    Some(kurin_config::RegistryKind::Harbor) => {
+                        let reg = cluster
+                            .nodes
+                            .iter()
+                            .find(|n| n.role == kurin_config::NodeRole::Registry)
+                            .map(|n| n.internal_address.to_string())
+                            .unwrap_or_default();
+                        format!("{}:{}/library", reg, cluster.registry_port)
+                    }
+                    _ => String::new(),
+                },
             },
         )
         .expect("kubeadm init template renders");
@@ -544,6 +559,10 @@ mod tests {
             registry_username: None,
             registry_password: None,
             registry_data_dir: "/var/lib/kurin/registry".into(),
+            storage_kind: None,
+            storage_default: false,
+            storage_server: None,
+            storage_path: None,
             source: String::new(),
         }
     }

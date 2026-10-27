@@ -19,7 +19,7 @@ use std::path::Path;
 pub use config::{
     ArtifactsConfig, ClusterConfig, CniConfig, Distribution, HaConfig, HaMode, KubernetesConfig,
     NetworkConfig, NodeConfig, NodeRole, RegistryConfig, RegistryKind, RuntimeKind, SshAuth,
-    SshDefaults, CONFIG_VERSION,
+    SshDefaults, StorageConfig, StorageKind, CONFIG_VERSION,
 };
 pub use error::{ConfigError, Result};
 pub use model::{Cluster, Node, ResolvedSsh};

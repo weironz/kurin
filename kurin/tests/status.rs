@@ -190,6 +190,10 @@ fn cluster_one_cp() -> kurin_config::Cluster {
         registry_username: None,
         registry_password: None,
         registry_data_dir: "/var/lib/kurin/registry".into(),
+        storage_kind: None,
+        storage_default: false,
+        storage_server: None,
+        storage_path: None,
         source: String::new(),
     }
 }

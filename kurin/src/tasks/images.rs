@@ -267,7 +267,7 @@ fn hex(digest: &str) -> &str {
 
 /// Build a docker-archive tar from an OCI layout directory (index.json +
 /// manifest.json + hex-named blobs). Written next to the payload dir.
-fn docker_archive(oci_dir: &Path, spec: &ArtifactSpec) -> miette::Result<PathBuf> {
+pub(crate) fn docker_archive(oci_dir: &Path, spec: &ArtifactSpec) -> miette::Result<PathBuf> {
     let manifest: OciManifest =
         serde_json::from_slice(&std::fs::read(oci_dir.join("manifest.json")).map_err(|e| {
             miette::miette!("read {}: {e}", oci_dir.join("manifest.json").display())

@@ -64,6 +64,11 @@ registry:
   username: null
   password: null
   data-dir: null
+storage:
+  kind: null
+  default: false
+  server: null
+  path: null
 artifacts:
   offline-dir: null
   zone: null

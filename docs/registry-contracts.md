@@ -83,3 +83,24 @@ harbor 特例：registry 节点由 kurin 安装 docker（registry 节点**不是
 - registry 多实例负载均衡（单实例 + 备份由用户自理）
 - harbor ChartMuseum/Trivy 组件（`install.sh` 默认集）
 - 镜像 GC 策略管理
+
+## 实现备注（v0.4 实测结论）
+
+- **harbor 的命名空间限制**：harbor 的 registry 是 `project/repo` 形状，无法
+  服务 `host:port/pause:manifests` 这类单段路径，所以 harbor 模式**不做上游
+  mirror**（certs.d 里只有它自己的 endpoint + CA + auth），镜像统一 seed 到
+  内置 `library` 项目，kubeadm `/etc/kurin/kubeadm-init.yaml` 里
+  `imageRepository: <reg>:<port>/library` 承担控制面镜像。CNI 等非控制面镜像
+  的离线供给仍需 zot/docker-registry 的 mirror 模式。
+- **harbor 只有 admin 账号**：`[registry] username` 若给必须是 `admin`
+  （校验拒绝其它值），密码即 `harbor_admin_password`。
+- **zot 需要 `http.compat = ["docker2s2"]`**：`ctr` 推 Docker schema2
+  manifest，zot 默认 OCI-only，会 415。
+- **distribution 的 `auth` 是顶层键**（不在 `http:` 下）。
+- **containerd 必须设 `registry.config_path = /etc/containerd/certs.d`**，
+  否则 certs.d 的 mirror/CA/auth 全部不生效（kubelet 拉私有 registry 会
+  x509 unknown authority）。
+- **CA 每 run 只生成一次**（plan 构建时），install/trust/seed 共用；早期版本
+  各 task 自铸 CA，导致 trust 写入的锚点与 registry 的证书不匹配。
+- **harbor.yml 必须从 `harbor.yml.tmpl` 拷贝后 sed 覆盖**：install.sh 的
+  prepare 会读取模板里的全部键（缺 `max_job_workers` 等直接 KeyError）。

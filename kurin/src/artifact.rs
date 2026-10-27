@@ -520,11 +520,18 @@ impl ArtifactStore {
     ) -> Result<(), ArtifactError> {
         let reference = crate::zone::rewrite_image_ref(&spec.url(), crate::artifact::zone());
         let (registry, repo, tag) = parse_image_ref(&reference)?;
-        let auth = registry_auth_headers(&registry, &repo).await?;
+        // Docker Hub addresses its v2 API as registry-1.docker.io; the
+        // reference keeps "docker.io" (containerd's certs.d key).
+        let host = if registry == "docker.io" {
+            "registry-1.docker.io"
+        } else {
+            registry.as_str()
+        };
+        let auth = registry_auth_headers(host, &repo).await?;
 
         let index_path = dir.join("index.json");
         download_verified(
-            &format!("https://{registry}/v2/{repo}/manifests/{tag}"),
+            &format!("https://{host}/v2/{repo}/manifests/{tag}"),
             &index_path,
             expected_index,
             &spec.name,
@@ -549,7 +556,7 @@ impl ArtifactStore {
 
         let manifest_path = dir.join("manifest.json");
         download_verified(
-            &format!("https://{registry}/v2/{repo}/manifests/sha256:{manifest_digest}"),
+            &format!("https://{host}/v2/{repo}/manifests/sha256:{manifest_digest}"),
             &manifest_path,
             &manifest_digest,
             &spec.name,
@@ -564,7 +571,7 @@ impl ArtifactStore {
             let hex = normalize_hash(digest);
             let blob_path = dir.join(&hex);
             download_verified(
-                &format!("https://{registry}/v2/{repo}/blobs/sha256:{hex}"),
+                &format!("https://{host}/v2/{repo}/blobs/sha256:{hex}"),
                 &blob_path,
                 &hex,
                 &spec.name,
@@ -588,8 +595,16 @@ struct RegistryAuth {
 }
 
 async fn registry_auth_headers(registry: &str, repo: &str) -> Result<RegistryAuth, ArtifactError> {
-    let auth_header = if registry == "ghcr.io" {
-        let url = format!("https://ghcr.io/token?service=ghcr.io&scope=repository:{repo}:pull");
+    // ghcr.io 401s anonymous v2 reads; Docker Hub (docker.io images are
+    // addressed via registry-1.docker.io) needs the same token dance.
+    let auth_header = if registry == "ghcr.io" || registry == "registry-1.docker.io" {
+        let url = if registry == "ghcr.io" {
+            format!("https://ghcr.io/token?service=ghcr.io&scope=repository:{repo}:pull")
+        } else {
+            format!(
+                "https://auth.docker.io/token?service=registry.docker.io&scope=repository:{repo}:pull"
+            )
+        };
         let url_for_err = url.clone();
         let out = std::process::Command::new("curl")
             .arg("-fsSL")

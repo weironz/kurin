@@ -34,6 +34,9 @@ pub struct ClusterConfig {
     /// Private image registry on `role = "registry"` nodes.
     #[serde(default)]
     pub registry: RegistryConfig,
+    /// Dynamic storage provisioning (local-path or nfs).
+    #[serde(default)]
+    pub storage: StorageConfig,
     #[serde(default)]
     pub artifacts: ArtifactsConfig,
 }
@@ -50,6 +53,29 @@ pub enum RegistryKind {
     Zot,
     /// Harbor v2 offline installer (single registry node only).
     Harbor,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum StorageKind {
+    #[default]
+    #[serde(rename = "local-path")]
+    LocalPath,
+    Nfs,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case")]
+pub struct StorageConfig {
+    /// Storage provisioner to deploy; none by default (kubeadm ships none).
+    pub kind: Option<StorageKind>,
+    /// Make kurin's StorageClass the cluster default.
+    #[serde(default)]
+    pub default: bool,
+    /// NFS server address (nfs only).
+    pub server: Option<String>,
+    /// NFS export path (nfs only).
+    pub path: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]

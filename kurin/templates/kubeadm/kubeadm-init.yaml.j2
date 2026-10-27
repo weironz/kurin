@@ -19,7 +19,8 @@ apiServer:
   - "127.0.0.1"
 controlPlaneEndpoint: {{ control_plane_endpoint }}
 kubernetesVersion: v{{ kubernetes_version }}
-networking:
+{% if image_repository %}imageRepository: {{ image_repository }}
+{% endif %}networking:
   podSubnet: {{ pod_cidr }}
   serviceSubnet: {{ service_cidr }}
   dnsDomain: {{ dns_domain }}

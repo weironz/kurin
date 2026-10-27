@@ -175,24 +175,24 @@ impl Plan {
         // Registry: install/trust/seed when a registry node exists; the
         // trust+seed tasks run on k8s nodes only.
         if cluster.registry_kind.is_some() {
+            // ONE CA per run, shared by install/trust/seed (each task
+            // minting its own CA wrote a different trust anchor than the
+            // registry's, and every TLS client failed verification).
+            let ca = tasks::registry::ca_for(cluster)?;
             for node in cluster.nodes.iter() {
                 match node.role {
                     kurin_config::NodeRole::Registry => {
                         push(
                             3,
-                            Arc::new(tasks::registry::RegistryInstall::new(cluster, node, arch)?),
+                            Arc::new(tasks::registry::RegistryInstall::new(
+                                cluster, node, arch, &ca,
+                            )?),
                         );
                     }
-                    kurin_config::NodeRole::ControlPlane => {
+                    kurin_config::NodeRole::ControlPlane | kurin_config::NodeRole::Worker => {
                         push(
                             3,
-                            Arc::new(tasks::registry::RegistryTrust::new(cluster, node)?),
-                        );
-                    }
-                    kurin_config::NodeRole::Worker => {
-                        push(
-                            3,
-                            Arc::new(tasks::registry::RegistryTrust::new(cluster, node)?),
+                            Arc::new(tasks::registry::RegistryTrust::new(cluster, node, &ca)?),
                         );
                     }
                     kurin_config::NodeRole::Lb => {}
@@ -201,7 +201,7 @@ impl Plan {
             if let Some(cp1) = cluster.control_plane().next() {
                 push(
                     3,
-                    Arc::new(tasks::registry::RegistrySeed::new(cluster, cp1, arch)?),
+                    Arc::new(tasks::registry::RegistrySeed::new(cluster, cp1, arch, &ca)?),
                 );
             }
         }
@@ -288,6 +288,9 @@ impl Plan {
         }
         // CNI + post.
         push(9, tasks::cni::plugin_task(cluster)?);
+        if cluster.storage_kind.is_some() {
+            push(9, Arc::new(tasks::storage::StorageInstall::new(cluster)?));
+        }
         push(10, Arc::new(tasks::post::KubeconfigPull::new(cluster)));
         if let Some(summary) = pool {
             push(10, Arc::new(tasks::post::Summary::new(cluster, summary)));

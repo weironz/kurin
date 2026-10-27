@@ -394,10 +394,43 @@
       "file": "harbor-offline-installer-v{version}.tgz",
       "url_template": "https://github.com/goharbor/harbor/releases/download/v{version}/harbor-offline-installer-v{version}.tgz",
       "sha256": {
-        "linux-amd64": "d30efc7ad7aaae462b6017df6f34810c37ac61a806aaebd6d06e28d98bab3b1d",
-        "linux-arm64": "d30efc7ad7aaae462b6017df6f34810c37ac61a806aaebd6d06e28d98bab3b1d"
+        "linux-amd64": "f3adaff30c4531c58f9d6ee8c5164f95f08582651c12b698b92be9e98df55cf6",
+        "linux-arm64": "f3adaff30c4531c58f9d6ee8c5164f95f08582651c12b698b92be9e98df55cf6"
       },
       "optional": true
+    },
+    {
+      "name": "local-path-provisioner",
+      "kind": "image",
+      "version": "0.0.31",
+      "file": "index.json",
+      "url_template": "docker.io/rancher/local-path-provisioner:v{version}",
+      "sha256": {
+        "linux-amd64": "80496fdeb307541007621959aa13aed41d31db9cd2dc4167c19833e0bfa3878c",
+        "linux-arm64": "80496fdeb307541007621959aa13aed41d31db9cd2dc4167c19833e0bfa3878c"
+      }
+    },
+    {
+      "name": "busybox",
+      "kind": "image",
+      "version": "1.36.1",
+      "file": "index.json",
+      "url_template": "docker.io/library/busybox:v{version}",
+      "sha256": {
+        "linux-amd64": "73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662",
+        "linux-arm64": "73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662"
+      }
+    },
+    {
+      "name": "nfs-subdir-provisioner",
+      "kind": "image",
+      "version": "4.0.2",
+      "file": "index.json",
+      "url_template": "registry.k8s.io/sig-storage/nfs-subdir-external-provisioner:v{version}",
+      "sha256": {
+        "linux-amd64": "63d5e04551ec8b5aae83b6f35938ca5ddc50a88d85492d9731810c31591fa4c9",
+        "linux-arm64": "63d5e04551ec8b5aae83b6f35938ca5ddc50a88d85492d9731810c31591fa4c9"
+      }
     }
   ]
 }

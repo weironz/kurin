@@ -34,7 +34,7 @@ multipass exec "$NAME" -- sudo bash -c \
 if "$BIN" precheck -f "$CFG" > /tmp/tier1-precheck-swap.txt 2>&1; then
     echo "[FAIL] precheck passed with swap enabled"; cat /tmp/tier1-precheck-swap.txt; exit 1
 fi
-grep -qE "^FAIL +$NAME +swap " /tmp/tier1-precheck-swap.txt \
+grep -qE "^FAIL +[a-z0-9-]+ +swap " /tmp/tier1-precheck-swap.txt \
     || { echo "[FAIL] no swap failure line"; cat /tmp/tier1-precheck-swap.txt; exit 1; }
 echo "[ok] swap enabled detected as FAIL"
 

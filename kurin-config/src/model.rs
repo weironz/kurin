@@ -10,7 +10,7 @@ use semver::Version;
 
 use crate::config::{
     ClusterConfig, CniConfig, Distribution, HaMode, NodeRole, RegistryKind, RuntimeKind, SshAuth,
-    CONFIG_VERSION,
+    StorageKind, CONFIG_VERSION,
 };
 use crate::error::{ConfigError, Result};
 
@@ -60,6 +60,11 @@ pub struct Cluster {
     pub registry_username: Option<String>,
     pub registry_password: Option<String>,
     pub registry_data_dir: std::path::PathBuf,
+    /// Dynamic storage provisioning (None = nothing deployed).
+    pub storage_kind: Option<StorageKind>,
+    pub storage_default: bool,
+    pub storage_server: Option<String>,
+    pub storage_path: Option<String>,
     /// Original config text, retained so validation can render spans.
     pub source: String,
 }
@@ -157,6 +162,10 @@ impl Cluster {
                 .registry
                 .data_dir
                 .unwrap_or_else(|| "/var/lib/kurin/registry".into()),
+            storage_kind: cfg.storage.kind,
+            storage_default: cfg.storage.default,
+            storage_server: cfg.storage.server,
+            storage_path: cfg.storage.path,
             source: String::new(),
         })
     }
@@ -280,12 +289,31 @@ impl Cluster {
                         .into(),
                 ))
             }
-            (_, Some(_)) => {
+            (_, Some(k)) => {
                 if self.registry_username.is_some() != self.registry_password.is_some() {
                     return Err(invalid(
                         "[registry] username and password must be set together".into(),
                     ));
                 }
+                if k == RegistryKind::Harbor
+                    && self
+                        .registry_username
+                        .as_deref()
+                        .is_some_and(|u| u != "admin")
+                {
+                    return Err(invalid(
+                        "[registry] kind = \"harbor\" can only authenticate as \"admin\" (its single admin account)"
+                            .into(),
+                    ));
+                }
+            }
+        }
+        // storage gates: nfs needs a server + path.
+        if let Some(StorageKind::Nfs) = self.storage_kind {
+            if self.storage_server.is_none() || self.storage_path.is_none() {
+                return Err(invalid(
+                    "storage.kind = \"nfs\" requires storage.server and storage.path".into(),
+                ));
             }
         }
         match self.ha_mode {
