@@ -1,53 +1,33 @@
 //! bootstrap/*: kubeadm init on the first control-plane node, producing
 //! join material (full join command + fresh certificate key) for the Join
-//! stage. Kept in the local kurin cache; never rendered into the
-//! JoinConfiguration (secrets stay out of templates).
+//! stage. The material lives on the run's [`Blackboard`] (a
+//! `RunStateSecret`, so `--resume` restores it and the redactor masks it);
+//! it is never rendered into the JoinConfiguration (secrets stay out of
+//! templates) and never written to the old cache directory.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use kurin_config::{Cluster, Node};
 use miette::Result;
 
 use crate::tasks::prepare::sha256_hex;
 use crate::templates;
+use kurin_core::blackboard::{JoinMaterial, JOIN_MATERIAL};
 use kurin_core::engine::{Drift, Outcome, Session, Stage, Task};
+use kurin_core::run::RunContext;
 
 pub const KUBEADM_DIR: &str = "/etc/kurin";
 
-/// Local rendezvous for downstream stages. Lives under
-/// $XDG_CACHE_HOME/kurin (fallback ~/.cache); deliberately not remote.
+/// Legacy local rendezvous (`~/.cache/kurin/clusters/<name>`), read by
+/// kurin releases before the Blackboard existed. Only `delete cluster`
+/// touches it now, to clean the stale directory up.
 pub fn join_material_path(cluster: &str) -> PathBuf {
     let base = std::env::var_os("XDG_CACHE_HOME")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache")))
         .unwrap_or_else(|| PathBuf::from("/tmp"));
     base.join("kurin").join("clusters").join(cluster)
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct JoinMaterial {
-    /// Full `kubeadm join <endpoint> --token ... --discovery-token-ca-cert-hash ...`.
-    pub join_command: String,
-    /// `--certificate-key` for control-plane joins (upload-certs, 2h TTL).
-    pub certificate_key: String,
-}
-
-pub fn read_join_material(cluster: &str) -> Option<JoinMaterial> {
-    let path = join_material_path(cluster).join("join.env");
-    let raw = std::fs::read_to_string(path).ok()?;
-    let mut m = JoinMaterial::default();
-    for line in raw.lines() {
-        if let Some(v) = line.strip_prefix("join_command=") {
-            m.join_command = v.trim().to_string();
-        } else if let Some(v) = line.strip_prefix("certificate_key=") {
-            m.certificate_key = v.trim().to_string();
-        }
-    }
-    if m.join_command.is_empty() {
-        None
-    } else {
-        Some(m)
-    }
 }
 
 /// kubeadm 1.33 moved admin.conf out of system:masters into
@@ -85,11 +65,11 @@ async fn ensure_admin_role_binding(session: &dyn Session) -> Result<()> {
 
 /// Public refresh: `add nodes` re-harvests a fresh token + certificate key
 /// before joining (the certificate key is only valid for 2h).
-pub async fn refresh_join_material(session: &dyn Session, cluster: &str) -> Result<()> {
-    write_join_material(session, cluster).await
+pub async fn refresh_join_material(session: &dyn Session, run: &Arc<RunContext>) -> Result<()> {
+    write_join_material(session, run).await
 }
 
-async fn write_join_material(session: &dyn Session, cluster: &str) -> Result<()> {
+async fn write_join_material(session: &dyn Session, run: &Arc<RunContext>) -> Result<()> {
     // admin.conf targets the control-plane endpoint (the VIP on HA): right
     // after init the VIP may not be routable yet, so poll instead of failing.
     let out = session
@@ -121,23 +101,27 @@ async fn write_join_material(session: &dyn Session, cluster: &str) -> Result<()>
             "upload-certs returned unexpected key: {key}"
         ));
     }
-    let dir = join_material_path(cluster);
-    std::fs::create_dir_all(&dir).map_err(|e| miette::miette!("mkdir {dir:?}: {e}"))?;
-    let body = format!("join_command={join_cmd}\ncertificate_key={key}\n");
-    std::fs::write(dir.join("join.env"), body)
-        .map_err(|e| miette::miette!("write join.env: {e}"))?;
+    run.bb
+        .set(
+            JOIN_MATERIAL,
+            JoinMaterial {
+                join_command: join_cmd,
+                certificate_key: key,
+            },
+        )
+        .map_err(|e| miette::miette!("store join material: {e}"))?;
     Ok(())
 }
 
 pub struct KubeadmInit {
     node_name: String,
-    cluster_name: String,
     api_endpoint: String,
     rendered: String,
+    run: Arc<RunContext>,
 }
 
 impl KubeadmInit {
-    pub fn new(cluster: &Cluster, first: &Node) -> Self {
+    pub fn new(cluster: &Cluster, first: &Node, run: &Arc<RunContext>) -> Self {
         let advertise = first.internal_address.to_string();
         let endpoint = cluster
             .vip
@@ -183,9 +167,9 @@ impl KubeadmInit {
         .expect("kubeadm init template renders");
         Self {
             node_name: first.name.clone(),
-            cluster_name: cluster.name.clone(),
             api_endpoint: endpoint_host,
             rendered,
+            run: Arc::clone(run),
         }
     }
 
@@ -268,10 +252,10 @@ impl Task for KubeadmInit {
     async fn check(&self, session: &dyn Session) -> Result<Drift> {
         // kubeadm's marker: admin.conf exists => init already ran successfully.
         match session.file_sha256("/etc/kubernetes/admin.conf").await? {
-            Some(_) => match read_join_material(&self.cluster_name) {
-                Some(_) => Ok(Drift::InSync),
-                None => Ok(Drift::Drifted(
-                    "cluster initialized by an older kurin; join.env missing".into(),
+            Some(_) => match self.run.bb.get(&JOIN_MATERIAL) {
+                Some(m) if !m.join_command.is_empty() => Ok(Drift::InSync),
+                _ => Ok(Drift::Drifted(
+                    "cluster initialized by an older kurin; join material missing".into(),
                 )),
             },
             None => Ok(Drift::Drifted(
@@ -332,7 +316,7 @@ impl Task for KubeadmInit {
         if let Err(e) = self.ensure_post_init_phases(session).await {
             return Ok(Outcome::Unknown(format!("post-init phases: {e}")));
         }
-        if let Err(e) = write_join_material(session, &self.cluster_name).await {
+        if let Err(e) = write_join_material(session, &self.run).await {
             return Ok(Outcome::Unknown(format!("harvest join material: {e}")));
         }
         Ok(Outcome::Verified)
@@ -450,7 +434,7 @@ pub struct KubeVip {
 }
 
 impl KubeVip {
-    pub fn new(cluster: &Cluster, node: &Node) -> Option<Self> {
+    pub fn new(cluster: &Cluster, node: &Node, run: &Arc<RunContext>) -> Option<Self> {
         let vip = cluster.vip?;
         let rendered = templates::render(
             "kubevip/kube-vip.yaml.j2",
@@ -461,7 +445,7 @@ impl KubeVip {
                 image => {
                     let image = kurin_artifact::zone::rewrite_image_ref(
                         &format!("ghcr.io/kube-vip/kube-vip:{}", kurin_artifact::version::KUBE_VIP_VERSION),
-                        kurin_artifact::artifact::zone(),
+                        run.sources.zone,
                     );
                     image
                 },
@@ -574,7 +558,7 @@ mod tests {
     #[test]
     fn kubeadm_init_renders_network_and_endpoints() {
         let c = cluster(Some("192.168.10.100"));
-        let t = KubeadmInit::new(&c, &c.nodes[0]);
+        let t = KubeadmInit::new(&c, &c.nodes[0], &crate::test_util::run());
         assert!(t.rendered.contains("podSubnet: 10.233.64.0/18"));
         assert!(t.rendered.contains("serviceSubnet: 10.233.0.0/18"));
         assert!(t
@@ -586,7 +570,7 @@ mod tests {
     #[test]
     fn kube_vip_renders_vip_interface_and_image() {
         let c = cluster(Some("192.168.10.100"));
-        let t = KubeVip::new(&c, &c.nodes[0]).expect("VIP configured");
+        let t = KubeVip::new(&c, &c.nodes[0], &crate::test_util::run()).expect("VIP configured");
         assert!(t.rendered.contains("value: \"192.168.10.100\""));
         assert!(t.rendered.contains("value: \"eth0\""));
         assert!(t.rendered.contains("10.233.64.0/18"));
@@ -600,6 +584,6 @@ mod tests {
     #[test]
     fn kube_vip_absent_without_vip() {
         let c = cluster(None);
-        assert!(KubeVip::new(&c, &c.nodes[0]).is_none());
+        assert!(KubeVip::new(&c, &c.nodes[0], &crate::test_util::run()).is_none());
     }
 }

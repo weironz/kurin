@@ -137,7 +137,7 @@ async fn discovered_arch_drives_per_node_artifact_selection() {
 
     // The plan built from those facts selects artifacts per node arch:
     // w1 (arm64) vs cp1 (amd64) in the artifacts stage descriptions.
-    let plan = kurin::plan::build(&cluster, &facts).unwrap();
+    let plan = kurin::plan::build(&cluster, &support::run(&cluster, facts)).unwrap();
     let artifacts_stage = plan
         .stages
         .iter()

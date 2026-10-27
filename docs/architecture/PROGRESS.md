@@ -14,7 +14,7 @@
 | WP-04 节点 facts 与按节点架构 | done | 见提交 | 计划树新增 discover 阶段；config 快照新增 `arch: None` | `e2e/tier1/mixed-arch.md`；回归 `just tier1`（up/offline/precheck/nonroot）与 `just tier2` | 每节点 arch 来自 facts；precheck 基于同一次 discover；`--arch` 接受逗号列表 |
 | WP-05 流式 exec 与上传 | done | 见提交 | 无 | `just tier1-offline`（记录控制机 RSS 峰值） | 行 8 KiB 截断、每流 16 MiB 捕获上限；上传 64 KiB 分块 + 远端 sha256 校验 |
 | WP-06 事件 v2 / tracing / 日志 | done | 见提交 | v1 事件仅新增 `ts`；新增 v2/终端快照 | `just tier1 && just tier1-test` 后 `kurin logs --last -vv` | EventBus + JSONL + `kurin logs`；默认终端输出不变 |
-| WP-07 RunContext 与 Blackboard | todo | | | `just tier2`、`just tier1-zone`、`just tier1-k3s` | |
+| WP-07 RunContext 与 Blackboard | done | 见提交 | 无 | `just tier2`、`just tier1-zone`、`just tier1-k3s` | 删除 artifact OnceLock；join 材料/k3s token 走 Blackboard（0600） |
 | WP-08 SSH 安全与端口转发 | todo | | | `just tier0 tier0-test` | |
 | WP-09 集群锁与 RunState v2 | todo | | | 双终端 `add nodes` 抢锁 | |
 | WP-10 PlanBuilder / NodeSel | todo | | | | |
@@ -80,6 +80,7 @@
 ## 偏离记录
 
 - WP-00：`ScriptedSession` 在 `(exit, stdout, stderr)` 之外增加了「命令已执行但传输中断」的应答与副作用文件，用于覆盖 `Outcome::Unknown → 重新探测` 路径；`cli_output` 快照对任务耗时与阶段内行序做归一化（并发完成顺序不在 v1 契约内）。
+- WP-07：`RunContext.events` 为 `Arc<EventBus>`；`Plan::build*` 从 `run.facts` 取 facts（不再单独传 `&FactsTable`）；`upgrade::run*` 增加 `&Arc<RunContext>`；新增 `tokio-util`（纯 Rust）。
 - WP-06：`Body` 增加 `ClusterReady`；`Event::ClusterReady` 由 unit variant 变为 `{ ts }`（JSON 仅加 `ts`）；`-v` 实现为每条命令一条摘要，原始 stdout/stderr 在 `-vv`；新增 `time`/`tracing`/`tracing-subscriber`（纯 Rust）。
 - WP-08：`TransportLost` 定义在 `kurin-core::engine`（SSH 返回该错误，执行器 downcast 后按 `Outcome::Unknown` 重新探测）；`forward_remote` 的完整数据回传仅做了请求/端口与回调接线，端到端验证留给 WP-77。
 - WP-04：02 §3.4 的「discover 先于计划构建」与「计划树包含 discover 阶段」按保守方式统一：discover 在构建计划前执行，计划中的 `discover` 阶段是只读记录（check InSync / apply Verified）。`Arch` 移到 `kurin-core::arch`，`kurin-artifact` 继续 re-export。
@@ -94,6 +95,7 @@
 
 （随 WP 完成追加）
 
+- WP-07：`just tier2`、`just tier1-zone`、`just tier1-k3s`（验证 zone/Blackboard/续跑）。
 - WP-06：`just tier1 && just tier1-test`，再执行 `target/tier1/debug/kurin logs --last -vv`，确认包含 kubeadm init 全量输出与时间戳。
 - WP-08：`just tier0 tier0-test`；转发集成 `cargo test -p kurin --test ssh_docker -- --ignored --nocapture`。
 - WP-04：`e2e/tier1/mixed-arch.md`（x86 控制机 + qemu/multipass arm64 节点，含 `--dry-run --check` 断言 discover 阶段与 arm64 制品行、离线 `--arch amd64,arm64`）；回归 `just tier1`（up/offline/precheck/nonroot）与 `just tier2` 升级路径。

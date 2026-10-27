@@ -13,8 +13,9 @@ use std::sync::Arc;
 use kurin_config::Cluster;
 use miette::Result;
 
-use kurin_artifact::zone::Zone;
 use kurin_core::engine::{Drift, Outcome, Session, Stage, Task};
+use kurin_core::run::RunContext;
+use kurin_core::zone::Zone;
 
 /// cilium/cilium image version the CLI installs. The CLI itself is pinned
 /// separately in the artifact manifest (`cilium-cli`); 0.20.x ↔ 1.20.x.
@@ -29,10 +30,11 @@ pub struct Cilium {
     node_name: String,
     node_internal_ip: String,
     pod_cidr: String,
+    run: Arc<RunContext>,
 }
 
 impl Cilium {
-    pub fn new(cluster: &Cluster) -> Self {
+    pub fn new(cluster: &Cluster, run: &Arc<RunContext>) -> Self {
         let cp = cluster.control_plane().next();
         Self {
             node_name: cp.map(|n| n.name.clone()).unwrap_or_default(),
@@ -40,6 +42,7 @@ impl Cilium {
                 .map(|n| n.internal_address.to_string())
                 .unwrap_or_default(),
             pod_cidr: cluster.pod_cidr.to_string(),
+            run: Arc::clone(run),
         }
     }
 
@@ -117,7 +120,7 @@ impl Task for Cilium {
                 v.stderr.lines().next_back().unwrap_or("")
             ));
         }
-        let zone_cn = kurin_artifact::artifact::zone() == Zone::Cn;
+        let zone_cn = self.run.sources.zone == Zone::Cn;
         let out = session.exec(&self.install_command(zone_cn)).await?;
         if out.ok() {
             Ok(Outcome::Verified)
@@ -131,8 +134,8 @@ impl Task for Cilium {
 }
 
 /// Contract for the cni module dispatcher (wired by the integrator).
-pub fn plugin(cluster: &Cluster) -> Result<Arc<dyn Task>> {
-    Ok(Arc::new(Cilium::new(cluster)))
+pub fn plugin(cluster: &Cluster, run: &Arc<RunContext>) -> Result<Arc<dyn Task>> {
+    Ok(Arc::new(Cilium::new(cluster, run)))
 }
 
 #[cfg(test)]
@@ -233,7 +236,7 @@ mod tests {
 
     #[test]
     fn plugin_contract_returns_cilium_task_on_first_cp() {
-        let task = plugin(&cluster("10.244.0.0/16")).unwrap();
+        let task = plugin(&cluster("10.244.0.0/16"), &crate::test_util::run()).unwrap();
         assert_eq!(task.id(), "cni/cilium@m1");
         assert_eq!(task.stage(), Stage::Cni);
         assert_eq!(task.node(), "m1");
@@ -241,7 +244,8 @@ mod tests {
 
     #[test]
     fn install_command_carries_cidr_version_and_service_host() {
-        let cmd = Cilium::new(&cluster("10.244.0.0/16")).install_command(false);
+        let cmd =
+            Cilium::new(&cluster("10.244.0.0/16"), &crate::test_util::run()).install_command(false);
         assert!(cmd.contains("cilium install --version 1.20.4"), "{cmd}");
         assert!(
             cmd.contains("--kubeconfig /etc/kubernetes/admin.conf"),
@@ -258,7 +262,8 @@ mod tests {
 
     #[test]
     fn install_command_cn_zone_overrides_image_repos() {
-        let cmd = Cilium::new(&cluster("10.244.0.0/16")).install_command(true);
+        let cmd =
+            Cilium::new(&cluster("10.244.0.0/16"), &crate::test_util::run()).install_command(true);
         assert!(
             cmd.contains("--set image.repository=quay.m.daocloud.io/cilium/cilium"),
             "{cmd}"
@@ -279,7 +284,7 @@ mod tests {
     #[tokio::test]
     async fn check_in_sync_when_desired_equals_ready_and_positive() {
         let session = ScriptSession::new(vec![output(0, "1 1", "")]);
-        let seen = Cilium::new(&cluster("10.244.0.0/16"))
+        let seen = Cilium::new(&cluster("10.244.0.0/16"), &crate::test_util::run())
             .check(&session)
             .await
             .unwrap();
@@ -291,7 +296,7 @@ mod tests {
     #[tokio::test]
     async fn check_drifted_when_ready_lags_desired() {
         let session = ScriptSession::new(vec![output(0, "2 1", "")]);
-        let seen = Cilium::new(&cluster("10.244.0.0/16"))
+        let seen = Cilium::new(&cluster("10.244.0.0/16"), &crate::test_util::run())
             .check(&session)
             .await
             .unwrap();
@@ -301,14 +306,14 @@ mod tests {
     #[tokio::test]
     async fn check_drifted_on_zero_desired_or_missing_ds() {
         let session = ScriptSession::new(vec![output(0, "0 0", "")]);
-        let seen = Cilium::new(&cluster("10.244.0.0/16"))
+        let seen = Cilium::new(&cluster("10.244.0.0/16"), &crate::test_util::run())
             .check(&session)
             .await
             .unwrap();
         assert!(matches!(seen, Drift::Drifted(_)));
 
         let session = ScriptSession::new(vec![output(1, "", "NotFound")]);
-        let seen = Cilium::new(&cluster("10.244.0.0/16"))
+        let seen = Cilium::new(&cluster("10.244.0.0/16"), &crate::test_util::run())
             .check(&session)
             .await
             .unwrap();
@@ -321,7 +326,9 @@ mod tests {
             output(0, "Client: 0.20.1", ""),
             output(1, "", "some helm error\nTimed out waiting for cilium"),
         ]);
-        let result = Cilium::new(&cluster("10.244.0.0/16")).apply(&session).await;
+        let result = Cilium::new(&cluster("10.244.0.0/16"), &crate::test_util::run())
+            .apply(&session)
+            .await;
         let err = result.unwrap_err().to_string();
         assert!(err.contains("Timed out waiting for cilium"), "{err}");
         let commands = session.commands.lock().unwrap();
@@ -333,7 +340,9 @@ mod tests {
     #[tokio::test]
     async fn apply_fails_fast_when_cli_is_missing() {
         let session = ScriptSession::new(vec![output(127, "", "cilium: command not found")]);
-        let result = Cilium::new(&cluster("10.244.0.0/16")).apply(&session).await;
+        let result = Cilium::new(&cluster("10.244.0.0/16"), &crate::test_util::run())
+            .apply(&session)
+            .await;
         let err = result.unwrap_err().to_string();
         assert!(err.contains("cilium CLI missing"), "{err}");
         assert!(err.contains("command not found"), "{err}");

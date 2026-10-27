@@ -30,6 +30,7 @@ use crate::engine::{
 };
 use crate::events::{Body, Envelope, EventBus, Level, Stream as EventStream};
 use crate::plan::Plan;
+use crate::run::RunContext;
 use crate::state::RunState;
 
 /// Session factory: tasks resolve their node's session by name.
@@ -89,8 +90,13 @@ pub async fn run_with(
     emit: &mut impl FnMut(Event),
     opts: RunOptions,
 ) -> Result<()> {
-    let bus = Arc::new(EventBus::new(opts.op_id.clone()));
-    run_with_bus(plan, pool, &bus, emit, opts).await
+    let run = Arc::new(RunContext::new(
+        opts.op_id.clone(),
+        opts.cluster.clone(),
+        crate::run::ArtifactSources::embedded(),
+    ));
+    let bus = Arc::clone(&run.events);
+    run_with_bus(plan, pool, &run, &bus, emit, opts).await
 }
 
 /// Run with a caller-owned bus. The CLI attaches the terminal renderer, the
@@ -99,12 +105,18 @@ pub async fn run_with(
 pub async fn run_with_bus(
     plan: &mut Plan,
     pool: &Arc<dyn SessionPool>,
+    run: &Arc<RunContext>,
     bus: &Arc<EventBus>,
     emit: &mut impl FnMut(Event),
     opts: RunOptions,
 ) -> Result<()> {
+    let cluster = if opts.cluster.is_empty() {
+        run.cluster.clone()
+    } else {
+        opts.cluster.clone()
+    };
     let mut state = match opts.state_file {
-        Some(path) => RunState::open(path, opts.cluster, opts.resume)?,
+        Some(path) => RunState::open(path, cluster, opts.resume)?,
         None => RunState::disabled(),
     };
     // One subscription for the whole run: stages are serial, and the
@@ -114,6 +126,9 @@ pub async fn run_with_bus(
     let mut rx = bus.subscribe();
 
     for &idx in &plan.stages {
+        if run.cancel.is_cancelled() {
+            return Err(miette::miette!("operation cancelled"));
+        }
         let node = &mut plan.graph[idx];
         let stage = node.stage;
         let phase = stage.label().to_string();

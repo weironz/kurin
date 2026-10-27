@@ -146,6 +146,12 @@ async fn run_offline_requires_the_bundle_manifest() {
         &pool,
         kurin::upgrade::UpgradeOptions::default(),
         &kurin::facts::FactsTable::synthetic(&cluster()).unwrap(),
+        &kurin::run::RunContext::new(
+            "test-op",
+            "offline",
+            kurin::run::ArtifactSources::embedded(),
+        )
+        .into(),
     )
     .await
     .unwrap_err();
@@ -177,6 +183,12 @@ async fn run_offline_reports_a_bundle_without_kubeadm() {
         &pool,
         kurin::upgrade::UpgradeOptions::default(),
         &kurin::facts::FactsTable::synthetic(&cluster()).unwrap(),
+        &kurin::run::RunContext::new(
+            "test-op",
+            "offline",
+            kurin::run::ArtifactSources::embedded(),
+        )
+        .into(),
     )
     .await
     .unwrap_err();

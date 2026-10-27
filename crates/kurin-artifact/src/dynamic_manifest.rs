@@ -48,8 +48,12 @@ const REGISTRY_ACCEPT: &str = "Accept: application/vnd.oci.image.index.v1+json, 
 /// Compatibility entry point: without an observed cluster version there is
 /// nothing to compare minors against, so `target` doubles as the current
 /// version (used by `add nodes`, where the cluster already runs `target`).
-pub async fn k8s_manifest_for(target: &Version, arch: Arch) -> Result<ArtifactManifest> {
-    k8s_manifest_for_from(target, target, arch).await
+pub async fn k8s_manifest_for(
+    target: &Version,
+    arch: Arch,
+    zone: crate::zone::Zone,
+) -> Result<ArtifactManifest> {
+    k8s_manifest_for_from(target, target, arch, zone).await
 }
 
 /// The bundle manifest re-pinned from `current` to `target`, enforcing
@@ -58,6 +62,7 @@ pub async fn k8s_manifest_for_from(
     current: &Version,
     target: &Version,
     arch: Arch,
+    zone: crate::zone::Zone,
 ) -> Result<ArtifactManifest> {
     check_minor_hop(current, target)?;
 
@@ -65,7 +70,7 @@ pub async fn k8s_manifest_for_from(
     pin_kubernetes_binaries(&mut manifest, target, arch).await?;
 
     eprintln!("[manifest] resolving control-plane images for v{target} via kubeadm ...");
-    let kubeadm = fetch_kubeadm(&manifest, target, arch).await?;
+    let kubeadm = fetch_kubeadm(&manifest, target, arch, zone).await?;
     let listing = kubeadm_images_list(kubeadm, target.clone()).await?;
     let images = parse_kubeadm_images(&listing);
     let missing = missing_images(&images);
@@ -78,7 +83,7 @@ pub async fn k8s_manifest_for_from(
 
     let mut pinned = Vec::with_capacity(images.len());
     for image in &images {
-        let digest = fetch_image_digest(&image.reference())
+        let digest = fetch_image_digest(&image.reference(), zone)
             .await
             .map_err(|e| miette::miette!("resolve digest for {}: {e}", image.reference()))?;
         pinned.push((image.clone(), digest));
@@ -155,11 +160,12 @@ async fn fetch_kubeadm(
     manifest: &ArtifactManifest,
     target: &Version,
     arch: Arch,
+    zone: crate::zone::Zone,
 ) -> Result<std::path::PathBuf> {
     let store = ArtifactStore::open_default()?;
     let spec = manifest.spec("kubeadm", arch)?;
     debug_assert_eq!(&spec.version, &target.to_string());
-    let path = store.fetch(&spec).await?;
+    let path = store.fetch(&spec, zone).await?;
     use std::os::unix::fs::PermissionsExt;
     let mut perms = std::fs::metadata(&path)
         .map_err(|e| miette::miette!("stat {}: {e}", path.display()))?
@@ -327,8 +333,8 @@ fn apply_image_pins(
 
 /// Fetch an image's index digest, preferring the zone-rewritten registry and
 /// falling back to the upstream reference when a mirror cannot answer.
-async fn fetch_image_digest(reference: &str) -> Result<String> {
-    let rewritten = crate::zone::rewrite_image_ref(reference, crate::artifact::zone());
+async fn fetch_image_digest(reference: &str, zone: crate::zone::Zone) -> Result<String> {
+    let rewritten = crate::zone::rewrite_image_ref(reference, zone);
     let mut candidates: Vec<&str> = Vec::with_capacity(2);
     candidates.push(&rewritten);
     if rewritten != reference {

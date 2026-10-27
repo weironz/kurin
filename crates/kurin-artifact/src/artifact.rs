@@ -29,6 +29,7 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 use crate::store::BlobStore;
+use kurin_core::run::ArtifactSources;
 
 /// The pinned manifest, embedded at compile time.
 pub const MANIFEST_JSON: &str = include_str!("artifacts/manifest.json");
@@ -150,30 +151,15 @@ pub struct ArtifactEntry {
     pub optional: bool,
 }
 
-/// Zone for all artifact downloads, set once at startup (`KURIN_ZONE=cn`
-/// or `[artifacts] zone`). Reads are plain `OnceLock` gets — set-once-write.
-static ZONE: std::sync::OnceLock<crate::zone::Zone> = std::sync::OnceLock::new();
-
-pub fn set_zone(zone: crate::zone::Zone) {
-    let _ = ZONE.set(zone);
-}
-
-pub fn zone() -> crate::zone::Zone {
-    *ZONE.get().unwrap_or(&crate::zone::Zone::Global)
-}
-
-/// Manifest override for this process: lets `add nodes`/`upgrade` install
-/// the *cluster's* version instead of the compile-time table.
-static MANIFEST_OVERRIDE: std::sync::OnceLock<ArtifactManifest> = std::sync::OnceLock::new();
-
-pub fn set_manifest_override(manifest: ArtifactManifest) {
-    let _ = MANIFEST_OVERRIDE.set(manifest);
-}
-
-/// The manifest install tasks must use: the override if set, else embedded.
-pub fn install_manifest() -> Result<ArtifactManifest, ArtifactError> {
-    match MANIFEST_OVERRIDE.get() {
-        Some(m) => Ok(m.clone()),
+/// The manifest install tasks must use for this run: the run's dynamic
+/// manifest when it carries one (`add nodes`/`upgrade` install the
+/// *cluster's* version), else the compile-time table.
+///
+/// The sources live in [`kurin_core::run::ArtifactSources`]; there is no
+/// process-global override (ADR-18).
+pub fn install_manifest(sources: &ArtifactSources) -> Result<ArtifactManifest, ArtifactError> {
+    match &sources.manifest_json {
+        Some(json) => ArtifactManifest::from_json(json),
         None => ArtifactManifest::embedded(),
     }
 }
@@ -520,7 +506,11 @@ impl ArtifactStore {
     /// path. Idempotent: a verifying cache hit skips the download.
     /// Downloads go to `<file>.part` and are renamed after the sha256
     /// matches; a mismatch deletes the payload and fails.
-    pub async fn fetch(&self, spec: &ArtifactSpec) -> Result<PathBuf, ArtifactError> {
+    pub async fn fetch(
+        &self,
+        spec: &ArtifactSpec,
+        zone: crate::zone::Zone,
+    ) -> Result<PathBuf, ArtifactError> {
         let dir = self.artifact_dir(spec);
         std::fs::create_dir_all(&dir)?;
         let expected = spec
@@ -537,13 +527,13 @@ impl ArtifactStore {
                 if self.is_cached(spec)? {
                     return Ok(dest);
                 }
-                let url = crate::zone::rewrite(&spec.url(), crate::artifact::zone());
+                let url = crate::zone::rewrite(&spec.url(), zone);
                 download_verified(&url, &dest, &expected, &spec.name, &[]).await?;
                 Ok(dest)
             }
             ArtifactKind::Image => {
                 if !self.is_cached(spec)? {
-                    self.fetch_image(spec, &dir, &expected).await?;
+                    self.fetch_image(spec, &dir, &expected, zone).await?;
                 }
                 Ok(dir.join(spec.file_name()))
             }
@@ -555,10 +545,11 @@ impl ArtifactStore {
         &self,
         manifest: &ArtifactManifest,
         arch: Arch,
+        zone: crate::zone::Zone,
     ) -> Result<Vec<PathBuf>, ArtifactError> {
         let mut paths = Vec::new();
         for spec in manifest.specs(arch)? {
-            paths.push(self.fetch(&spec).await?);
+            paths.push(self.fetch(&spec, zone).await?);
         }
         Ok(paths)
     }
@@ -571,8 +562,9 @@ impl ArtifactStore {
         spec: &ArtifactSpec,
         dir: &Path,
         expected_index: &str,
+        zone: crate::zone::Zone,
     ) -> Result<(), ArtifactError> {
-        let reference = crate::zone::rewrite_image_ref(&spec.url(), crate::artifact::zone());
+        let reference = crate::zone::rewrite_image_ref(&spec.url(), zone);
         let (registry, repo, tag) = parse_image_ref(&reference)?;
         // Docker Hub addresses its v2 API as registry-1.docker.io; the
         // reference keeps "docker.io" (containerd's certs.d key).

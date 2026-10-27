@@ -8,7 +8,7 @@
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock};
 use tokio::sync::Mutex;
 
 use kurin_config::Node;
@@ -16,6 +16,7 @@ use miette::Result;
 
 use kurin_artifact::artifact::{Arch, ArtifactKind, ArtifactManifest, ArtifactSpec, ArtifactStore};
 use kurin_core::engine::{Drift, Outcome, Session, Stage, Task, UploadSource};
+use kurin_core::run::RunContext;
 
 /// name -> (install method, remote target path)
 /// Binary tarballs install with tar; plain binaries are written directly.
@@ -79,30 +80,30 @@ fn install_for(name: &str) -> Option<Install> {
 pub struct ArtifactsInstall {
     node: Node,
     arch: Arch,
-    /// Offline bundle directory; None fetches into the local cache.
-    offline: Option<std::path::PathBuf>,
     /// Runtime selection (CRI-O clusters skip the containerd payload).
     runtime: kurin_config::RuntimeKind,
+    /// Run sources: offline dir, manifest override and mirror zone.
+    run: Arc<RunContext>,
 }
 
 impl ArtifactsInstall {
     pub fn new(
         node: &Node,
         arch: Arch,
-        offline: Option<std::path::PathBuf>,
         runtime: kurin_config::RuntimeKind,
+        run: &Arc<RunContext>,
     ) -> Self {
         Self {
             node: node.clone(),
             arch,
-            offline,
             runtime,
+            run: Arc::clone(run),
         }
     }
 
     /// Resolve the local payload for one artifact, online or offline.
     async fn payload(&self, spec: &ArtifactSpec) -> miette::Result<PathBuf> {
-        match &self.offline {
+        match &self.run.sources.offline_dir {
             Some(dir) => {
                 let dm = ArtifactManifest::from_dir(dir)?;
                 let found = dm.find(&spec.name, self.arch).ok_or_else(|| {
@@ -112,7 +113,7 @@ impl ArtifactsInstall {
             }
             None => {
                 let store = ArtifactStore::open_default()?;
-                Ok(store.fetch(spec).await?)
+                Ok(store.fetch(spec, self.run.sources.zone).await?)
             }
         }
     }
@@ -173,12 +174,12 @@ impl Task for ArtifactsInstall {
         static FETCH_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
         // Offline installs never touch the network: the fetch lock only
         // matters for online downloads.
-        let _guard = if self.offline.is_none() {
+        let _guard = if self.run.sources.offline_dir.is_none() {
             Some(FETCH_LOCK.lock().await)
         } else {
             None
         };
-        let manifest = kurin_artifact::artifact::install_manifest()?;
+        let manifest = kurin_artifact::artifact::install_manifest(&self.run.sources)?;
 
         session
             .exec("mkdir -p /usr/local/bin /opt/cni/bin /etc/kurin")

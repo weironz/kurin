@@ -16,9 +16,9 @@
 //! - Bootstrap: first control-plane server init (`cluster-init` on HA).
 //! - ApiReady: the VIP-backed API answers `/readyz` before anyone joins.
 //! - Join: remaining servers + all workers. The node token is harvested
-//!   from the first server into kurin's local cache (same rendezvous
-//!   pattern as the kubeadm track's join material), because the executor
-//!   hands every task only its own node's session.
+//!   from the first server into the run's Blackboard (`K3S_TOKEN`,
+//!   `Persist::RunStateSecret`), because the executor hands every task only
+//!   its own node's session.
 //! - Post: copy `k3s.yaml` to `/root/.kube/config` on the first server.
 //!
 //! k3s embeds kubectl (`k3s kubectl`); there is no standalone kubectl on
@@ -42,12 +42,14 @@ use std::sync::Arc;
 use kurin_config::{Cluster, CniConfig, HaMode, Node, NodeRole};
 use miette::Result;
 
-use crate::tasks::bootstrap::{join_material_path, DEFAULT_VIP_IFACE};
+use crate::tasks::bootstrap::DEFAULT_VIP_IFACE;
 use crate::tasks::external_lb::ExternalLb;
 use crate::tasks::prepare::sha256_hex;
 use crate::templates;
 use kurin_artifact::artifact::{Arch, ArtifactStore};
+use kurin_core::blackboard::K3S_TOKEN;
 use kurin_core::engine::{Drift, Outcome, Session, Stage, Task};
+use kurin_core::run::RunContext;
 
 /// The one config file k3s.service loads (`--config`).
 pub const K3S_CONFIG: &str = "/etc/rancher/k3s/config.yaml";
@@ -85,17 +87,20 @@ const HOST_ARCH: Arch = if cfg!(target_arch = "x86_64") {
 /// it (no registry reachable); in the `cn` zone k3s's upstream registry
 /// pulls (rancher-mirrored images) are too slow/unreliable to lean on, so
 /// the images are pre-seeded the same way.
-fn airgap_needed(cluster: &Cluster) -> bool {
+fn airgap_needed(cluster: &Cluster, run: &RunContext) -> bool {
     cluster.offline_dir.is_some()
         || cluster.zone.as_deref() == Some("cn")
-        // env/config zone is set process-wide at startup; honor it too.
-        || kurin_artifact::artifact::zone() == kurin_artifact::zone::Zone::Cn
+        // The effective zone (env beats config) lives in the run sources.
+        || run.sources.zone == kurin_core::zone::Zone::Cn
 }
 
 /// k3s-specific tasks with their stage assignment, for the integrator's
 /// distribution branch in `plan.rs`. Order within a stage follows node
 /// order in the cluster config; the executor parallelizes stage members.
-pub fn stage_tasks(cluster: &Cluster) -> Result<Vec<(Stage, Arc<dyn Task>)>> {
+pub fn stage_tasks(
+    cluster: &Cluster,
+    run: &Arc<RunContext>,
+) -> Result<Vec<(Stage, Arc<dyn Task>)>> {
     let mut out: Vec<(Stage, Arc<dyn Task>)> = Vec::new();
     for node in &cluster.nodes {
         if node.role == NodeRole::Lb {
@@ -105,11 +110,8 @@ pub fn stage_tasks(cluster: &Cluster) -> Result<Vec<(Stage, Arc<dyn Task>)>> {
             continue;
         }
         out.push((Stage::Prepare, Arc::new(K3sUnit::new(node))));
-        if airgap_needed(cluster) {
-            out.push((
-                Stage::Prepare,
-                Arc::new(K3sAirgapImport::new(cluster, node)),
-            ));
+        if airgap_needed(cluster, run) {
+            out.push((Stage::Prepare, Arc::new(K3sAirgapImport::new(node, run))));
         }
     }
     let Some(first_cp) = cluster.control_plane().next() else {
@@ -118,7 +120,7 @@ pub fn stage_tasks(cluster: &Cluster) -> Result<Vec<(Stage, Arc<dyn Task>)>> {
         return Ok(out);
     };
     for cp in cluster.control_plane() {
-        if let Some(task) = K3sKubeVip::new(cluster, cp) {
+        if let Some(task) = K3sKubeVip::new(cluster, cp, run) {
             out.push((Stage::Vip, Arc::new(task)));
         }
     }
@@ -135,7 +137,7 @@ pub fn stage_tasks(cluster: &Cluster) -> Result<Vec<(Stage, Arc<dyn Task>)>> {
     }
     out.push((
         Stage::Bootstrap,
-        Arc::new(K3sServerInit::new(cluster, first_cp)),
+        Arc::new(K3sServerInit::new(cluster, first_cp, run)),
     ));
     out.push((
         Stage::ApiReady,
@@ -146,41 +148,10 @@ pub fn stage_tasks(cluster: &Cluster) -> Result<Vec<(Stage, Arc<dyn Task>)>> {
         .iter()
         .filter(|n| n.name != first_cp.name && n.role != NodeRole::Lb)
     {
-        out.push((Stage::Join, Arc::new(K3sJoin::new(cluster, node))));
+        out.push((Stage::Join, Arc::new(K3sJoin::new(cluster, node, run))));
     }
     out.push((Stage::Post, Arc::new(K3sKubeconfig::new(cluster, first_cp))));
     Ok(out)
-}
-
-// ---------------------------------------------------------------------------
-// Node-token rendezvous (local cache, never remote state)
-// ---------------------------------------------------------------------------
-
-/// Where the init task parks the harvested node token for the join tasks.
-/// Same cache root as the kubeadm track's join material; distinct file.
-pub fn token_path(cluster: &str) -> PathBuf {
-    join_material_path(cluster).join("k3s-token.env")
-}
-
-/// Read the harvested token, if init already collected it.
-pub fn read_token(cluster: &str) -> Option<String> {
-    let raw = std::fs::read_to_string(token_path(cluster)).ok()?;
-    let token = raw
-        .lines()
-        .find_map(|l| l.strip_prefix("token="))?
-        .trim()
-        .to_string();
-    (!token.is_empty()).then_some(token)
-}
-
-fn write_token(cluster: &str, token: &str) -> Result<()> {
-    let path = token_path(cluster);
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)
-            .map_err(|e| miette::miette!("create {}: {e}", dir.display()))?;
-    }
-    std::fs::write(&path, format!("token={token}\n"))
-        .map_err(|e| miette::miette!("write {}: {e}", path.display()))
 }
 
 // ---------------------------------------------------------------------------
@@ -285,12 +256,13 @@ pub struct K3sAirgapImport {
     /// Manifest pin; `None` would mean an unpinned entry — treated as
     /// "trust whatever bytes arrived" (never happens for k3s-airgap).
     expected_sha: Option<String>,
-    offline_dir: Option<PathBuf>,
+    /// Run sources: offline dir, manifest override and mirror zone.
+    run: Arc<RunContext>,
 }
 
 impl K3sAirgapImport {
-    pub fn new(cluster: &Cluster, node: &Node) -> Self {
-        let manifest = kurin_artifact::artifact::install_manifest()
+    pub fn new(node: &Node, run: &Arc<RunContext>) -> Self {
+        let manifest = kurin_artifact::artifact::install_manifest(&run.sources)
             .expect("embedded artifact manifest parses");
         let spec = manifest
             .spec(K3S_AIRGAP_ARTIFACT, HOST_ARCH)
@@ -299,15 +271,16 @@ impl K3sAirgapImport {
             node_name: node.name.clone(),
             remote: format!("{}/{}", K3S_AIRGAP_IMAGES_DIR, spec.file_name()),
             expected_sha: spec.expected_sha256(),
-            offline_dir: cluster.offline_dir.clone(),
+            run: Arc::clone(run),
         }
     }
 
     /// Resolve the local payload: the verified offline bundle when
     /// configured, else the (possibly zone-rewritten) local cache fetch.
     async fn payload(&self) -> Result<PathBuf> {
-        if let Some(dir) = &self.offline_dir {
-            let dm = kurin_artifact::artifact::ArtifactManifest::from_dir(dir)?;
+        if let Some(dir) = &self.run.sources.offline_dir {
+            let manifest = kurin_artifact::artifact::install_manifest(&self.run.sources)?;
+            let dm = kurin_artifact::artifact::ArtifactManifest::from_dir_with(dir, &manifest)?;
             let found = dm.find(K3S_AIRGAP_ARTIFACT, HOST_ARCH).ok_or_else(|| {
                 miette::miette!(
                     "offline bundle {} lacks the {K3S_AIRGAP_ARTIFACT} tar ({}, {}); \
@@ -319,9 +292,11 @@ impl K3sAirgapImport {
             })?;
             Ok(found.file.clone())
         } else {
-            let spec = kurin_artifact::artifact::install_manifest()?
+            let spec = kurin_artifact::artifact::install_manifest(&self.run.sources)?
                 .spec(K3S_AIRGAP_ARTIFACT, HOST_ARCH)?;
-            Ok(ArtifactStore::open_default()?.fetch(&spec).await?)
+            Ok(ArtifactStore::open_default()?
+                .fetch(&spec, self.run.sources.zone)
+                .await?)
         }
     }
 }
@@ -402,7 +377,7 @@ pub struct K3sKubeVip {
 }
 
 impl K3sKubeVip {
-    pub fn new(cluster: &Cluster, node: &Node) -> Option<Self> {
+    pub fn new(cluster: &Cluster, node: &Node, run: &Arc<RunContext>) -> Option<Self> {
         // kube-vip manages the VIP only in KubeVip mode (kurin-lb hands
         // the address to keepalived on the LB nodes instead).
         if cluster.ha_mode != HaMode::KubeVip {
@@ -414,7 +389,7 @@ impl K3sKubeVip {
                 "ghcr.io/kube-vip/kube-vip:{}",
                 kurin_artifact::version::KUBE_VIP_VERSION
             ),
-            kurin_artifact::artifact::zone(),
+            run.sources.zone,
         );
         let rendered = templates::render(
             "kubevip/kube-vip-k3s.yaml.j2",
@@ -483,16 +458,16 @@ impl Task for K3sKubeVip {
 /// config.yaml (`cluster-init: true` when there is more than one server,
 /// tls-san covering the VIP and every server's internal IP, traefik and
 /// servicelb disabled, kubeconfig readable), (re)starts k3s and waits for
-/// the local API to serve /readyz. Harvests the node token into kurin's
-/// local cache for the Join tasks.
+/// the local API to serve /readyz. Harvests the node token onto the run's
+/// Blackboard for the Join tasks.
 pub struct K3sServerInit {
     node_name: String,
-    cluster_name: String,
     rendered: String,
+    run: Arc<RunContext>,
 }
 
 impl K3sServerInit {
-    pub fn new(cluster: &Cluster, first: &Node) -> Self {
+    pub fn new(cluster: &Cluster, first: &Node, run: &Arc<RunContext>) -> Self {
         let cluster_init = cluster.control_plane().count() > 1;
         let mut tls_sans: Vec<String> = Vec::new();
         if let Some(vip) = cluster.vip {
@@ -520,8 +495,8 @@ impl K3sServerInit {
         .expect("embedded k3s server config template renders");
         Self {
             node_name: first.name.clone(),
-            cluster_name: cluster.name.clone(),
             rendered,
+            run: Arc::clone(run),
         }
     }
 
@@ -556,7 +531,7 @@ impl K3sServerInit {
         }
     }
 
-    /// Park the node token in the local cache for the Join tasks.
+    /// Park the node token on the Blackboard for the Join tasks.
     async fn harvest_token(&self, session: &dyn Session) -> Result<()> {
         let out = session.exec(&format!("cat {K3S_NODE_TOKEN}")).await?;
         let token = out.stdout.trim();
@@ -567,7 +542,10 @@ impl K3sServerInit {
                 out.stderr.lines().last().unwrap_or("empty token")
             ));
         }
-        write_token(&self.cluster_name, token)
+        self.run
+            .bb
+            .set(K3S_TOKEN, token.to_string())
+            .map_err(|e| miette::miette!("store k3s token: {e}"))
     }
 }
 
@@ -592,7 +570,7 @@ impl Task for K3sServerInit {
                 "k3s API not serving /readyz (cluster not initialized)".into(),
             ));
         }
-        if read_token(&self.cluster_name).is_some() {
+        if self.run.bb.get(&K3S_TOKEN).is_some() {
             Ok(Drift::InSync)
         } else {
             // Converged by an older kurin that died before harvesting;
@@ -751,13 +729,13 @@ fn join_config_yaml(server: &str, token: &str, node_name: &str) -> String {
 /// so the probe is issued from the joining node itself.
 pub struct K3sJoin {
     node_name: String,
-    cluster_name: String,
     is_control_plane: bool,
     endpoint: String,
+    run: Arc<RunContext>,
 }
 
 impl K3sJoin {
-    pub fn new(cluster: &Cluster, node: &Node) -> Self {
+    pub fn new(cluster: &Cluster, node: &Node, run: &Arc<RunContext>) -> Self {
         let first_cp = cluster.control_plane().next();
         let endpoint = cluster.vip.map(|v| v.to_string()).unwrap_or_else(|| {
             first_cp
@@ -766,9 +744,9 @@ impl K3sJoin {
         });
         Self {
             node_name: node.name.clone(),
-            cluster_name: cluster.name.clone(),
             is_control_plane: node.role == NodeRole::ControlPlane,
             endpoint,
+            run: Arc::clone(run),
         }
     }
 
@@ -831,13 +809,13 @@ impl Task for K3sJoin {
     }
 
     async fn apply(&self, session: &dyn Session) -> Result<Outcome> {
-        let Some(token) = read_token(&self.cluster_name) else {
-            // Init said it harvested; a missing file means a stale cache
-            // or a crashed harvest. Unknown -> the engine re-probes (init
-            // check Drifted on the missing token) and harvests again.
+        let Some(token) = self.run.bb.get(&K3S_TOKEN) else {
+            // Init said it harvested; a missing entry means a stale run
+            // state or a crashed harvest. Unknown -> the engine re-probes
+            // (init check Drifted on the missing token) and harvests again.
             return Ok(Outcome::Unknown(format!(
                 "k3s token for cluster {} not harvested yet",
-                self.cluster_name
+                self.run.cluster
             )));
         };
         let rendered = join_config_yaml(
@@ -1151,7 +1129,7 @@ mod tests {
 
     #[test]
     fn server_config_ha_sets_cluster_init_and_sans() {
-        let t = K3sServerInit::new(&ha(), &ha().nodes[0]);
+        let t = K3sServerInit::new(&ha(), &ha().nodes[0], &crate::test_util::run());
         assert!(t.rendered.contains("cluster-init: true"));
         assert!(t.rendered.contains("write-kubeconfig-mode: \"0644\""));
         assert!(t.rendered.contains("disable:"));
@@ -1173,7 +1151,7 @@ mod tests {
     #[test]
     fn server_config_single_cp_omits_cluster_init() {
         let c = single();
-        let t = K3sServerInit::new(&c, &c.nodes[0]);
+        let t = K3sServerInit::new(&c, &c.nodes[0], &crate::test_util::run());
         assert!(!t.rendered.contains("cluster-init"));
         assert!(!t.rendered.contains("flannel-backend"));
     }
@@ -1186,7 +1164,7 @@ mod tests {
             None,
             CniConfig::None,
         );
-        let t = K3sServerInit::new(&c, &c.nodes[0]);
+        let t = K3sServerInit::new(&c, &c.nodes[0], &crate::test_util::run());
         assert!(t.rendered.contains("flannel-backend: none"));
         assert!(t.rendered.contains("disable-network-policy: true"));
     }
@@ -1194,7 +1172,7 @@ mod tests {
     #[test]
     fn kubevip_lands_in_k3s_pod_manifest_dir() {
         let c = ha();
-        let t = K3sKubeVip::new(&c, &c.nodes[0]).expect("vip configured");
+        let t = K3sKubeVip::new(&c, &c.nodes[0], &crate::test_util::run()).expect("vip configured");
         assert!(t.rendered.contains("value: \"192.168.10.100\""));
         assert!(t.rendered.contains("10.42.0.0/16"));
         // The k3s kubeconfig is the source; kube-vip only auto-discovers
@@ -1214,13 +1192,14 @@ mod tests {
                 CniConfig::Flannel,
             ),
             &c.nodes[0],
+            &crate::test_util::run(),
         )
         .is_none());
     }
 
     #[test]
     fn stage_tasks_covers_all_stages_and_nodes() {
-        let tasks = stage_tasks(&ha()).unwrap();
+        let tasks = stage_tasks(&ha(), &crate::test_util::run()).unwrap();
         let ids: Vec<String> = tasks
             .iter()
             .map(|(s, t)| format!("{}:{}", s.label(), t.id()))
@@ -1250,7 +1229,7 @@ mod tests {
         }
         assert!(!ids.iter().any(|i| i == "join:join/k3s@cp1"));
 
-        let single_tasks = stage_tasks(&single()).unwrap();
+        let single_tasks = stage_tasks(&single(), &crate::test_util::run()).unwrap();
         assert!(single_tasks.iter().all(|(s, _)| *s != Stage::Vip));
     }
 
@@ -1259,7 +1238,7 @@ mod tests {
     #[test]
     fn airgap_planned_only_offline_or_cn() {
         let c = single();
-        let online = stage_tasks(&c).unwrap();
+        let online = stage_tasks(&c, &crate::test_util::run()).unwrap();
         assert!(!online.iter().any(|(_, t)| t.id().contains("k3s-airgap")));
 
         for (label, c) in [
@@ -1274,7 +1253,7 @@ mod tests {
                 c
             }),
         ] {
-            let ids: Vec<String> = stage_tasks(&c)
+            let ids: Vec<String> = stage_tasks(&c, &crate::test_util::run())
                 .unwrap()
                 .iter()
                 .map(|(_, t)| t.id())
@@ -1292,8 +1271,8 @@ mod tests {
     fn airgap_remote_path_is_manifest_payload() {
         let mut c = single();
         c.zone = Some("cn".into());
-        let t = K3sAirgapImport::new(&c, &c.nodes[0]);
-        let spec = kurin_artifact::artifact::install_manifest()
+        let t = K3sAirgapImport::new(&c.nodes[0], &crate::test_util::run());
+        let spec = kurin_artifact::artifact::install_manifest(&crate::test_util::run().sources)
             .unwrap()
             .spec(K3S_AIRGAP_ARTIFACT, HOST_ARCH)
             .unwrap();
@@ -1312,7 +1291,7 @@ mod tests {
             node_name: "w1".into(),
             remote: remote.clone(),
             expected_sha: Some(sha256_hex(&bytes)),
-            offline_dir: None,
+            run: crate::test_util::run(),
         };
         let s = MockSession::active();
         assert!(matches!(t.check(&s).await.unwrap(), Drift::Drifted(_)));
@@ -1341,7 +1320,12 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut c = single();
         c.offline_dir = Some(dir.path().to_path_buf());
-        let t = K3sAirgapImport::new(&c, &c.nodes[0]);
+        let run = std::sync::Arc::new(kurin_core::run::RunContext::new(
+            "test-op",
+            &c.name,
+            kurin_core::run::ArtifactSources::embedded().with_offline_dir(c.offline_dir.clone()),
+        ));
+        let t = K3sAirgapImport::new(&c.nodes[0], &run);
         assert!(t.payload().await.is_err(), "empty bundle must not resolve");
     }
 
@@ -1365,7 +1349,7 @@ mod tests {
 
     #[test]
     fn kurin_lb_plans_external_lb_not_kube_vip() {
-        let ids: Vec<String> = stage_tasks(&kurin_lb())
+        let ids: Vec<String> = stage_tasks(&kurin_lb(), &crate::test_util::run())
             .unwrap()
             .iter()
             .map(|(s, t)| format!("{}:{}", s.label(), t.id()))
@@ -1388,7 +1372,7 @@ mod tests {
     fn external_endpoint_plans_no_vip_manager() {
         let mut c = ha();
         c.ha_mode = HaMode::ExternalEndpoint;
-        let ids: Vec<String> = stage_tasks(&c)
+        let ids: Vec<String> = stage_tasks(&c, &crate::test_util::run())
             .unwrap()
             .iter()
             .map(|(s, t)| format!("{}:{}", s.label(), t.id()))
@@ -1418,12 +1402,12 @@ mod tests {
     #[test]
     fn join_probe_uses_role_kubeconfig() {
         let c = ha();
-        let cp = K3sJoin::new(&c, &c.nodes[1]);
+        let cp = K3sJoin::new(&c, &c.nodes[1], &crate::test_util::run());
         assert!(cp
             .get_self()
             .contains("--kubeconfig /etc/rancher/k3s/k3s.yaml"));
         assert!(cp.get_self().contains("get node cp2"));
-        let w = K3sJoin::new(&c, &c.nodes[3]);
+        let w = K3sJoin::new(&c, &c.nodes[3], &crate::test_util::run());
         assert!(w
             .get_self()
             .contains("--kubeconfig /var/lib/rancher/k3s/agent/kubelet.kubeconfig"));
@@ -1435,9 +1419,12 @@ mod tests {
     #[tokio::test]
     async fn init_check_in_sync_when_readyz_ok_and_token_cached() {
         let c = ha();
-        write_token(&c.name, "K10SECRET::node:abc").unwrap();
+        let run = crate::test_util::run();
+        run.bb
+            .set(K3S_TOKEN, "K10SECRET::node:abc".to_string())
+            .unwrap();
         let s = MockSession::active();
-        let t = K3sServerInit::new(&c, &c.nodes[0]);
+        let t = K3sServerInit::new(&c, &c.nodes[0], &run);
         assert!(matches!(t.check(&s).await.unwrap(), Drift::InSync));
     }
 
@@ -1450,7 +1437,7 @@ mod tests {
             CniConfig::Flannel,
         );
         let s = MockSession::active();
-        let t = K3sServerInit::new(&c, &c.nodes[0]);
+        let t = K3sServerInit::new(&c, &c.nodes[0], &crate::test_util::run());
         assert!(matches!(
             t.check(&s).await.unwrap(),
             Drift::Drifted(_) // readyz ok, token not harvested
@@ -1468,7 +1455,8 @@ mod tests {
         let s = MockSession::active();
         s.says(K3S_NODE_TOKEN, "K10SECRET::node:abc");
         // Pre-seed the exact rendered config: nothing to change.
-        let t = K3sServerInit::new(&c, &c.nodes[0]);
+        let run = crate::test_util::run();
+        let t = K3sServerInit::new(&c, &c.nodes[0], &run);
         s.write_file(K3S_CONFIG, t.rendered.as_bytes())
             .await
             .unwrap();
@@ -1477,7 +1465,10 @@ mod tests {
             .commands()
             .iter()
             .any(|cmd| cmd.contains("systemctl restart")));
-        assert!(read_token(&c.name).as_deref() == Some("K10SECRET::node:abc"));
+        assert_eq!(
+            run.bb.get(&K3S_TOKEN).as_deref(),
+            Some("K10SECRET::node:abc")
+        );
     }
 
     #[tokio::test]
@@ -1490,8 +1481,13 @@ mod tests {
         );
         let s = MockSession::active();
         s.says(K3S_NODE_TOKEN, "K10SECRET::node:abc");
-        let t = K3sServerInit::new(&c, &c.nodes[0]);
+        let run = crate::test_util::run();
+        let t = K3sServerInit::new(&c, &c.nodes[0], &run);
         assert!(matches!(t.apply(&s).await.unwrap(), Outcome::Verified));
+        assert_eq!(
+            run.bb.get(&K3S_TOKEN).as_deref(),
+            Some("K10SECRET::node:abc")
+        );
         assert!(s
             .commands()
             .iter()
@@ -1509,7 +1505,7 @@ mod tests {
         );
         let s = MockSession::active();
         s.fail_on.lock().unwrap().push("readyz".into());
-        let t = K3sServerInit::new(&c, &c.nodes[0]);
+        let t = K3sServerInit::new(&c, &c.nodes[0], &crate::test_util::run());
         assert!(matches!(t.apply(&s).await.unwrap(), Outcome::Unknown(_)));
     }
 
@@ -1536,12 +1532,12 @@ mod tests {
         );
         let s = MockSession::active();
         s.says("get node cp2", "cp2");
-        let cp = K3sJoin::new(&c, &c.nodes[1]);
+        let cp = K3sJoin::new(&c, &c.nodes[1], &crate::test_util::run());
         assert!(matches!(cp.check(&s).await.unwrap(), Drift::InSync));
 
         let w = MockSession::active();
         w.says("get node w1", "w1");
-        let worker = K3sJoin::new(&c, &c.nodes[2]);
+        let worker = K3sJoin::new(&c, &c.nodes[2], &crate::test_util::run());
         assert!(matches!(worker.check(&w).await.unwrap(), Drift::InSync));
     }
 
@@ -1556,9 +1552,9 @@ mod tests {
             None,
             CniConfig::Flannel,
         );
-        // No write_token: the harvest cache is empty for this cluster.
+        // No token on the blackboard: the harvest never happened.
         let s = MockSession::active();
-        let w = K3sJoin::new(&c, &c.nodes[1]);
+        let w = K3sJoin::new(&c, &c.nodes[1], &crate::test_util::run());
         assert!(matches!(w.apply(&s).await.unwrap(), Outcome::Unknown(_)));
         assert!(s.commands().is_empty());
     }
@@ -1575,11 +1571,14 @@ mod tests {
             Some("192.168.10.100"),
             CniConfig::Flannel,
         );
-        write_token(&c.name, "K10SECRET::node:abc").unwrap();
+        let run = crate::test_util::run();
+        run.bb
+            .set(K3S_TOKEN, "K10SECRET::node:abc".to_string())
+            .unwrap();
         let s = MockSession::active();
         // Registration lands while the poll loop runs.
         s.says("get node cp2", "cp2");
-        let cp = K3sJoin::new(&c, &c.nodes[1]);
+        let cp = K3sJoin::new(&c, &c.nodes[1], &run);
         assert!(matches!(cp.apply(&s).await.unwrap(), Outcome::Verified));
         let cmds = s.commands().join("\n");
         assert!(cmds.contains("systemctl restart k3s"));
@@ -1592,7 +1591,7 @@ mod tests {
 
         let w = MockSession::active();
         w.says("get node w1", "w1");
-        let worker = K3sJoin::new(&c, &c.nodes[2]);
+        let worker = K3sJoin::new(&c, &c.nodes[2], &run);
         assert!(matches!(worker.apply(&w).await.unwrap(), Outcome::Verified));
     }
 
@@ -1607,10 +1606,13 @@ mod tests {
             None,
             CniConfig::Flannel,
         );
-        write_token(&c.name, "K10SECRET::node:abc").unwrap();
+        let run = crate::test_util::run();
+        run.bb
+            .set(K3S_TOKEN, "K10SECRET::node:abc".to_string())
+            .unwrap();
         let s = MockSession::active();
         s.says("get node w1", "w1");
-        let w = K3sJoin::new(&c, &c.nodes[1]);
+        let w = K3sJoin::new(&c, &c.nodes[1], &run);
         // Pre-seed the exact join config the task would render.
         let rendered = join_config_yaml("https://192.168.10.11:6443", "K10SECRET::node:abc", "w1");
         s.write_file(K3S_CONFIG, rendered.as_bytes()).await.unwrap();

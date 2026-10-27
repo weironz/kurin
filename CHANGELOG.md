@@ -86,6 +86,18 @@ All notable changes to kurin. Format follows Keep a Changelog; semver.
   re-probes the node (`Outcome::Unknown`), never blind-retrying. Read-only
   probes (`Cmd::probe`/`readonly`, `file_sha256`, `service_active`) keep
   their single retry.
+- Process-global artifact state is gone (WP-07): the download zone and the
+  dynamic manifest override no longer live in `OnceLock`s. Every operation
+  builds one `RunContext` carrying its `ArtifactSources` (zone, manifest,
+  offline dir), so a resident process or one process driving several
+  clusters can no longer leak one run's zone/manifest into another.
+- Cross-task data now travels through the run's Blackboard instead of the
+  control machine's `~/.cache/kurin/clusters/<cluster>` directory: kubeadm
+  join material and the k3s node token are `Persist::RunStateSecret` keys,
+  written to `$XDG_STATE_HOME/kurin/runs/<cluster>.bb.json` with mode 0600
+  and registered with the event redactor. `--resume` restores them, so a
+  resumed run can still join nodes; secrets are never written to the old
+  cache path. The stale directory is removed once by `delete cluster`.
 
 ### Fixed
 - `kurin upgrade`: a failed `kubectl drain` now aborts that node's upgrade

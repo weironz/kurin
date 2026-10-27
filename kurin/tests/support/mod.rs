@@ -322,6 +322,22 @@ impl SessionPool for ScriptedPool {
     }
 }
 
+/// A run context for tests: embedded manifest, global zone, in-memory
+/// blackboard, seeded facts.
+pub fn run(
+    cluster: &kurin_config::Cluster,
+    facts: kurin::facts::FactsTable,
+) -> Arc<kurin::run::RunContext> {
+    Arc::new(
+        kurin::run::RunContext::new(
+            "test-op",
+            &cluster.name,
+            kurin::run::ArtifactSources::embedded().with_offline_dir(cluster.offline_dir.clone()),
+        )
+        .with_facts(facts),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

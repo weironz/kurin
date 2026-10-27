@@ -20,6 +20,9 @@ pub mod artifact {
 pub mod artifact_bundle {
     pub use kurin_artifact::artifact_bundle::*;
 }
+pub mod blackboard {
+    pub use kurin_core::blackboard::*;
+}
 pub mod certs {
     pub use kurin_components::certs::*;
 }
@@ -50,6 +53,9 @@ pub mod precheck {
 }
 pub mod render {
     pub use kurin_core::render::*;
+}
+pub mod run {
+    pub use kurin_core::run::*;
 }
 pub mod ssh {
     pub use kurin_ssh::*;

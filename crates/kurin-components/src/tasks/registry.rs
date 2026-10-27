@@ -13,12 +13,14 @@
 //! writes only local files.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use kurin_config::{Cluster, Node, RegistryKind};
 use miette::Result;
 
 use kurin_artifact::artifact::{Arch, ArtifactManifest, ArtifactStore};
 use kurin_core::engine::{Drift, Outcome, Session, Stage, Task, UploadSource};
+use kurin_core::run::RunContext;
 
 /// Where the generated PKI lives on the registry node.
 const PKI_DIR: &str = "/var/lib/kurin/pki";
@@ -143,11 +145,18 @@ pub struct RegistryInstall {
     password: String,
     pki: RegistryPki,
     arch: Arch,
-    offline: Option<PathBuf>,
+    /// Run sources: offline dir, manifest override and mirror zone.
+    run: Arc<RunContext>,
 }
 
 impl RegistryInstall {
-    pub fn new(cluster: &Cluster, node: &Node, arch: Arch, ca: &RegistryCa) -> Result<Self> {
+    pub fn new(
+        cluster: &Cluster,
+        node: &Node,
+        arch: Arch,
+        ca: &RegistryCa,
+        run: &Arc<RunContext>,
+    ) -> Result<Self> {
         let kind = cluster
             .registry_kind
             .ok_or_else(|| miette::miette!("registry kind missing"))?;
@@ -171,7 +180,7 @@ impl RegistryInstall {
                 .unwrap_or_else(|| "kurin-registry".into()),
             pki,
             arch,
-            offline: cluster.offline_dir.clone(),
+            run: Arc::clone(run),
         })
     }
 
@@ -302,11 +311,11 @@ impl Task for RegistryInstall {
             .await?;
 
         // 2. Payload
-        let manifest = ArtifactManifest::embedded()?;
+        let manifest = kurin_artifact::artifact::install_manifest(&self.run.sources)?;
         let spec = manifest.spec(self.artifact(), self.arch)?;
-        let local: PathBuf = match &self.offline {
+        let local: PathBuf = match &self.run.sources.offline_dir {
             Some(dir) => {
-                let dm = ArtifactManifest::from_dir(dir)?;
+                let dm = ArtifactManifest::from_dir_with(dir, &manifest)?;
                 dm.find(spec.name.as_str(), self.arch)
                     .ok_or_else(|| {
                         miette::miette!(
@@ -317,7 +326,11 @@ impl Task for RegistryInstall {
                     .file
                     .clone()
             }
-            None => ArtifactStore::open_default()?.fetch(&spec).await?,
+            None => {
+                ArtifactStore::open_default()?
+                    .fetch(&spec, self.run.sources.zone)
+                    .await?
+            }
         };
         match self.kind {
             RegistryKind::Zot => {
@@ -692,11 +705,18 @@ pub struct RegistrySeed {
     password: String,
     arch: Arch,
     cni: kurin_config::CniConfig,
-    offline: Option<PathBuf>,
+    /// Run sources: offline dir, manifest override and mirror zone.
+    run: Arc<RunContext>,
 }
 
 impl RegistrySeed {
-    pub fn new(cluster: &Cluster, node: &Node, arch: Arch, ca: &RegistryCa) -> Result<Self> {
+    pub fn new(
+        cluster: &Cluster,
+        node: &Node,
+        arch: Arch,
+        ca: &RegistryCa,
+        run: &Arc<RunContext>,
+    ) -> Result<Self> {
         let reg = cluster
             .nodes
             .iter()
@@ -722,7 +742,7 @@ impl RegistrySeed {
                 .unwrap_or_else(|| "kurin-registry".into()),
             arch,
             cni: cluster.cni.clone(),
-            offline: cluster.offline_dir.clone(),
+            run: Arc::clone(run),
         })
     }
 
@@ -732,7 +752,7 @@ impl RegistrySeed {
     /// Cheap view: image names + repo/tag only (no archives built) — used
     /// by check()'s drift signature.
     async fn seed_names(&self) -> Result<Vec<(String, String)>> {
-        let manifest = ArtifactManifest::embedded()?;
+        let manifest = kurin_artifact::artifact::install_manifest(&self.run.sources)?;
         let cp = [
             "pause",
             "kube-apiserver",
@@ -753,10 +773,8 @@ impl RegistrySeed {
             let spec = manifest.spec(&name, self.arch)?;
             // Upstream reference "host/org/repo:tag"; the apply side keeps
             // only the repo path after the first '/'.
-            let reference = kurin_artifact::zone::rewrite_image_ref(
-                &spec.url(),
-                kurin_artifact::artifact::zone(),
-            );
+            let reference =
+                kurin_artifact::zone::rewrite_image_ref(&spec.url(), self.run.sources.zone);
             if reference.split_once('/').is_none() {
                 return Err(miette::miette!("cannot split image reference {reference}"));
             }
@@ -767,11 +785,11 @@ impl RegistrySeed {
 
     /// Build the docker archive per image (only in apply — check stays cheap).
     async fn seed_payload(&self, name: &str) -> Result<PathBuf> {
-        let manifest = ArtifactManifest::embedded()?;
+        let manifest = kurin_artifact::artifact::install_manifest(&self.run.sources)?;
         let spec = manifest.spec(name, self.arch)?;
-        let oci_dir: PathBuf = match &self.offline {
+        let oci_dir: PathBuf = match &self.run.sources.offline_dir {
             Some(dir) => {
-                let dm = ArtifactManifest::from_dir(dir)?;
+                let dm = ArtifactManifest::from_dir_with(dir, &manifest)?;
                 dm.find(spec.name.as_str(), self.arch)
                     .ok_or_else(|| miette::miette!("offline bundle lacks {}", spec.name))?
                     .file
@@ -781,7 +799,7 @@ impl RegistrySeed {
             }
             None => {
                 let store = ArtifactStore::open_default()?;
-                store.fetch(&spec).await?;
+                store.fetch(&spec, self.run.sources.zone).await?;
                 store.artifact_dir(&spec)
             }
         };

@@ -8,6 +8,7 @@ use miette::{IntoDiagnostic, Result};
 
 use kurin::events::{self, Body, EventBus, JsonlSink, Level, LogQuery, OpKind, OpResult};
 use kurin::render::{JsonSink, TerminalRenderer};
+use kurin::run::{ArtifactSources, RunContext};
 
 #[derive(Parser)]
 #[command(
@@ -264,14 +265,14 @@ struct OpSession {
 }
 
 impl OpSession {
-    /// Create the bus, attach the JSONL writer and the terminal/JSON sink,
-    /// install the `tracing` bridge and print the log path once.
-    fn start(cluster: &str, out: OutputOpts) -> Result<Self> {
-        let op_id = events::new_op_id();
-        let path = events::log_path(cluster, &op_id);
+    /// Attach the JSONL writer and the terminal/JSON sink to the run's bus,
+    /// install the `tracing` bridge and print the log path once. The log
+    /// name is the run's `op_id`.
+    fn start(run: &RunContext, out: OutputOpts) -> Result<Self> {
+        let path = events::log_path(&run.cluster, &run.op_id);
         let sink = JsonlSink::create(&path)
             .map_err(|e| miette::miette!("create log {}: {e}", path.display()))?;
-        let bus = Arc::new(EventBus::new(&op_id));
+        let bus = Arc::clone(&run.events);
         bus.add_sink(Arc::new(sink));
         if out.v2() {
             bus.add_sink(Arc::new(JsonSink::stdout()));
@@ -320,8 +321,9 @@ impl OpSession {
 }
 
 /// Resolve the download zone: `KURIN_ZONE` env wins over config's
-/// `[artifacts] zone`. Must be called before any artifact fetch.
-fn init_zone(config_zone: Option<&str>) -> Result<()> {
+/// `[artifacts] zone`. The result is carried by the run's
+/// [`ArtifactSources`]; there is no process-global zone anymore.
+fn resolve_zone(config_zone: Option<&str>) -> Result<kurin::zone::Zone> {
     let zone_str = std::env::var("KURIN_ZONE")
         .ok()
         .filter(|z| !z.is_empty())
@@ -329,11 +331,47 @@ fn init_zone(config_zone: Option<&str>) -> Result<()> {
         .unwrap_or_else(|| "global".to_string());
     let zone = kurin::zone::Zone::parse(&zone_str)
         .ok_or_else(|| miette::miette!(r#"invalid zone {zone_str:?} (expected "cn")"#))?;
-    kurin::artifact::set_zone(zone);
     if zone == kurin::zone::Zone::Cn {
         eprintln!("[zone] artifact downloads via domestic mirrors");
     }
-    Ok(())
+    Ok(zone)
+}
+
+/// Artifact sources for one operation: effective zone, embedded manifest
+/// and the cluster's offline dir (a `--offline` flag is applied to the
+/// cluster before this is called).
+fn sources_for(cluster: &kurin_config::Cluster) -> Result<ArtifactSources> {
+    Ok(ArtifactSources {
+        zone: resolve_zone(cluster.zone.as_deref())?,
+        manifest_json: None,
+        offline_dir: cluster.offline_dir.clone(),
+    })
+}
+
+/// Build the operation's run context with the cluster's persisted
+/// Blackboard: `resume == true` loads it, `false` starts (and truncates)
+/// fresh. Used by operations that produce or consume run-state secrets.
+fn new_run(cluster: &kurin_config::Cluster, resume: bool) -> Result<Arc<RunContext>> {
+    let bb = match kurin::blackboard::Blackboard::default_path(&cluster.name) {
+        Some(path) => {
+            kurin::blackboard::Blackboard::open(path, resume).map_err(|e| miette::miette!("{e}"))?
+        }
+        None => kurin::blackboard::Blackboard::in_memory(),
+    };
+    Ok(Arc::new(
+        RunContext::new(events::new_op_id(), &cluster.name, sources_for(cluster)?)
+            .with_blackboard(bb),
+    ))
+}
+
+/// Run context for read-only operations: no persisted Blackboard, so a
+/// `status`/`precheck`/`certs` run never truncates another op's secrets.
+fn new_ephemeral_run(cluster: &kurin_config::Cluster) -> Result<Arc<RunContext>> {
+    Ok(Arc::new(RunContext::new(
+        events::new_op_id(),
+        &cluster.name,
+        sources_for(cluster)?,
+    )))
 }
 
 #[tokio::main(flavor = "multi_thread")]
@@ -375,7 +413,8 @@ async fn run(cli: Cli) -> Result<()> {
                 .unwrap_or_else(|| cluster.kubernetes_version.clone());
             let pool: Arc<dyn kurin::SessionPool> =
                 Arc::new(kurin::ssh::SshSessionPool::from_cluster(&cluster)?);
-            let op = OpSession::start(&cluster.name, out)?;
+            let run = new_ephemeral_run(&cluster)?;
+            let op = OpSession::start(&run, out)?;
             op.register_cluster(&cluster);
             op.begin("upgrade", &cluster.name, "");
             let result: Result<()> = async {
@@ -389,11 +428,11 @@ async fn run(cli: Cli) -> Result<()> {
                     kurin::upgrade::plan(&cluster, &target, &pool, &facts).await
                 } else if let Some(offline) = offline {
                     kurin::upgrade::run_offline_with(
-                        &cluster, &target, &offline, &pool, opts, &facts,
+                        &cluster, &target, &offline, &pool, opts, &facts, &run,
                     )
                     .await
                 } else {
-                    kurin::upgrade::run(&cluster, &target, &pool, opts, &facts).await
+                    kurin::upgrade::run(&cluster, &target, &pool, opts, &facts, &run).await
                 }
             }
             .await;
@@ -410,7 +449,8 @@ async fn run(cli: Cli) -> Result<()> {
                 let cluster = kurin_config::load(&file)?;
                 let pool: Arc<dyn kurin::SessionPool> =
                     Arc::new(kurin::ssh::SshSessionPool::from_cluster(&cluster)?);
-                let op = OpSession::start(&cluster.name, out)?;
+                let run = new_ephemeral_run(&cluster)?;
+                let op = OpSession::start(&run, out)?;
                 op.register_cluster(&cluster);
                 op.begin("certs-check", &cluster.name, "");
                 let result: Result<()> = async {
@@ -426,7 +466,8 @@ async fn run(cli: Cli) -> Result<()> {
                 let cluster = kurin_config::load(&file)?;
                 let pool: Arc<dyn kurin::SessionPool> =
                     Arc::new(kurin::ssh::SshSessionPool::from_cluster(&cluster)?);
-                let op = OpSession::start(&cluster.name, out)?;
+                let run = new_ephemeral_run(&cluster)?;
+                let op = OpSession::start(&run, out)?;
                 op.register_cluster(&cluster);
                 op.begin("certs-renew", &cluster.name, "");
                 let result = kurin::certs::renew(&cluster, &pool, force).await;
@@ -438,7 +479,8 @@ async fn run(cli: Cli) -> Result<()> {
             let cluster = kurin_config::load(&file)?;
             let pool: Arc<dyn kurin::SessionPool> =
                 Arc::new(kurin::ssh::SshSessionPool::from_cluster(&cluster)?);
-            let op = OpSession::start(&cluster.name, out)?;
+            let run = new_ephemeral_run(&cluster)?;
+            let op = OpSession::start(&run, out)?;
             op.register_cluster(&cluster);
             op.begin("precheck", &cluster.name, "");
             let result: Result<()> = async {
@@ -464,7 +506,8 @@ async fn run(cli: Cli) -> Result<()> {
             let cluster = kurin_config::load(&file)?;
             let pool: Arc<dyn kurin::SessionPool> =
                 Arc::new(kurin::ssh::SshSessionPool::from_cluster(&cluster)?);
-            let op = OpSession::start(&cluster.name, out)?;
+            let run = new_ephemeral_run(&cluster)?;
+            let op = OpSession::start(&run, out)?;
             op.register_cluster(&cluster);
             op.begin("status", &cluster.name, "");
             let result: Result<()> = async {
@@ -523,7 +566,6 @@ async fn run(cli: Cli) -> Result<()> {
                 offline,
             } => {
                 let mut cluster = kurin_config::load(&file)?;
-                init_zone(cluster.zone.as_deref())?;
                 if let Some(dir) = offline {
                     cluster.offline_dir = Some(dir);
                 }
@@ -536,7 +578,8 @@ async fn run(cli: Cli) -> Result<()> {
                 }
                 let pool: Arc<dyn kurin::SessionPool> =
                     Arc::new(kurin::ssh::SshSessionPool::from_cluster(&cluster)?);
-                let op = OpSession::start(&cluster.name, out)?;
+                let run = new_run(&cluster, resume)?;
+                let op = OpSession::start(&run, out)?;
                 op.register_cluster(&cluster);
                 let result: Result<()> = async {
                     // Facts before the plan: per-node artifact selection is
@@ -562,8 +605,9 @@ async fn run(cli: Cli) -> Result<()> {
                     } else {
                         kurin::discover::run(&cluster, &pool).await?
                     };
+                    run.set_facts(facts);
                     let mut plan =
-                        kurin::plan::build_with_pool(&cluster, Some(pool.clone()), &facts)?;
+                        kurin::plan::build_with_pool(&cluster, Some(pool.clone()), &run)?;
                     let fingerprint =
                         kurin::engine::sha256_hex(kurin::render::render_tree(&plan).as_bytes());
                     op.begin("create-cluster", &cluster.name, &fingerprint);
@@ -610,8 +654,15 @@ async fn run(cli: Cli) -> Result<()> {
                             }
                         }
                     };
-                    kurin::executor::run_with_bus(&mut plan, &pool, &op.bus, &mut emit, opts)
-                        .await?;
+                    kurin::executor::run_with_bus(
+                        &mut plan,
+                        &pool,
+                        &run,
+                        &run.events,
+                        &mut emit,
+                        opts,
+                    )
+                    .await?;
                     if !out.json_enabled() {
                         eprintln!("cluster {} ready", cluster.name);
                     }
@@ -693,7 +744,7 @@ async fn build_artifacts(
     arch: Option<String>,
     with_kubernetes: Option<String>,
 ) -> Result<()> {
-    init_zone(None)?;
+    let zone = resolve_zone(None)?;
     // `--arch amd64,arm64` builds every listed arch (mixed-architecture
     // clusters need one bundle covering all of them); the default is
     // the control machine's arch.
@@ -720,7 +771,7 @@ async fn build_artifacts(
                     .trim_start_matches('v')
                     .parse()
                     .map_err(|e| miette::miette!("--with-kubernetes {v:?}: {e}"))?;
-                kurin::dynamic_manifest::k8s_manifest_for(&target, arch).await?
+                kurin::dynamic_manifest::k8s_manifest_for(&target, arch, zone).await?
             }
             None => kurin::artifact::ArtifactManifest::embedded()?,
         };
@@ -730,7 +781,7 @@ async fn build_artifacts(
             let spec = manifest.spec(&entry.name, arch)?;
             let dir = store.artifact_dir(&spec);
             std::fs::create_dir_all(&dir).into_diagnostic()?;
-            let dest = store.fetch(&spec).await?;
+            let dest = store.fetch(&spec, zone).await?;
             // Copy the artifact directory into the bundle layout.
             let target = out.join(format!("{}-{}-{}", spec.name, spec.version, arch.as_str()));
             std::fs::create_dir_all(&target).into_diagnostic()?;
@@ -756,62 +807,95 @@ async fn build_artifacts(
 
 async fn add_nodes(file: PathBuf, out: OutputOpts, offline: Option<PathBuf>) -> Result<()> {
     let mut cluster = kurin_config::load(&file)?;
-    init_zone(cluster.zone.as_deref())?;
     if let Some(dir) = offline {
         cluster.offline_dir = Some(dir);
     }
     let pool: Arc<dyn kurin::SessionPool> =
         Arc::new(kurin::ssh::SshSessionPool::from_cluster(&cluster)?);
-    let op = OpSession::start(&cluster.name, out)?;
+    let zone = resolve_zone(cluster.zone.as_deref())?;
+
+    // The dynamic manifest (when the cluster runs a version newer than the
+    // embedded table) must be known before the run context is built: the
+    // plan resolves artifacts from the run's sources, not a global.
+    let mut manifest_json = None;
+    let mut first_session = None;
+    if let Some(first) = cluster.control_plane().next() {
+        let s = pool.get(&first.name).await?;
+        // If the cluster was initialized by this kurin (admin.conf present),
+        // refresh the token + certificate key.
+        let init = s.exec("test -f /etc/kubernetes/admin.conf").await?;
+        if init.ok() {
+            // Version threading: a cluster upgraded past the embedded table
+            // gets its running version installed on the new nodes via a
+            // dynamic manifest (dl.k8s.io checksums + registry digests).
+            let version_out = s
+                .exec("kubectl --kubeconfig /etc/kubernetes/admin.conf get --raw /version 2>/dev/null")
+                .await?;
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&version_out.stdout) {
+                if let Some(git) = v.get("gitVersion").and_then(|g| g.as_str()) {
+                    let server = git.trim_start_matches('v').to_string();
+                    let embedded = kurin::version::KUBERNETES_VERSION;
+                    if server != embedded {
+                        let target: semver::Version = server
+                            .parse()
+                            .map_err(|e| miette::miette!("server version {server:?}: {e}"))?;
+                        // The dynamic manifest is resolved on the
+                        // control machine (its kubeadm probe runs
+                        // locally); node binaries pick their own arch.
+                        let arch = kurin::arch::Arch::host()?;
+                        let manifest = kurin::dynamic_manifest::k8s_manifest_for_from(
+                            &target, &target, arch, zone,
+                        )
+                        .await?;
+                        manifest_json = Some(
+                            serde_json::to_string(&manifest)
+                                .into_diagnostic()
+                                .map_err(|e| miette::miette!("encode dynamic manifest: {e}"))?,
+                        );
+                        tracing::info!(
+                            "[add-nodes] new nodes install v{server} (dynamic manifest; embedded v{embedded})"
+                        );
+                    }
+                }
+            }
+            first_session = Some(s);
+        }
+    }
+
+    let sources = ArtifactSources {
+        zone,
+        manifest_json,
+        offline_dir: cluster.offline_dir.clone(),
+    };
+    let bb = match kurin::blackboard::Blackboard::default_path(&cluster.name) {
+        Some(path) => {
+            kurin::blackboard::Blackboard::open(path, false).map_err(|e| miette::miette!("{e}"))?
+        }
+        None => kurin::blackboard::Blackboard::in_memory(),
+    };
+    let run =
+        Arc::new(RunContext::new(events::new_op_id(), &cluster.name, sources).with_blackboard(bb));
+    let op = OpSession::start(&run, out)?;
     op.register_cluster(&cluster);
     op.begin("add-nodes", &cluster.name, "");
 
     let result: Result<()> = async {
-        if let Some(first) = cluster.control_plane().next() {
-            let s = pool.get(&first.name).await?;
-            // If the cluster was initialized by this kurin (admin.conf present),
-            // refresh the token + certificate key.
-            let init = s.exec("test -f /etc/kubernetes/admin.conf").await?;
-            if init.ok() {
-                // Version threading: a cluster upgraded past the embedded table
-                // gets its running version installed on the new nodes via a
-                // dynamic manifest (dl.k8s.io checksums + registry digests).
-                let out = s
-                    .exec("kubectl --kubeconfig /etc/kubernetes/admin.conf get --raw /version 2>/dev/null")
-                    .await?;
-                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&out.stdout) {
-                    if let Some(git) = v.get("gitVersion").and_then(|g| g.as_str()) {
-                        let server = git.trim_start_matches('v').to_string();
-                        let embedded = kurin::version::KUBERNETES_VERSION;
-                        if server != embedded {
-                            let target: semver::Version = server
-                                .parse()
-                                .map_err(|e| miette::miette!("server version {server:?}: {e}"))?;
-                            // The dynamic manifest is resolved on the
-                            // control machine (its kubeadm probe runs
-                            // locally); node binaries pick their own arch.
-                            let arch = kurin::arch::Arch::host()?;
-                            let manifest = kurin::dynamic_manifest::k8s_manifest_for_from(
-                                &target, &target, arch,
-                            )
-                            .await?;
-                            kurin::artifact::set_manifest_override(manifest);
-                            tracing::info!(
-                                "[add-nodes] new nodes install v{server} (dynamic manifest; embedded v{embedded})"
-                            );
-                        }
-                    }
-                }
-                kurin::tasks::bootstrap::refresh_join_material(s.as_ref(), &cluster.name)
-                    .await
-                    .map_err(|e| miette::miette!("refresh join material on {}: {e}", first.name))?;
-            }
+        if let Some(s) = first_session {
+            let first = cluster
+                .control_plane()
+                .next()
+                .map(|n| n.name.clone())
+                .unwrap_or_default();
+            kurin::tasks::bootstrap::refresh_join_material(s.as_ref(), &run)
+                .await
+                .map_err(|e| miette::miette!("refresh join material on {first}: {e}"))?;
         }
 
         // Same plan/executor as create: converged nodes skip, new nodes
         // install. Facts first — per-node artifact selection.
         let facts = kurin::discover::run(&cluster, &pool).await?;
-        let mut plan = kurin::plan::build_with_pool(&cluster, Some(pool.clone()), &facts)?;
+        run.set_facts(facts);
+        let mut plan = kurin::plan::build_with_pool(&cluster, Some(pool.clone()), &run)?;
         let mut opts = kurin::executor::RunOptions::default().with_default_state(&cluster.name);
         opts.resume = false;
         let mut emit = |event: kurin::Event| {
@@ -832,7 +916,7 @@ async fn add_nodes(file: PathBuf, out: OutputOpts, offline: Option<PathBuf>) -> 
                 }
             }
         };
-        kurin::executor::run_with_bus(&mut plan, &pool, &op.bus, &mut emit, opts).await?;
+        kurin::executor::run_with_bus(&mut plan, &pool, &run, &run.events, &mut emit, opts).await?;
         if !out.json_enabled() {
             eprintln!("nodes reconciled for cluster {}", cluster.name);
         }
@@ -852,7 +936,8 @@ async fn delete_node_cmd(name: String, file: PathBuf, out: OutputOpts) -> Result
         .ok_or_else(|| miette::miette!("node {name:?} is not declared in {}", file.display()))?;
     let pool: Arc<dyn kurin::SessionPool> =
         Arc::new(kurin::ssh::SshSessionPool::from_cluster(&cluster)?);
-    let op = OpSession::start(&cluster.name, out)?;
+    let run = new_ephemeral_run(&cluster)?;
+    let op = OpSession::start(&run, out)?;
     op.register_cluster(&cluster);
     op.begin("delete-node", &cluster.name, "");
     let result: Result<()> = async {
@@ -884,7 +969,8 @@ async fn delete_cluster_cmd(file: PathBuf, out: OutputOpts) -> Result<()> {
     let cluster = kurin_config::load(&file)?;
     let pool: Arc<dyn kurin::SessionPool> =
         Arc::new(kurin::ssh::SshSessionPool::from_cluster(&cluster)?);
-    let op = OpSession::start(&cluster.name, out)?;
+    let run = new_ephemeral_run(&cluster)?;
+    let op = OpSession::start(&run, out)?;
     op.register_cluster(&cluster);
     op.begin("delete-cluster", &cluster.name, "");
     let result = kurin::teardown::delete_cluster(&pool, &cluster).await;

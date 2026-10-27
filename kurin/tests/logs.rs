@@ -338,10 +338,16 @@ mod pipeline {
             stages: vec![idx],
         };
         let pool: Arc<dyn SessionPool> = Arc::new(EchoPool);
+        let run = Arc::new(kurin::run::RunContext::new(
+            op,
+            "demo",
+            kurin::run::ArtifactSources::embedded(),
+        ));
         let mut events = Vec::new();
         run_with_bus(
             &mut plan,
             &pool,
+            &run,
             &bus,
             &mut |event| events.push(event),
             RunOptions::default(),

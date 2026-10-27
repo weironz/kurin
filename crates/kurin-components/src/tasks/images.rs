@@ -4,32 +4,35 @@
 //! online installs skip (kubelet pulls from registries).
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use kurin_config::Node;
 use miette::Result;
 
 use kurin_artifact::artifact::{Arch, ArtifactKind, ArtifactManifest, ArtifactSpec, ArtifactStore};
 use kurin_core::engine::{Drift, Outcome, Session, Stage, Task, UploadSource};
+use kurin_core::run::RunContext;
 
 pub struct ImagesImport {
     node: Node,
     arch: Arch,
-    offline: Option<PathBuf>,
     cni: kurin_config::CniConfig,
+    /// Run sources: offline dir, manifest override and mirror zone.
+    run: Arc<RunContext>,
 }
 
 impl ImagesImport {
     pub fn new(
         node: &Node,
         arch: Arch,
-        offline: Option<PathBuf>,
         cni: kurin_config::CniConfig,
+        run: &Arc<RunContext>,
     ) -> Self {
         Self {
             node: node.clone(),
             arch,
-            offline,
             cni,
+            run: Arc::clone(run),
         }
     }
 
@@ -61,7 +64,8 @@ impl ImagesImport {
     }
 
     fn needs_import(&self) -> bool {
-        self.offline.is_some() || kurin_artifact::artifact::zone() == kurin_artifact::zone::Zone::Cn
+        self.run.sources.offline_dir.is_some()
+            || self.run.sources.zone == kurin_core::zone::Zone::Cn
     }
 
     /// Image artifacts the *selected CNI* pulls at runtime: kubelet must
@@ -91,7 +95,7 @@ impl ImagesImport {
 
     /// Where this node's payload directory lives.
     async fn payload_dir(&self, spec: &ArtifactSpec) -> miette::Result<PathBuf> {
-        match &self.offline {
+        match &self.run.sources.offline_dir {
             Some(dir) => {
                 let dm = ArtifactManifest::from_dir(dir)?;
                 let found = dm.find(&spec.name, self.arch).ok_or_else(|| {
@@ -105,7 +109,7 @@ impl ImagesImport {
                 // Online (zone=cn imports too): make sure the payload is
                 // fetched through the zone-aware store before importing.
                 let store = ArtifactStore::open_default()?;
-                store.fetch(spec).await?;
+                store.fetch(spec, self.run.sources.zone).await?;
                 Ok(store.artifact_dir(spec))
             }
         }
@@ -140,7 +144,7 @@ impl Task for ImagesImport {
         }
         // Every expected reference must be present: counting alone can't
         // tell which one is missing, and ctr lists registry pulls too.
-        let manifest = ArtifactManifest::embedded()?;
+        let manifest = kurin_artifact::artifact::install_manifest(&self.run.sources)?;
         let mut refs = Vec::new();
         for name in self.selected_images(&manifest) {
             let spec = manifest.spec(&name, self.arch)?;
@@ -168,7 +172,7 @@ impl Task for ImagesImport {
         if !self.needs_import() {
             return Ok(Outcome::Verified);
         }
-        let manifest = ArtifactManifest::embedded()?;
+        let manifest = kurin_artifact::artifact::install_manifest(&self.run.sources)?;
         for name in self.selected_images(&manifest) {
             let spec = manifest.spec(&name, self.arch)?;
             let dir = self.payload_dir(&spec).await?;

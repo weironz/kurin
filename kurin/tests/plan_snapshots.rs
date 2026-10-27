@@ -12,6 +12,7 @@
 //! a machine-specific absolute path.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use kurin::plan;
 use kurin::render::render_tree;
@@ -102,7 +103,16 @@ fn plan_snapshots_for_the_config_fixture_matrix() {
         let cluster = load_fixture(name);
         let facts = kurin::facts::FactsTable::synthetic(&cluster)
             .expect("synthetic facts build for every fixture");
-        let plan = plan::build(&cluster, &facts)
+        let run = Arc::new(
+            kurin::run::RunContext::new(
+                "test-op",
+                &cluster.name,
+                kurin::run::ArtifactSources::embedded()
+                    .with_offline_dir(cluster.offline_dir.clone()),
+            )
+            .with_facts(facts),
+        );
+        let plan = plan::build(&cluster, &run)
             .unwrap_or_else(|e| panic!("fixture {name} must build a plan: {e:?}"));
         insta::assert_snapshot!(format!("{name}.tree"), render_tree(&plan));
         insta::assert_json_snapshot!(format!("{name}.json"), plan_matrix(&plan));

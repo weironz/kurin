@@ -9,7 +9,7 @@ use kurin::tasks::cri_o;
 use kurin_config::Cluster;
 use miette::Result;
 use std::collections::{HashMap, HashSet};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 const CRIO_VERSION: &str = "1.33.4";
 
@@ -198,7 +198,12 @@ fn seed_bundle(bytes: &[u8]) -> (tempfile::TempDir, ArtifactManifest) {
 fn runtime_tasks_plans_three_prepare_tasks_per_member() {
     let cluster = cluster();
     let facts = kurin::facts::FactsTable::synthetic(&cluster).unwrap();
-    let tasks = cri_o::runtime_tasks(&cluster, &facts).expect("runtime tasks plan");
+    let run = Arc::new(kurin::run::RunContext::new(
+        "test-op",
+        &cluster.name,
+        kurin::run::ArtifactSources::embedded(),
+    ));
+    let tasks = cri_o::runtime_tasks(&cluster, &facts, &run).expect("runtime tasks plan");
     assert_eq!(tasks.len(), 3, "install + config + unit per node");
     assert!(tasks.iter().all(|(s, _)| *s == Stage::Prepare));
     let ids: Vec<String> = tasks.iter().map(|(_, t)| t.id()).collect();
@@ -271,7 +276,12 @@ async fn crio_install_reads_the_offline_bundle_and_verifies() {
     let cluster = cluster();
     let (bundle, manifest) = seed_bundle(b"fake-static-crio-package");
     let spec = manifest.spec("crio", Arch::Amd64).unwrap();
-    let task = cri_o::CrioInstall::new(&node(&cluster), spec, manifest, Some(bundle.path().into()));
+    let run = Arc::new(kurin::run::RunContext::new(
+        "test-op",
+        &cluster.name,
+        kurin::run::ArtifactSources::embedded().with_offline_dir(Some(bundle.path().into())),
+    ));
+    let task = cri_o::CrioInstall::new(&node(&cluster), spec, manifest, &run);
     let session = MockSession::new();
 
     assert!(matches!(
@@ -298,7 +308,12 @@ async fn crio_install_fails_when_bundle_misses_the_tarball() {
     let manifest = crio_manifest(b"whatever");
     let empty = tempfile::tempdir().unwrap();
     let spec = manifest.spec("crio", Arch::Amd64).unwrap();
-    let task = cri_o::CrioInstall::new(&node(&cluster), spec, manifest, Some(empty.path().into()));
+    let run = Arc::new(kurin::run::RunContext::new(
+        "test-op",
+        &cluster.name,
+        kurin::run::ArtifactSources::embedded().with_offline_dir(Some(empty.path().into())),
+    ));
+    let task = cri_o::CrioInstall::new(&node(&cluster), spec, manifest, &run);
     let session = MockSession::new();
     let err = task
         .apply(&session)

@@ -281,6 +281,10 @@ pub async fn delete_cluster(pool: &Arc<dyn SessionPool>, cluster: &Cluster) -> R
     if let Some(state) = kurin_core::state::RunState::default_path(&cluster.name) {
         let _ = std::fs::remove_file(&state);
     }
+    // Run-state secrets (join material, k3s token) live here since WP-07.
+    if let Some(bb) = kurin_core::blackboard::Blackboard::default_path(&cluster.name) {
+        let _ = std::fs::remove_file(&bb);
+    }
     tracing::info!("cluster {} deleted", cluster.name);
     Ok(())
 }

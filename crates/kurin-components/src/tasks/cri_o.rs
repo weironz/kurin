@@ -30,6 +30,7 @@ use crate::tasks::prepare::sha256_hex;
 use crate::templates;
 use kurin_artifact::artifact::{ArtifactManifest, ArtifactSpec, ArtifactStore};
 use kurin_core::engine::{Drift, Outcome, Session, Stage, Task};
+use kurin_core::run::RunContext;
 
 /// Socket kubeadm's `criSocket` must point at for this runtime. The
 /// integrator's kubeadm template uses it (template variable `runtime_socket`).
@@ -67,8 +68,9 @@ rm -rf "$pkg" /tmp/kurin-crio.tar.gz
 pub fn runtime_tasks(
     cluster: &Cluster,
     facts: &kurin_core::facts::FactsTable,
+    run: &Arc<RunContext>,
 ) -> Result<Vec<(Stage, Arc<dyn Task>)>> {
-    let manifest = kurin_artifact::artifact::install_manifest()
+    let manifest = kurin_artifact::artifact::install_manifest(&run.sources)
         .map_err(|e| miette::miette!("load artifact manifest: {e}"))?;
 
     let mut out: Vec<(Stage, Arc<dyn Task>)> = Vec::new();
@@ -78,12 +80,7 @@ pub fn runtime_tasks(
             .map_err(|e| miette::miette!("crio artifact entry: {e}"))?;
         out.push((
             Stage::Prepare,
-            Arc::new(CrioInstall::new(
-                node,
-                spec.clone(),
-                manifest.clone(),
-                cluster.offline_dir.clone(),
-            )),
+            Arc::new(CrioInstall::new(node, spec.clone(), manifest.clone(), run)),
         ));
         out.push((
             Stage::Prepare,
@@ -107,7 +104,8 @@ pub struct CrioInstall {
     /// Manifest the offline bundle is validated against (same underlay as
     /// `ArtifactsInstall`).
     manifest: ArtifactManifest,
-    offline: Option<PathBuf>,
+    /// Run sources: offline dir and mirror zone.
+    run: Arc<RunContext>,
 }
 
 impl CrioInstall {
@@ -115,20 +113,20 @@ impl CrioInstall {
         node: &Node,
         spec: ArtifactSpec,
         manifest: ArtifactManifest,
-        offline: Option<PathBuf>,
+        run: &Arc<RunContext>,
     ) -> Self {
         Self {
             node: node.clone(),
             spec,
             manifest,
-            offline,
+            run: Arc::clone(run),
         }
     }
 
     /// Resolve the local payload, online (verified cache) or offline
     /// (verified bundle directory).
     async fn payload(&self) -> miette::Result<PathBuf> {
-        match &self.offline {
+        match &self.run.sources.offline_dir {
             Some(dir) => {
                 let dm = ArtifactManifest::from_dir_with(dir, &self.manifest)
                     .map_err(|e| miette::miette!("read offline bundle {}: {e}", dir.display()))?;
@@ -146,7 +144,7 @@ impl CrioInstall {
                 let store = ArtifactStore::open_default()
                     .map_err(|e| miette::miette!("open artifact cache: {e}"))?;
                 store
-                    .fetch(&self.spec)
+                    .fetch(&self.spec, self.run.sources.zone)
                     .await
                     .map_err(|e| miette::miette!("fetch {}: {e}", self.spec.name))
             }

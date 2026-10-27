@@ -3,26 +3,30 @@
 //! executor injects token/CA-hash/certificate-key via command flags) and
 //! shipped to /etc/kurin/kubeadm-join.yaml.
 
+use std::sync::Arc;
+
 use kurin_config::{Cluster, Node};
 use miette::Result;
 
-use crate::tasks::bootstrap::{read_join_material, KUBEADM_DIR};
+use crate::tasks::bootstrap::KUBEADM_DIR;
 use crate::templates;
+use kurin_core::blackboard::JOIN_MATERIAL;
 use kurin_core::engine::{Drift, Outcome, Session, Stage, Task};
+use kurin_core::run::RunContext;
 
 const JOIN_CONFIG_NAME: &str = "kubeadm-join.yaml";
 
 pub struct KubeadmJoin {
     node_name: String,
-    cluster_name: String,
     is_control_plane: bool,
     api_server_endpoint: String,
     advertise_address: String,
     rendered: String,
+    run: Arc<RunContext>,
 }
 
 impl KubeadmJoin {
-    pub fn new(cluster: &Cluster, node: &Node) -> Self {
+    pub fn new(cluster: &Cluster, node: &Node, run: &Arc<RunContext>) -> Self {
         let is_control_plane = node.role == kurin_config::NodeRole::ControlPlane;
         // Prefer the HA VIP; otherwise the first master's API server.
         let api_server_endpoint = match cluster.vip {
@@ -55,11 +59,11 @@ impl KubeadmJoin {
             templates::render(path, ctx).expect("embedded kubeadm join template renders");
         Self {
             node_name: node.name.clone(),
-            cluster_name: cluster.name.clone(),
             is_control_plane,
             api_server_endpoint,
             advertise_address: node.internal_address.to_string(),
             rendered,
+            run: Arc::clone(run),
         }
     }
 
@@ -100,15 +104,15 @@ impl Task for KubeadmJoin {
         // kubeadm refuses --config mixed with discovery flags, so the
         // rendered JoinConfiguration ships for audit only; the actual join
         // is built from the harvested join command + flags.
-        let material = match read_join_material(&self.cluster_name) {
-            Some(m) => m,
-            // Init said it harvested; a missing file here means a stale
-            // state dir or a newer kurin never harvested. Unknown -> the
+        let material = match self.run.bb.get(&JOIN_MATERIAL) {
+            Some(m) if !m.join_command.is_empty() => m,
+            // Init said it harvested; a missing entry here means a stale
+            // run state or a newer kurin never harvested. Unknown -> the
             // engine re-probes (init InSync) and harvests again.
-            None => {
+            _ => {
                 return Ok(Outcome::Unknown(format!(
                     "join material for cluster {} not harvested yet",
-                    self.cluster_name
+                    self.run.cluster
                 )))
             }
         };
@@ -216,7 +220,7 @@ mod tests {
     #[test]
     fn worker_join_renders_endpoint_and_node_name() {
         let c = cluster(Some("192.168.10.100"));
-        let t = KubeadmJoin::new(&c, &c.nodes[2]);
+        let t = KubeadmJoin::new(&c, &c.nodes[2], &crate::test_util::run());
         assert!(t.rendered.contains("kind: JoinConfiguration"));
         assert!(t
             .rendered
@@ -228,14 +232,14 @@ mod tests {
         );
         // No VIP: falls back to the first control-plane node.
         let c = cluster(None);
-        let t = KubeadmJoin::new(&c, &c.nodes[2]);
+        let t = KubeadmJoin::new(&c, &c.nodes[2], &crate::test_util::run());
         assert!(t.rendered.contains("apiServerEndpoint: 192.168.10.11:6443"));
     }
 
     #[test]
     fn controlplane_join_renders_advertise_address() {
         let c = cluster(Some("192.168.10.100"));
-        let t = KubeadmJoin::new(&c, &c.nodes[1]);
+        let t = KubeadmJoin::new(&c, &c.nodes[1], &crate::test_util::run());
         assert!(t.rendered.contains("controlPlane:"));
         assert!(t.rendered.contains("advertiseAddress: 192.168.10.12"));
         assert!(t

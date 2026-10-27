@@ -16,11 +16,14 @@
 //! offline installs with `cni = "kube-ovn"` are rejected in config
 //! validation (honest state, not silently broken).
 
+use std::sync::Arc;
+
 use kurin_config::Cluster;
 use miette::Result;
 
 use crate::templates;
 use kurin_core::engine::{Drift, Outcome, Session, Stage, Task};
+use kurin_core::run::RunContext;
 
 const STAGING_PATH: &str = "/tmp/kurin-kube-ovn.yaml";
 const DEFAULT_POD_CIDR: &str = "10.233.64.0/18";
@@ -35,10 +38,11 @@ pub struct KubeOvn {
     pod_cidr: String,
     service_cidr: String,
     gateway: String,
+    run: Arc<RunContext>,
 }
 
 impl KubeOvn {
-    pub fn new(cluster: &Cluster) -> Self {
+    pub fn new(cluster: &Cluster, run: &Arc<RunContext>) -> Self {
         // First address of the pod CIDR is kube-ovn's default gateway.
         let gateway = cluster
             .pod_cidr
@@ -56,6 +60,7 @@ impl KubeOvn {
             pod_cidr: cluster.pod_cidr.to_string(),
             service_cidr: cluster.service_cidr.to_string(),
             gateway,
+            run: Arc::clone(run),
         }
     }
 
@@ -66,7 +71,7 @@ impl KubeOvn {
             .replace(DEFAULT_POD_CIDR, &self.pod_cidr)
             .replace(DEFAULT_SVC_CIDR, &self.service_cidr)
             .replace(DEFAULT_GATEWAY, &self.gateway);
-        if kurin_artifact::artifact::zone() == kurin_artifact::zone::Zone::Cn {
+        if self.run.sources.zone == kurin_core::zone::Zone::Cn {
             out = out.replace(UPSTREAM_REGISTRY, CN_MIRROR_REGISTRY);
         }
         out
@@ -209,13 +214,19 @@ mod tests {
 
     #[test]
     fn default_cidrs_render() {
-        let t = KubeOvn::new(&cluster("10.233.64.0/18", "10.233.0.0/18"));
+        let t = KubeOvn::new(
+            &cluster("10.233.64.0/18", "10.233.0.0/18"),
+            &crate::test_util::run(),
+        );
         assert!(t.render().contains("--default-cidr=10.233.64.0/18"));
     }
 
     #[test]
     fn custom_cidr_replaces_defaults() {
-        let t = KubeOvn::new(&cluster("172.20.0.0/16", "172.21.0.0/16"));
+        let t = KubeOvn::new(
+            &cluster("172.20.0.0/16", "172.21.0.0/16"),
+            &crate::test_util::run(),
+        );
         let out = t.render();
         assert!(out.contains("--default-cidr=172.20.0.0/16"));
         assert!(!out.contains(DEFAULT_POD_CIDR));
@@ -224,13 +235,19 @@ mod tests {
 
     #[test]
     fn gateway_is_first_host() {
-        let t = KubeOvn::new(&cluster("172.20.0.0/16", "172.21.0.0/16"));
+        let t = KubeOvn::new(
+            &cluster("172.20.0.0/16", "172.21.0.0/16"),
+            &crate::test_util::run(),
+        );
         assert_eq!(t.gateway, "172.20.0.1");
     }
 
     #[test]
     fn cp_names_cover_all_control_planes() {
-        let t = KubeOvn::new(&cluster("10.233.64.0/18", "10.233.0.0/18"));
+        let t = KubeOvn::new(
+            &cluster("10.233.64.0/18", "10.233.0.0/18"),
+            &crate::test_util::run(),
+        );
         assert_eq!(t.cp_names, vec!["m1".to_string()]);
     }
 }

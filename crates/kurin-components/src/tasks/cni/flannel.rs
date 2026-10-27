@@ -3,13 +3,14 @@
 //! pinned in the artifact manifest and fetched with the same verification
 //! as every other payload.
 
-use std::path::PathBuf;
+use std::sync::Arc;
 
 use kurin_config::Cluster;
 use miette::Result;
 
 use kurin_artifact::artifact::{Arch, ArtifactManifest, ArtifactStore};
 use kurin_core::engine::{Drift, Outcome, Session, Stage, Task};
+use kurin_core::run::RunContext;
 
 const FLANNEL_NET_DEFAULT: &str = r#""Network": "10.244.0.0/16""#;
 const STAGING_PATH: &str = "/tmp/kurin-kube-flannel.yml";
@@ -17,14 +18,15 @@ const STAGING_PATH: &str = "/tmp/kurin-kube-flannel.yml";
 pub struct Flannel {
     node_name: String,
     pod_cidr: String,
-    offline: Option<PathBuf>,
     /// Arch the pinned manifest is resolved for (the control-plane
     /// node this task runs on).
     arch: Arch,
+    /// Run sources: offline dir, manifest override and mirror zone.
+    run: Arc<RunContext>,
 }
 
 impl Flannel {
-    pub fn new(cluster: &Cluster, arch: Arch) -> Self {
+    pub fn new(cluster: &Cluster, arch: Arch, run: &Arc<RunContext>) -> Self {
         Self {
             node_name: cluster
                 .control_plane()
@@ -32,8 +34,8 @@ impl Flannel {
                 .map(|n| n.name.clone())
                 .unwrap_or_default(),
             pod_cidr: cluster.pod_cidr.to_string(),
-            offline: cluster.offline_dir.clone(),
             arch,
+            run: Arc::clone(run),
         }
     }
 
@@ -41,16 +43,20 @@ impl Flannel {
     /// offline bundle) and patch the pod network. Resolved for this
     /// task's node arch (the control plane it applies through).
     async fn render(&self) -> Result<String> {
-        let manifest = ArtifactManifest::embedded()?;
+        let manifest = kurin_artifact::artifact::install_manifest(&self.run.sources)?;
         let spec = manifest.spec("flannel", self.arch)?;
-        let path = match &self.offline {
+        let path = match &self.run.sources.offline_dir {
             Some(dir) => {
-                let dm = ArtifactManifest::from_dir(dir)?;
+                let dm = ArtifactManifest::from_dir_with(dir, &manifest)?;
                 dm.find("flannel", self.arch)
                     .map(|a| a.file.clone())
                     .ok_or_else(|| miette::miette!("offline bundle lacks the flannel manifest"))?
             }
-            None => ArtifactStore::open_default()?.fetch(&spec).await?,
+            None => {
+                ArtifactStore::open_default()?
+                    .fetch(&spec, self.run.sources.zone)
+                    .await?
+            }
         };
         let raw = std::fs::read_to_string(&path)
             .map_err(|e| miette::miette!("read {}: {e}", path.display()))?;
@@ -59,7 +65,7 @@ impl Flannel {
             FLANNEL_NET_DEFAULT,
             &format!(r#""Network": "{}""#, self.pod_cidr),
         );
-        if kurin_artifact::artifact::zone() == kurin_artifact::zone::Zone::Cn {
+        if self.run.sources.zone == kurin_core::zone::Zone::Cn {
             // Runtime pulls (kubelet) must follow the mirror too.
             out = out.replace("ghcr.io/flannel-io/", "ghcr.m.daocloud.io/flannel-io/");
         }

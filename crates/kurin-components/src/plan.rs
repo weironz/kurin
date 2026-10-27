@@ -11,7 +11,7 @@
 use std::sync::Arc;
 
 use kurin_config::Cluster;
-use kurin_core::facts::FactsTable;
+use kurin_core::run::RunContext;
 use miette::Result;
 use petgraph::stable_graph::StableDiGraph;
 
@@ -24,8 +24,8 @@ use crate::tasks;
 /// Linear stage chain (M1): discover -> preflight -> prepare ->
 /// bootstrap -> join -> cni -> post. The graph shape is ready for M2
 /// branching (air-gap, upgrade).
-pub fn build(cluster: &Cluster, facts: &FactsTable) -> Result<Plan> {
-    build_with_pool(cluster, None, facts)
+pub fn build(cluster: &Cluster, run: &Arc<RunContext>) -> Result<Plan> {
+    build_with_pool(cluster, None, run)
 }
 
 /// Same as [`build`], but registers tasks that need live sessions
@@ -33,8 +33,11 @@ pub fn build(cluster: &Cluster, facts: &FactsTable) -> Result<Plan> {
 pub fn build_with_pool(
     cluster: &Cluster,
     pool: Option<Arc<dyn kurin_core::executor::SessionPool>>,
-    facts: &FactsTable,
+    run: &Arc<RunContext>,
 ) -> Result<Plan> {
+    // Facts are discovered before planning and live in the run context;
+    // snapshot them so the plan build never holds the lock.
+    let facts = &run.facts_snapshot();
     let stages = [
         Stage::Discover,
         Stage::Preflight,
@@ -94,8 +97,8 @@ pub fn build_with_pool(
                 Arc::new(tasks::install::ArtifactsInstall::new(
                     node,
                     facts.arch(&node.name)?,
-                    cluster.offline_dir.clone(),
                     cluster.runtime,
+                    run,
                 )),
             );
             push(3, Arc::new(tasks::os_baseline::OsBaseline::new(node)));
@@ -103,7 +106,7 @@ pub fn build_with_pool(
             push(3, Arc::new(tasks::kernel_deps::KernelDeps::new(node)));
         }
         // ExternalLb for kurin-lb comes from stage_tasks itself.
-        for (stage, task) in tasks::k3s::stage_tasks(cluster)? {
+        for (stage, task) in tasks::k3s::stage_tasks(cluster, run)? {
             let i = stages
                 .iter()
                 .position(|x| *x == stage)
@@ -139,8 +142,8 @@ pub fn build_with_pool(
                 Arc::new(tasks::install::ArtifactsInstall::new(
                     node,
                     facts.arch(&node.name)?,
-                    cluster.offline_dir.clone(),
                     cluster.runtime,
+                    run,
                 )),
             );
             push(3, Arc::new(tasks::os_baseline::OsBaseline::new(node)));
@@ -154,8 +157,8 @@ pub fn build_with_pool(
             Arc::new(tasks::install::ArtifactsInstall::new(
                 node,
                 facts.arch(&node.name)?,
-                cluster.offline_dir.clone(),
                 cluster.runtime,
+                run,
             )),
         );
         push(3, Arc::new(tasks::os_baseline::OsBaseline::new(node)));
@@ -198,6 +201,7 @@ pub fn build_with_pool(
                             node,
                             facts.arch(&node.name)?,
                             &ca,
+                            run,
                         )?),
                     );
                 }
@@ -218,6 +222,7 @@ pub fn build_with_pool(
                     cp1,
                     facts.arch(&cp1.name)?,
                     &ca,
+                    run,
                 )?),
             );
         }
@@ -232,8 +237,8 @@ pub fn build_with_pool(
             Arc::new(tasks::images::ImagesImport::new(
                 node,
                 facts.arch(&node.name)?,
-                cluster.offline_dir.clone(),
                 cluster.cni.clone(),
+                run,
             )),
         );
     }
@@ -241,7 +246,7 @@ pub fn build_with_pool(
     // Runtime tasks (CRI-O): prepare-stage tasks returned by the
     // runtime implementation (skipped above when containerd is the runtime).
     if cluster.runtime == kurin_config::RuntimeKind::Crio {
-        let mapped: Vec<(usize, Arc<dyn Task>)> = tasks::cri_o::runtime_tasks(cluster, facts)?
+        let mapped: Vec<(usize, Arc<dyn Task>)> = tasks::cri_o::runtime_tasks(cluster, facts, run)?
             .into_iter()
             .map(|(stage, task)| {
                 let i = stages
@@ -259,7 +264,7 @@ pub fn build_with_pool(
     // Must be written before init binds the VIP as controlPlaneEndpoint.
     if cluster.ha_mode == kurin_config::HaMode::KubeVip {
         for node in cluster.control_plane() {
-            if let Some(kubevip) = tasks::bootstrap::KubeVip::new(cluster, node) {
+            if let Some(kubevip) = tasks::bootstrap::KubeVip::new(cluster, node, run) {
                 push(6, Arc::new(kubevip));
             }
         }
@@ -280,7 +285,7 @@ pub fn build_with_pool(
     if let Some(first) = cluster.control_plane().next() {
         push(
             6,
-            Arc::new(tasks::bootstrap::KubeadmInit::new(cluster, first)),
+            Arc::new(tasks::bootstrap::KubeadmInit::new(cluster, first, run)),
         );
         // ApiReady: the VIP-backed API must serve before any join. join's
         // discovery hits the VIP, which requires kube-vip's lease + 6443
@@ -301,10 +306,13 @@ pub fn build_with_pool(
         if is_first_cp {
             continue;
         }
-        push(8, Arc::new(tasks::join::KubeadmJoin::new(cluster, node)));
+        push(
+            8,
+            Arc::new(tasks::join::KubeadmJoin::new(cluster, node, run)),
+        );
     }
     // CNI + post.
-    push(10, tasks::cni::plugin_task(cluster, facts)?);
+    push(10, tasks::cni::plugin_task(cluster, facts, run)?);
     if cluster.storage_kind.is_some() {
         push(10, Arc::new(tasks::storage::StorageInstall::new(cluster)?));
     }

@@ -397,3 +397,9 @@ offline-dir = "/srv/kurin-bundle"
 
 事件流（`--json`）逐行 JSONL：`task-start/skip/done/failed/reconciled`、
 `stage-done`、`cluster-ready`——e2e 与自动化消费的稳定接口。
+
+运行状态：`--resume` 从 `$XDG_STATE_HOME/kurin/runs/<cluster>.bb.json`
+（回退 `~/.local/state/...`，权限 0600）恢复已完成任务与跨任务数据
+（kubeadm join 材料、k3s node token）。这些秘密不再写入
+`~/.cache/kurin/clusters/<cluster>`；旧目录会在下一次 `delete cluster`
+时清理。

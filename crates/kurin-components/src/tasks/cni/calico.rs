@@ -4,12 +4,15 @@
 //! The Installation CR is rendered from a template; only the pinned operator
 //! manifest URL and file-path plumbing are assembled here.
 
+use std::sync::Arc;
+
 use kurin_config::Cluster;
 use miette::Result;
 
 use crate::templates;
 use kurin_artifact::artifact::{Arch, ArtifactManifest, ArtifactStore};
 use kurin_core::engine::{Drift, Outcome, Session, Stage, Task};
+use kurin_core::run::RunContext;
 
 /// Staged on the control-plane node, then applied and removed.
 const INSTALLATION_STAGING_PATH: &str = "/tmp/kurin-calico-installation.yaml";
@@ -21,20 +24,20 @@ const KUBECTL: &str = "kubectl --kubeconfig /etc/kubernetes/admin.conf";
 pub struct CalicoOperator {
     node_name: String,
     pod_cidr: String,
-    /// Offline bundle: read the pinned manifest from there, no downloads.
-    offline: Option<std::path::PathBuf>,
     /// Arch the pinned operator manifest is resolved for (the
     /// control-plane node this task runs on).
     arch: Arch,
+    /// Run sources: offline dir, manifest override and mirror zone.
+    run: Arc<RunContext>,
 }
 
 impl CalicoOperator {
-    pub fn new(cluster: &Cluster, arch: Arch) -> Self {
+    pub fn new(cluster: &Cluster, arch: Arch, run: &Arc<RunContext>) -> Self {
         Self {
-            offline: cluster.offline_dir.clone(),
             // The pinned operator manifest is resolved for the arch of
             // the control-plane node this task applies through.
             arch,
+            run: Arc::clone(run),
             // Applied through the first control-plane session.
             node_name: cluster
                 .control_plane()
@@ -48,9 +51,9 @@ impl CalicoOperator {
     fn installation_cr(&self) -> String {
         // Runtime image pulls must follow the zone too: the operator CR's
         // registry decides where calico-node/cni/typha images come from.
-        let registry = match kurin_artifact::artifact::zone() {
-            kurin_artifact::zone::Zone::Cn => "quay.m.daocloud.io",
-            kurin_artifact::zone::Zone::Global => "quay.io",
+        let registry = match self.run.sources.zone {
+            kurin_core::zone::Zone::Cn => "quay.m.daocloud.io",
+            kurin_core::zone::Zone::Global => "quay.io",
         };
         templates::render(
             "cni/calico-installation.yaml.j2",
@@ -63,18 +66,22 @@ impl CalicoOperator {
     /// offline bundle, so both share one verified source. Resolved for
     /// this task's node arch (the control plane it applies through).
     async fn operator_manifest(&self) -> miette::Result<Vec<u8>> {
-        let manifest = ArtifactManifest::embedded()?;
+        let manifest = kurin_artifact::artifact::install_manifest(&self.run.sources)?;
         let spec = manifest.spec("calico-operator", self.arch)?;
-        let path = match &self.offline {
+        let path = match &self.run.sources.offline_dir {
             Some(dir) => {
-                let dm = ArtifactManifest::from_dir(dir)?;
+                let dm = ArtifactManifest::from_dir_with(dir, &manifest)?;
                 dm.find("calico-operator", self.arch)
                     .map(|a| a.file.clone())
                     .ok_or_else(|| {
                         miette::miette!("offline bundle lacks calico-operator manifest")
                     })?
             }
-            None => ArtifactStore::open_default()?.fetch(&spec).await?,
+            None => {
+                ArtifactStore::open_default()?
+                    .fetch(&spec, self.run.sources.zone)
+                    .await?
+            }
         };
         std::fs::read(path).map_err(|e| miette::miette!("read operator manifest: {e}"))
     }
@@ -202,7 +209,12 @@ mod tests {
 
     #[test]
     fn installation_cr_renders_pod_cidr_and_encapsulation() {
-        let cr = CalicoOperator::new(&cluster("10.244.0.0/16"), Arch::Amd64).installation_cr();
+        let cr = CalicoOperator::new(
+            &cluster("10.244.0.0/16"),
+            Arch::Amd64,
+            &crate::test_util::run(),
+        )
+        .installation_cr();
         assert!(cr.contains("kind: Installation"));
         assert!(cr.contains("cidr: 10.244.0.0/16"));
         assert!(cr.contains("encapsulation: VXLANCrossSubnet"));

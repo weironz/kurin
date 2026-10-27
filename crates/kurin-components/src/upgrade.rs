@@ -20,6 +20,7 @@ use kurin_artifact::artifact::{Arch, ArtifactKind, ArtifactManifest, ArtifactSto
 use kurin_artifact::dynamic_manifest;
 use kurin_core::engine::{ExecOutput, Session};
 use kurin_core::executor::SessionPool;
+use kurin_core::run::RunContext;
 
 // `lib.rs` is integrator-owned: until `pub mod artifact_bundle;` lands
 // there, declare the (independently owned) shared file from this module.
@@ -70,6 +71,8 @@ pub enum BinSource<'a> {
     Cache {
         store: &'a ArtifactStore,
         manifest: &'a ArtifactManifest,
+        /// Mirror zone from the run sources.
+        zone: kurin_core::zone::Zone,
     },
     Bundle(&'a DirManifest),
 }
@@ -79,10 +82,14 @@ impl BinSource<'_> {
     /// when this is the online cache).
     async fn locate(&self, name: &str, arch: Arch, node: &str) -> Result<PathBuf> {
         match self {
-            BinSource::Cache { store, manifest } => {
+            BinSource::Cache {
+                store,
+                manifest,
+                zone,
+            } => {
                 let spec = manifest.spec(name, arch)?;
                 tracing::info!(node = %node, "[{node}] fetching {name} v{} ...", spec.version);
-                Ok(store.fetch(&spec).await?)
+                Ok(store.fetch(&spec, *zone).await?)
             }
             BinSource::Bundle(dir) => dir
                 .find(name, arch)
@@ -233,6 +240,7 @@ pub async fn run(
     pool: &Arc<dyn SessionPool>,
     opts: UpgradeOptions,
     facts: &kurin_core::facts::FactsTable,
+    run: &Arc<RunContext>,
 ) -> Result<()> {
     ensure_supported(cluster).await?;
     // The dynamic manifest is resolved on the control machine: its
@@ -246,8 +254,13 @@ pub async fn run(
     // the target. A known server version arms kubeadm's one-minor-at-a-time
     // policy; an unknown one builds the target bundle unconditionally.
     let manifest = match Version::parse(&cp.server) {
-        Ok(current) => dynamic_manifest::k8s_manifest_for_from(&current, target, arch).await?,
-        Err(_) if cp.server.is_empty() => dynamic_manifest::k8s_manifest_for(target, arch).await?,
+        Ok(current) => {
+            dynamic_manifest::k8s_manifest_for_from(&current, target, arch, run.sources.zone)
+                .await?
+        }
+        Err(_) if cp.server.is_empty() => {
+            dynamic_manifest::k8s_manifest_for(target, arch, run.sources.zone).await?
+        }
         Err(_) => {
             return Err(miette::miette!(
                 "cannot parse server version `{}`",
@@ -258,6 +271,7 @@ pub async fn run(
     let source = BinSource::Cache {
         store: &store,
         manifest: &manifest,
+        zone: run.sources.zone,
     };
     execute(cluster, target, pool, opts, facts, &manifest, &source, &cp).await
 }
@@ -276,6 +290,7 @@ pub async fn run_offline_with(
     pool: &Arc<dyn SessionPool>,
     opts: UpgradeOptions,
     facts: &kurin_core::facts::FactsTable,
+    _run: &Arc<RunContext>,
 ) -> Result<()> {
     ensure_supported(cluster).await?;
     let manifest = artifact_bundle::read_bundle_manifest(offline)?;
