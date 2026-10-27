@@ -276,8 +276,8 @@ impl ConfigPatch {
         self.apply_addons(doc)?;
         self.apply_ssh(doc)?;
         self.apply_nodes(doc)?;
-        // A registry node needs an implementation. The schema's default is
-        // docker-registry; a kind already in the file wins.
+        // A registry node needs an implementation. v1alpha2 defaults it to
+        // zot (WP-49); a kind already in the file wins.
         let has_registry_node = self.nodes.iter().any(|n| n.role == NodeRole::Registry);
         let has_registry_kind = doc
             .get("registry")
@@ -285,7 +285,7 @@ impl ConfigPatch {
             .and_then(|registry| registry.get("kind"))
             .is_some();
         if has_registry_node && !has_registry_kind {
-            set_str(doc, "registry.kind", "docker-registry")?;
+            set_str(doc, "registry.kind", "zot")?;
         }
         for (path, value) in &self.sets {
             set_path(doc, path, value.clone())?;
@@ -915,6 +915,53 @@ mod tests {
         let text = doc.to_string();
         assert!(text.contains("[nodes.cp-1.labels]"), "{text}");
         assert!(text.contains("zone = \"eu\""), "{text}");
+    }
+
+    #[test]
+    fn a_registry_node_defaults_to_zot() {
+        let mut doc = doc();
+        let patch = ConfigPatch {
+            nodes: vec![PatchNode {
+                name: None,
+                address: "10.0.0.41".parse().unwrap(),
+                role: NodeRole::Registry,
+                internal_address: None,
+                user: None,
+                port: None,
+                labels: BTreeMap::new(),
+                auth: None,
+            }],
+            ..ConfigPatch::default()
+        };
+        patch.apply(&mut doc).unwrap();
+        assert!(doc.to_string().contains("kind = \"zot\""), "{}", doc);
+    }
+
+    #[test]
+    fn an_explicit_registry_kind_is_not_overwritten() {
+        let mut doc: DocumentMut =
+            "version = \"v1alpha2\"\nname = \"d\"\n[registry]\nkind = \"docker-registry\"\n"
+                .parse()
+                .unwrap();
+        let patch = ConfigPatch {
+            nodes: vec![PatchNode {
+                name: None,
+                address: "10.0.0.41".parse().unwrap(),
+                role: NodeRole::Registry,
+                internal_address: None,
+                user: None,
+                port: None,
+                labels: BTreeMap::new(),
+                auth: None,
+            }],
+            ..ConfigPatch::default()
+        };
+        patch.apply(&mut doc).unwrap();
+        assert!(
+            doc.to_string().contains("kind = \"docker-registry\""),
+            "{}",
+            doc
+        );
     }
 
     #[test]

@@ -42,6 +42,30 @@
 | `--save` / `--no-save` / `--force-save` | ✅ | 默认 `./<name>.kurin.toml`；内容不同默认拒绝覆盖 |
 | `--setup-ssh-key` | ✅ | 密码会话幂等推送公钥（已存在跳过、重放不重复）；验证私钥登录；落盘改私钥认证；`e2e/tier1/ssh-key.sh` |
 
+## registry（私有镜像仓库）
+
+`[registry]` 在 v1alpha2 中的默认与可用形态（`role = "registry"` 节点只由
+前三种 kind 使用；`external` 使用已有仓库，不需要 registry 节点）：
+
+| kind | 安装位置 | v1alpha1 | v1alpha2 | e2e |
+|---|---|---|---|---|
+| `docker-registry` | registry 节点 | `kind` 必填 | 显式指定 | ✅ `e2e/tier3/registry.sh docker-registry` |
+| `zot` | registry 节点 | `kind` 必填 | 未写 `kind` 时默认 | ✅ `e2e/tier3/registry.sh zot` |
+| `harbor` | registry 节点（仅单节点） | `kind` 必填 | 显式指定 | ✅ `e2e/tier3/registry.sh harbor` |
+| `external` | 无（使用已有仓库） | ❌ 拒绝 | `address` 必填；`ca-file`、`namespace` 可选 | 人工：见下 |
+
+`external` 的校验与 WP-36 一致：`address` 必填，`namespace` 只能是斜杠分隔的
+小写路径段（默认 `kurin`），`ca-file` 必须存在且只能与 `external` 一起使用；
+`external` 指向 zot 时，e2e 把 `address` 写成该 zot 节点的
+`https://<ip>:5000` 并复用同一套 `registry/trust` + `registry/push` 任务
+（不安装任何东西）。人工命令：
+
+```text
+just tier3-registry zot
+just tier3-registry docker-registry
+KURIN_REGISTRY_EXTERNAL=1 just tier3-registry external
+```
+
 ## add nodes / delete node / delete cluster
 
 | | k8s（kubeadm） | k3s |

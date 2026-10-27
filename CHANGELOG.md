@@ -2,6 +2,19 @@
 
 All notable changes to kurin. Format follows Keep a Changelog; semver.
 
+### Changed (WP-49)
+- v1alpha2 defaults a `role = "registry"` node without an explicit
+  `[registry] kind` to `zot` (the OCI-native registry that carries
+  packages and signatures). An explicit kind still wins, and v1alpha1
+  keeps its original rule: a registry node requires `kind` and is never
+  silently switched. `kurin create config` / quick-create now write
+  `kind = "zot"` when `--registry` adds a node.
+- `kind = "external"` is documented end to end: `address` is required,
+  `namespace` (default `kurin`) must be slash-separated lowercase path
+  segments, and `ca-file` must exist and only accompanies `external`.
+  `e2e/tier3/registry.sh external` proves the external path against a
+  zot registry (no install task, trust + push under `kurin/`).
+
 ### Added (WP-37)
 - flannel, cilium and kube-ovn are air-gap ready: their images are
   pinned in the artifact manifest and enter the base package and the

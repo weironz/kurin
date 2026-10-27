@@ -151,7 +151,7 @@ cargo test -p kurin-config --test json_schema   # 校验入库文件未漂移
 | 动态存储 | `[storage] kind/default/server/path` | `[addons.local-path]` / `[addons.nfs-subdir]`；`values` 中写 `default-class`、`server`、`path` |
 | addon | 无 | `[addons.<name>] enabled/version/source/values/raw-values` |
 | 包来源 | `[artifacts] offline-dir/zone` | `[packages] base/os/delivery/verify/trusted-keys`；`[artifacts]` 继续接受 |
-| 私有仓库 | `[registry] kind = docker-registry \| zot \| harbor` | 同上，另加 `kind = "external"`（`address`、`ca-file`、`namespace`） |
+| 私有仓库 | `[registry] kind = docker-registry \| zot \| harbor`（有 registry 节点时必填） | 同上，另加 `kind = "external"`（`address`、`ca-file`、`namespace`）；`role = "registry"` 节点未写 kind 时默认 `zot` |
 | SSH 提权/主机密钥 | `[ssh] become/become-password/known-hosts` | 相同 |
 | network / ha / nodes / ssh.auth | — | 相同 |
 
@@ -322,6 +322,8 @@ zone = "cn"                        # 国内镜像；KURIN_ZONE=cn 环境变量�
 # ── registry（私有镜像仓库，可选） ─────────────────────────────
 # [registry]
 # kind = "zot"                  # docker-registry | zot | harbor | external
+#                               # v1alpha2：有 registry 节点而未写 kind 时默认 zot
+#                               # v1alpha1：有 registry 节点时 kind 必填（原行为）
 # port = 5000                   # harbor 默认 8443
 # username = "kurin"            # harbor 只能是 admin
 # password = "s3cret"
@@ -405,13 +407,17 @@ join 时 CLI 显式警告）。
 | kind | 实现 | 说明 |
 |---|---|---|
 | `docker-registry` | CNCF distribution v3 | 单二进制 + systemd，最简 |
-| `zot` | project-zot | OCI 原生，开 `docker2s2` 兼容 ctr 推送 |
+| `zot` | project-zot | OCI 原生，开 `docker2s2` 兼容 ctr 推送；**v1alpha2 默认** |
 | `harbor` | Harbor v2 离线安装器 | 唯一实现自带 UI；仅单 registry 节点；username 必须 admin |
 | `external` | 运维自管仓库（v1alpha2） | 需要 `address`；可选 `ca-file`、`namespace`（默认 `kurin`） |
 
+- 默认值：v1alpha2 中声明了 `role = "registry"` 节点但没写 `kind` 时按 `zot`
+  处理；显式写出的 kind 优先。v1alpha1 保持原行为——有 registry 节点时
+  `kind` 必填，不会悄悄变成 zot。
 - 校验：存在 `role = "registry"` 节点 ⇔ 必须有 `[registry]`（`external` 不需要
   registry 节点）；`harbor` 仅支持单个 registry 节点；username/password 必须成对；
-  `external` 必须有 `address`
+  `external` 必须有 `address`，`namespace` 只能是斜杠分隔的小写路径段，
+  `ca-file` 必须存在且只能与 `external` 一起使用
 - TLS：kurin 生成一次自签 CA，给每个 registry 节点签发证书（SAN 含节点 IP）；
   `external` 用 `ca-file` 指定的 PEM（不写则用系统信任库）
 - 认证：docker-registry/zot 用 htpasswd（bcrypt）；harbor 用 admin 密码；

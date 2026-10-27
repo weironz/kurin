@@ -455,7 +455,7 @@
               "type": "null"
             }
           ],
-          "description": "Implementation; required when any node has role = \"registry\".\n`external` means \"an operator-managed registry\": kurin installs\nnothing and only uses the address and credentials (reserved, WP-49)."
+          "description": "Implementation. Defaults to `zot` when a `role = \"registry\"` node\nis declared and the kind is omitted (v1alpha2 only; v1alpha1 keeps\nrequiring it). `external` means \"an operator-managed registry\":\nkurin installs nothing and only uses the address and credentials."
         },
         "namespace": {
           "description": "Repository namespace kurin writes under (`kind = \"external\"` only;\ndefault `kurin`). Keeps kurin's mirror tree apart from other users\nof a shared registry.",
@@ -515,7 +515,7 @@
         },
         {
           "const": "external",
-          "description": "Reserved (v1alpha2 only): an operator-managed registry. kurin\ninstalls nothing and only uses `address` + credentials. WP-49.",
+          "description": "v1alpha2 only: an operator-managed registry. kurin installs\nnothing and only uses `address` + credentials. WP-49.",
           "type": "string"
         }
       ]

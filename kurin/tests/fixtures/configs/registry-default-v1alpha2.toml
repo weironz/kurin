@@ -1,0 +1,39 @@
+# WP-49 fixture: v1alpha2 omits `[registry] kind` on purpose — a
+# `role = "registry"` node defaults to zot (v1alpha1 would reject this).
+version = "v1alpha2"
+name = "registry-default"
+
+[kubernetes]
+version = "1.33.1"
+
+[network]
+pod-cidr = "10.233.64.0/18"
+service-cidr = "10.233.0.0/18"
+dns-domain = "cluster.local"
+
+[network.cni]
+kind = "calico"
+
+[ssh]
+user = "root"
+port = 22
+
+[ssh.auth]
+method = "private_key"
+key-path = "/root/.ssh/id_ed25519"
+
+[registry]
+username = "kurin"
+password = "fake"
+
+[nodes.master01]
+address = "192.168.10.11"
+role = "control-plane"
+
+[nodes.worker01]
+address = "192.168.10.21"
+role = "worker"
+
+[nodes.registry01]
+address = "192.168.10.41"
+role = "registry"

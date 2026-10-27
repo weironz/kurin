@@ -2,28 +2,50 @@
 
 kurin 内置私有镜像仓库，装到 `role = "registry"` 节点上，供集群节点作为
 镜像源（离线/弱网场景不必逐节点导入 tar，也不用外网 registry）。
-三种实现：`docker-registry`（distribution v3）、`zot`、`harbor`。
+四种形态：`docker-registry`（distribution v3）、`zot`（v1alpha2 默认）、
+`harbor`，以及不安装任何东西的 `external`（使用运维自管仓库，WP-36/49）。
 
 ## 配置（v1alpha1 新增，所有字段 `#[serde(default)]` 向后兼容）
 
 ```toml
 [registry]
-kind = "docker-registry"      # | "zot" | "harbor"（有 registry 节点时必填）
+kind = "zot"                  # "docker-registry" | "zot" | "harbor" | "external"
+                              # v1alpha2：有 registry 节点而未写 kind 时默认 zot
+                              # v1alpha1：有 registry 节点时 kind 必填（原行为）
 port = 5000                   # harbor 默认 8443（https）
 username = "kurin"
 password = "<htpasswd basic auth>"   # harbor: admin 初始密码
 data-dir = "/var/lib/kurin/registry"  # harbor 固定用其安装目录
+
+# external 专用（v1alpha2）
+address = "https://registry.example.com:5000"  # 必填
+ca-file = "/etc/kurin/registry-ca.pem"         # 可选；不写用系统信任库
+namespace = "kurin"                            # 可选；默认 kurin
 
 [nodes.reg1]
 address = "192.168.10.30"
 role = "registry"
 ```
 
-校验规则（kurin-config/model.rs，owner: 集成负责人）：
-1. 存在 `role = "registry"` 节点 ⇔ 必须有 `[registry].kind`（镜像 lb 规则）。
+校验规则（v1alpha2 lowering + `registry/*` 组件）：
+1. 存在 `role = "registry"` 节点时，v1alpha1 必须有 `[registry].kind`；
+   v1alpha2 未写 kind 时默认 `zot`。
 2. `harbor` 仅支持**单个** registry 节点（多实例无共享存储会分叉）。
 3. registry 节点不能同时是 control-plane/worker/lb。
 4. k3s 分布同样适用（registry 在 join 前可用即可）。
+5. `external` 必须有 `address`；`namespace` 只能是斜杠分隔的小写路径段；
+   `ca-file` 必须存在且只能与 `external` 一起使用。`external` 不需要
+   registry 节点，且只做 trust + push，不安装任何东西。
+
+## external（运维自管仓库）
+
+`kind = "external"` 不装 registry，只把 `address` 作为仓库端点：
+`registry/trust` 把 `ca-file`（若有）写到每个节点并生成运行时 mirror，
+`registry/push@controller` 把包内镜像与文件推到
+`<address>/v2/<namespace>/mirror/...` 与 `<namespace>/kurin/files/...`。
+`namespace` 默认 `kurin`，用于与同一仓库的其它用户隔离。指向自建 zot 时，
+把 `ca-file` 设为该 zot 的 CA（`/var/lib/kurin/pki/ca.crt`）即可复用同一套
+任务；`e2e/tier3/registry.sh external` 覆盖该场景。
 ## 模式：seed（v0.4 唯一模式）
 
 kurin 把 bundle 中选中的镜像按**原始 repo 路径**（去掉 registry 主机部分）
@@ -37,7 +59,7 @@ kurin 把 bundle 中选中的镜像按**原始 repo 路径**（去掉 registry �
 
 ## TLS 与信任
 
-- kurin 在**首个 registry 节点**生成自签 CA（`/var/lib/kurin/pki/registry-ca.crt`），
+- kurin 在**首个 registry 节点**生成自签 CA（`/var/lib/kurin/pki/ca.crt`），
   为每个 registry 节点签服务端证书（SAN 含节点内网 IP + 集群名）。
 - k8s 节点通过 `registry/trust` 任务把 CA 装到
   `/etc/containerd/certs.d/<host>:<port>/hosts.toml`：
@@ -55,7 +77,7 @@ kurin 把 bundle 中选中的镜像按**原始 repo 路径**（去掉 registry �
 
 ## TLS 与信任
 
-- kurin 在**首个 registry 节点**生成自签 CA（`/var/lib/kurin/pki/registry-ca.crt`），
+- kurin 在**首个 registry 节点**生成自签 CA（`/var/lib/kurin/pki/ca.crt`），
   为每个 registry 节点签服务端证书（SAN 含节点内网 IP + 集群名）。
 - k8s 节点通过 `registry/trust` 任务把 CA 装到
   `/etc/containerd/certs.d/<host>:<port>/hosts.toml`：

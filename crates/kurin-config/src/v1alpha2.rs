@@ -9,8 +9,10 @@
 //! - `[packages]` declares package sources (WP-30+);
 //! - `[addons.<name>]` declares addons declaratively; `[storage]` is gone
 //!   and maps to `addons.local-path` / `addons.nfs-subdir`;
-//! - `[registry] kind = "external"` is reserved for an operator-managed
-//!   registry (WP-49).
+//! - a `role = "registry"` node without an explicit `[registry] kind`
+//!   defaults to `zot` (v1alpha1 keeps requiring the kind);
+//! - `[registry] kind = "external"` uses an operator-managed registry
+//!   (`address`, optional `ca-file` and `namespace`).
 //!
 //! Both versions lower to the same [`crate::model::ClusterSpec`]; the
 //! loader dispatches on `version`.
@@ -23,7 +25,7 @@ use semver::Version;
 use serde::{Deserialize, Serialize};
 
 use crate::config::{
-    ArtifactsConfig, Distribution as DistributionV1, HaConfig, NetworkConfig, NodeConfig,
+    ArtifactsConfig, Distribution as DistributionV1, HaConfig, NetworkConfig, NodeConfig, NodeRole,
     RegistryKind, RuntimeKind, SshDefaults, StorageKind,
 };
 use crate::error::{ConfigError, Result};
@@ -125,9 +127,10 @@ pub struct RuntimeConfig {
 #[derive(Clone, Default, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
 pub struct RegistryConfig {
-    /// Implementation; required when any node has role = "registry".
-    /// `external` means "an operator-managed registry": kurin installs
-    /// nothing and only uses the address and credentials (reserved, WP-49).
+    /// Implementation. Defaults to `zot` when a `role = "registry"` node
+    /// is declared and the kind is omitted (v1alpha2 only; v1alpha1 keeps
+    /// requiring it). `external` means "an operator-managed registry":
+    /// kurin installs nothing and only uses the address and credentials.
     pub kind: Option<RegistryKind>,
     /// Registry endpoint, required for `kind = "external"`.
     pub address: Option<String>,
@@ -287,14 +290,29 @@ impl TryFrom<ClusterConfig> for ClusterSpec {
 
     fn try_from(cfg: ClusterConfig) -> Result<Self> {
         check_version(&cfg)?;
-        if cfg.registry.kind == Some(RegistryKind::External) && cfg.registry.address.is_none() {
+        // WP-49: v1alpha2 defaults a `role = "registry"` node to zot when
+        // the kind is omitted. v1alpha1 keeps its "kind is required" rule
+        // (it lowers through `config.rs`, which never sees this default).
+        let registry_kind = cfg.registry.kind.or_else(|| {
+            cfg.nodes
+                .values()
+                .any(|n| n.role == NodeRole::Registry)
+                .then_some(RegistryKind::Zot)
+        });
+        if registry_kind == Some(RegistryKind::External) && cfg.registry.address.is_none() {
             return Err(ConfigError::invalid(
                 String::new(),
                 "registry.kind = \"external\" requires registry.address",
             ));
         }
+        if cfg.registry.address.is_some() && registry_kind != Some(RegistryKind::External) {
+            return Err(ConfigError::invalid(
+                String::new(),
+                "registry.address is only valid with registry.kind = \"external\"",
+            ));
+        }
         if let Some(ns) = cfg.registry.namespace.as_deref() {
-            if cfg.registry.kind != Some(RegistryKind::External) {
+            if registry_kind != Some(RegistryKind::External) {
                 return Err(ConfigError::invalid(
                     String::new(),
                     "registry.namespace is only valid with registry.kind = \"external\"",
@@ -310,7 +328,7 @@ impl TryFrom<ClusterConfig> for ClusterSpec {
             }
         }
         if let Some(ca) = cfg.registry.ca_file.as_deref() {
-            if cfg.registry.kind != Some(RegistryKind::External) {
+            if registry_kind != Some(RegistryKind::External) {
                 return Err(ConfigError::invalid(
                     String::new(),
                     "registry.ca-file is only valid with registry.kind = \"external\"",
@@ -351,7 +369,7 @@ impl TryFrom<ClusterConfig> for ClusterSpec {
             ha: cfg.ha,
             nodes: cfg.nodes,
             registry: crate::config::RegistryConfig {
-                kind: cfg.registry.kind,
+                kind: registry_kind,
                 port: cfg.registry.port,
                 username: cfg.registry.username,
                 password: cfg.registry.password,
@@ -547,6 +565,91 @@ role = "control-plane"
         let toml = MINIMAL.to_string() + "\n[registry]\nkind = \"external\"\n";
         let err = parse_str(Path::new("x.toml"), &toml).expect_err("must be rejected");
         assert!(format!("{err}").contains("registry.address"));
+    }
+
+    #[test]
+    fn registry_node_defaults_to_zot_in_v1alpha2() {
+        let toml = MINIMAL.to_string()
+            + "\n[registry]\nusername = \"kurin\"\npassword = \"fake\"\n\
+               [nodes.reg1]\naddress = \"10.0.0.31\"\nrole = \"registry\"\n";
+        let spec = parse_str(Path::new("x.toml"), &toml).expect("v1alpha2 parses");
+        assert_eq!(spec.registry_kind(), Some(RegistryKind::Zot));
+        assert_eq!(spec.registry_port(), 5000);
+    }
+
+    #[test]
+    fn an_explicit_registry_kind_wins_over_the_v1alpha2_default() {
+        let toml = MINIMAL.to_string()
+            + "\n[registry]\nkind = \"docker-registry\"\n\
+               [nodes.reg1]\naddress = \"10.0.0.31\"\nrole = \"registry\"\n";
+        let spec = parse_str(Path::new("x.toml"), &toml).expect("v1alpha2 parses");
+        assert_eq!(spec.registry_kind(), Some(RegistryKind::DockerRegistry));
+    }
+
+    #[test]
+    fn v1alpha1_registry_node_still_requires_an_explicit_kind() {
+        let toml = MINIMAL.replace("version = \"v1alpha2\"", "version = \"v1alpha1\"")
+            + "\n[nodes.reg1]\naddress = \"10.0.0.31\"\nrole = \"registry\"\n";
+        let err = parse_str(Path::new("x.toml"), &toml).expect_err("v1alpha1 keeps the rule");
+        assert!(
+            format!("{err}").contains("[registry] kind"),
+            "message: {err}"
+        );
+    }
+
+    #[test]
+    fn external_registry_accepts_an_external_node_free_config() {
+        let toml = MINIMAL.to_string()
+            + "\n[registry]\nkind = \"external\"\naddress = \"https://reg.example.com:5000\"\n\
+               namespace = \"team-a/kurin\"\n";
+        let spec = parse_str(Path::new("x.toml"), &toml).expect("v1alpha2 parses");
+        assert!(spec.registry_is_external());
+        assert_eq!(spec.registry_namespace(), "team-a/kurin");
+        assert_eq!(
+            spec.registry_endpoint().as_deref(),
+            Some("reg.example.com:5000")
+        );
+    }
+
+    #[test]
+    fn external_registry_rejects_bad_namespace_and_stray_fields() {
+        let bad_ns = MINIMAL.to_string()
+            + "\n[registry]\nkind = \"external\"\naddress = \"https://reg:5000\"\n\
+               namespace = \"Team A\"\n";
+        let err = parse_str(Path::new("x.toml"), &bad_ns).expect_err("bad namespace");
+        assert!(format!("{err}").contains("registry.namespace"), "{err}");
+
+        let stray_ns =
+            MINIMAL.to_string() + "\n[registry]\nkind = \"zot\"\nnamespace = \"kurin\"\n";
+        let err =
+            parse_str(Path::new("x.toml"), &stray_ns).expect_err("namespace without external");
+        assert!(
+            format!("{err}").contains("only valid with registry.kind = \"external\""),
+            "{err}"
+        );
+
+        let stray_ca =
+            MINIMAL.to_string() + "\n[registry]\nkind = \"zot\"\nca-file = \"/tmp/x.pem\"\n";
+        let err = parse_str(Path::new("x.toml"), &stray_ca).expect_err("ca-file without external");
+        assert!(
+            format!("{err}").contains("only valid with registry.kind = \"external\""),
+            "{err}"
+        );
+
+        let stray_address =
+            MINIMAL.to_string() + "\n[registry]\nkind = \"zot\"\naddress = \"https://reg:5000\"\n";
+        let err =
+            parse_str(Path::new("x.toml"), &stray_address).expect_err("address without external");
+        assert!(
+            format!("{err}").contains("only valid with registry.kind = \"external\""),
+            "{err}"
+        );
+
+        let missing_ca = MINIMAL.to_string()
+            + "\n[registry]\nkind = \"external\"\naddress = \"https://reg:5000\"\n\
+               ca-file = \"/nonexistent/kurin-registry-ca.pem\"\n";
+        let err = parse_str(Path::new("x.toml"), &missing_ca).expect_err("missing ca-file");
+        assert!(format!("{err}").contains("does not exist"), "{err}");
     }
 
     #[test]

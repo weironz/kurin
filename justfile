@@ -115,6 +115,10 @@ tier3-test:
 tier3-down:
     e2e/tier3/down.sh
 
+# private registry e2e (WP-36/49): kind = zot | docker-registry | harbor | external
+tier3-registry kind="zot":
+    e2e/tier3/registry.sh {{kind}}
+
 tier1-flannel:
     e2e/tier1/flannel.sh target/tier1/debug/kurin
 

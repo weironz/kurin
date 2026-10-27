@@ -57,8 +57,8 @@ pub enum RegistryKind {
     Zot,
     /// Harbor v2 offline installer (single registry node only).
     Harbor,
-    /// Reserved (v1alpha2 only): an operator-managed registry. kurin
-    /// installs nothing and only uses `address` + credentials. WP-49.
+    /// v1alpha2 only: an operator-managed registry. kurin installs
+    /// nothing and only uses `address` + credentials. WP-49.
     External,
 }
 

@@ -64,4 +64,4 @@ address = "172.16.0.41"
 role = "registry"
 
 [registry]
-kind = "docker-registry"
+kind = "zot"

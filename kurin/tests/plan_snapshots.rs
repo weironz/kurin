@@ -37,6 +37,7 @@ const FIXTURES: &[&str] = &[
     "registry-docker.toml",
     "registry-harbor.toml",
     "registry-external.toml",
+    "registry-default-v1alpha2.toml",
     "storage-local-path.toml",
     "storage-nfs.toml",
     "offline.toml",
