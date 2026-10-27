@@ -1,0 +1,14 @@
+{
+  "apiVersion": "apps/v1",
+  "kind": "DaemonSet",
+  "metadata": {
+    "name": "agent",
+    "namespace": "kube-system",
+    "generation": 1
+  },
+  "status": {
+    "desiredNumberScheduled": 0,
+    "numberReady": 0,
+    "numberAvailable": 0
+  }
+}

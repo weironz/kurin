@@ -5,6 +5,7 @@
 //! manifest URL and file-path plumbing are assembled here.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use kurin_config::Cluster;
 use miette::Result;
@@ -13,6 +14,7 @@ use crate::templates;
 use kurin_artifact::artifact::{Arch, ArtifactManifest, ArtifactStore};
 use kurin_core::engine::{Drift, Outcome, Session, Stage, Task};
 use kurin_core::run::RunContext;
+use kurin_kube::{track, ObjRef, SessionKubectl, TrackOpts};
 
 /// Staged on the control-plane node, then applied and removed.
 const INSTALLATION_STAGING_PATH: &str = "/tmp/kurin-calico-installation.yaml";
@@ -20,6 +22,10 @@ const INSTALLATION_STAGING_PATH: &str = "/tmp/kurin-calico-installation.yaml";
 const OPERATOR_STAGING_PATH: &str = "/tmp/kurin-tigera-operator.yaml";
 /// kubectl on a fresh control plane has no $HOME/.kube/config yet.
 const KUBECTL: &str = "kubectl --kubeconfig /etc/kubernetes/admin.conf";
+/// CRD Established budget: the old until-loop slept 2 s up to 300 times.
+const CRD_TIMEOUT: Duration = Duration::from_secs(600);
+/// Operator Available budget: the old until-loop slept 5 s up to 240 times.
+const OPERATOR_TIMEOUT: Duration = Duration::from_secs(1200);
 
 pub struct CalicoOperator {
     node_name: String,
@@ -27,6 +33,8 @@ pub struct CalicoOperator {
     /// Arch the pinned operator manifest is resolved for (the
     /// control-plane node this task runs on).
     arch: Arch,
+    /// kubectl flavor of the distribution (readiness goes through it).
+    flavor: kurin_kube::Flavor,
     /// Run sources: offline dir, manifest override and mirror zone.
     run: Arc<RunContext>,
 }
@@ -37,6 +45,7 @@ impl CalicoOperator {
             // The pinned operator manifest is resolved for the arch of
             // the control-plane node this task applies through.
             arch,
+            flavor: cluster.distribution.into(),
             run: Arc::clone(run),
             // Applied through the first control-plane session.
             node_name: cluster
@@ -117,32 +126,53 @@ impl Task for CalicoOperator {
 
     async fn apply(&self, session: &dyn Session) -> miette::Result<Outcome> {
         session
-            .write_file(INSTALLATION_STAGING_PATH, self.installation_cr().as_bytes())
-            .await?;
-        session
             .write_file(OPERATOR_STAGING_PATH, &self.operator_manifest().await?)
             .await?;
-        // The operator creates its own CRDs at startup (Calico >=3.26), so a
-        // bare `wait` right after apply races both the CRD creation and the
-        // .status.conditions population (kubectl errors on nil conditions).
-        // Tolerant poll-with-timeout for every readiness step.
-        let script = format!(
-            "set -e\n\
-             {KUBECTL} apply -f {op}\n\
-             n=0; until {KUBECTL} wait --for=condition=Established crd/installations.operator.tigera.io --timeout=30s 2>/dev/null; do\n\
-               n=$((n+1)); [ $n -ge 300 ] && {{ echo 'CRD never Established' >&2; exit 1; }}\n\
-               sleep 2\n\
-             done\n\
-             n=0; until {KUBECTL} -n tigera-operator wait --for=condition=Available deployment/tigera-operator --timeout=60s 2>/dev/null; do\n\
-               n=$((n+1)); [ $n -ge 240 ] && {{ echo 'tigera-operator never Available' >&2; exit 1; }}\n\
-               sleep 5\n\
-             done\n\
-             {KUBECTL} apply -f {cr}\n\
-             rm -f {op} {cr}",
-            op = OPERATOR_STAGING_PATH,
-            cr = INSTALLATION_STAGING_PATH,
+        let apply_operator = format!("{KUBECTL} apply -f {OPERATOR_STAGING_PATH}");
+        let out = session.exec(&apply_operator).await?;
+        if !out.ok() {
+            return Err(miette::miette!(
+                "calico apply failed: {}",
+                out.stderr.lines().last().unwrap_or("")
+            ));
+        }
+        // The operator creates its own CRDs at startup (Calico >=3.26), so
+        // the readiness steps tolerate the CRD creation and the
+        // .status.conditions population racing ahead of us. Same criteria
+        // and budgets as the previous poll loops, now with `Resource`
+        // events and stuck diagnostics (WP-18).
+        let api = SessionKubectl::new(session, self.flavor);
+        track(
+            &api,
+            &[ObjRef::new(
+                "apiextensions.k8s.io/v1",
+                "CustomResourceDefinition",
+                "installations.operator.tigera.io",
+            )],
+            &TrackOpts::new(CRD_TIMEOUT),
+            &self.run.events,
+        )
+        .await?;
+        track(
+            &api,
+            &[ObjRef::namespaced(
+                "apps/v1",
+                "Deployment",
+                "tigera-operator",
+                "tigera-operator",
+            )],
+            &TrackOpts::new(OPERATOR_TIMEOUT),
+            &self.run.events,
+        )
+        .await?;
+        session
+            .write_file(INSTALLATION_STAGING_PATH, self.installation_cr().as_bytes())
+            .await?;
+        let apply_cr = format!(
+            "{KUBECTL} apply -f {INSTALLATION_STAGING_PATH} && \
+             rm -f {OPERATOR_STAGING_PATH} {INSTALLATION_STAGING_PATH}"
         );
-        let out = session.exec(&script).await?;
+        let out = session.exec(&apply_cr).await?;
         if out.ok() {
             Ok(Outcome::Verified)
         } else {

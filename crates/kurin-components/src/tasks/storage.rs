@@ -14,12 +14,18 @@
 //! collide with a cluster's own class; `[storage] default = true` adds the
 //! default-class annotation.
 
+use std::sync::Arc;
+use std::time::Duration;
+
 use kurin_config::{Cluster, StorageKind};
+use kurin_core::run::RunContext;
 use miette::Result;
 use serde::Deserialize;
 
 use kurin_core::engine::{Drift, Outcome, Session, Stage, Task};
-use kurin_kube::{ApplyOpts, ClusterApi, DynamicObject, Flavor, ObjRef, SessionKubectl};
+use kurin_kube::{
+    track, ApplyOpts, ClusterApi, DynamicObject, Flavor, ObjRef, SessionKubectl, TrackOpts,
+};
 
 const LOCAL_PATH_STORAGE_CLASS: &str = "kurin-local-path";
 const NFS_STORAGE_CLASS: &str = "kurin-nfs";
@@ -31,10 +37,12 @@ pub struct StorageInstall {
     server: Option<String>,
     path: Option<String>,
     flavor: Flavor,
+    /// Run context: the tracker publishes `Resource` events on its bus.
+    run: Arc<RunContext>,
 }
 
 impl StorageInstall {
-    pub fn new(cluster: &Cluster) -> Result<Self> {
+    pub fn new(cluster: &Cluster, run: &Arc<RunContext>) -> Result<Self> {
         let kind = cluster
             .storage_kind
             .ok_or_else(|| miette::miette!("storage kind missing"))?;
@@ -49,6 +57,7 @@ impl StorageInstall {
             server: cluster.storage_server.clone(),
             path: cluster.storage_path.clone(),
             flavor: cluster.distribution.into(),
+            run: Arc::clone(run),
         })
     }
 
@@ -145,37 +154,29 @@ impl Task for StorageInstall {
         api.apply(&objects, ApplyOpts::default())
             .await
             .map_err(|err| miette::miette!("storage manifest apply failed: {err}"))?;
-        // Converge on a ready provisioner deployment (bounded).
+        // Converge on a ready provisioner deployment (bounded). The old
+        // loop polled availableReplicas == 1 for up to 60 × 3 s; the
+        // tracker's Deployment rule covers the same verdict with a
+        // matching budget, `Resource` events and stuck diagnostics.
         let ns_dep = match self.kind {
             StorageKind::LocalPath => ("local-path-storage", "local-path-provisioner"),
             StorageKind::Nfs => ("default", "nfs-subdir-external-provisioner"),
         };
         let deployment = ObjRef::namespaced("apps/v1", "Deployment", ns_dep.0, ns_dep.1);
-        let mut last = String::new();
-        for _ in 0..60 {
-            let available = api
-                .get_json(&deployment)
-                .await
-                .ok()
-                .flatten()
-                .and_then(|v| {
-                    v.pointer("/status/availableReplicas")
-                        .and_then(|n| n.as_u64())
-                })
-                .unwrap_or(0);
-            last = available.to_string();
-            if available == 1 {
-                break;
-            }
-            tokio::time::sleep(std::time::Duration::from_secs(3)).await;
-        }
-        if last != "1" {
-            return Err(miette::miette!(
-                "provisioner {}/{} never became available (last: {last:?})",
+        track(
+            &api,
+            &[deployment],
+            &TrackOpts::new(Duration::from_secs(180)),
+            &self.run.events,
+        )
+        .await
+        .map_err(|err| {
+            miette::miette!(
+                "provisioner {}/{} never became available: {err}",
                 ns_dep.0,
                 ns_dep.1
-            ));
-        }
+            )
+        })?;
         Ok(Outcome::Verified)
     }
 }
@@ -460,7 +461,7 @@ role = "control-plane"
     #[test]
     fn local_path_manifest_uses_kurin_class_and_default_annotation() {
         let c = cluster_with("[storage]\nkind = \"local-path\"\ndefault = true\n");
-        let t = StorageInstall::new(&c).unwrap();
+        let t = StorageInstall::new(&c, &crate::test_util::run()).unwrap();
         let m = t.manifest();
         assert!(m.contains("name: kurin-local-path"));
         // Indented under metadata: (a class-toplevel key is a strict
@@ -475,7 +476,7 @@ role = "control-plane"
     #[test]
     fn manifest_parses_into_dynamic_objects() {
         let c = cluster_with("[storage]\nkind = \"local-path\"\n");
-        let t = StorageInstall::new(&c).unwrap();
+        let t = StorageInstall::new(&c, &crate::test_util::run()).unwrap();
         let objs = manifest_objects(&t.manifest()).unwrap();
         let kinds: Vec<&str> = objs
             .iter()
@@ -492,7 +493,7 @@ role = "control-plane"
         let c = cluster_with(
             "[storage]\nkind = \"nfs\"\nserver = \"10.0.0.5\"\npath = \"/data/k8s\"\n",
         );
-        let t = StorageInstall::new(&c).unwrap();
+        let t = StorageInstall::new(&c, &crate::test_util::run()).unwrap();
         let m = t.manifest();
         assert!(m.contains("value: 10.0.0.5"));
         assert!(m.contains("value: /data/k8s"));

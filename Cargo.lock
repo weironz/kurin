@@ -2104,6 +2104,7 @@ dependencies = [
  "async-trait",
  "futures",
  "http",
+ "insta",
  "k8s-openapi",
  "kube",
  "kurin-config",

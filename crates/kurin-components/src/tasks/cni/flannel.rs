@@ -11,6 +11,7 @@ use miette::Result;
 use kurin_artifact::artifact::{Arch, ArtifactManifest, ArtifactStore};
 use kurin_core::engine::{Drift, Outcome, Session, Stage, Task};
 use kurin_core::run::RunContext;
+use kurin_kube::{evaluate, ClusterApi, ObjRef, SessionKubectl};
 
 const FLANNEL_NET_DEFAULT: &str = r#""Network": "10.244.0.0/16""#;
 const STAGING_PATH: &str = "/tmp/kurin-kube-flannel.yml";
@@ -21,6 +22,8 @@ pub struct Flannel {
     /// Arch the pinned manifest is resolved for (the control-plane
     /// node this task runs on).
     arch: Arch,
+    /// kubectl flavor of the distribution (readiness goes through it).
+    flavor: kurin_kube::Flavor,
     /// Run sources: offline dir, manifest override and mirror zone.
     run: Arc<RunContext>,
 }
@@ -35,6 +38,7 @@ impl Flannel {
                 .unwrap_or_default(),
             pod_cidr: cluster.pod_cidr.to_string(),
             arch,
+            flavor: cluster.distribution.into(),
             run: Arc::clone(run),
         }
     }
@@ -89,15 +93,18 @@ impl Task for Flannel {
     }
 
     async fn check(&self, session: &dyn Session) -> Result<Drift> {
-        let out = session
-            .exec(
-                "kubectl --kubeconfig /etc/kubernetes/admin.conf -n kube-flannel \
-                 get ds kube-flannel-ds \
-                 -o jsonpath='{.status.desiredNumberScheduled} {.status.numberReady}' 2>/dev/null",
-            )
-            .await?;
-        let fields: Vec<&str> = out.stdout.split_whitespace().collect();
-        if out.ok() && fields.len() == 2 && fields[0] == fields[1] && fields[0] != "0" {
+        // Same verdict as the old jsonpath comparison
+        // (numberReady == desiredNumberScheduled != 0), now shared with
+        // the tracker's DaemonSet rule (WP-18) instead of a second
+        // parser. kubectl errors propagate: only a *missing* DaemonSet
+        // is drift, matching `--ignore-not-found`.
+        let api = SessionKubectl::new(session, self.flavor);
+        let r = ObjRef::namespaced("apps/v1", "DaemonSet", "kube-flannel", "kube-flannel-ds");
+        let ready = api
+            .get_json(&r)
+            .await?
+            .is_some_and(|obj| evaluate(&r, &obj).ready);
+        if ready {
             Ok(Drift::InSync)
         } else {
             Ok(Drift::Drifted("kube-flannel-ds not fully ready".into()))

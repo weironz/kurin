@@ -1,0 +1,5 @@
+---
+source: crates/kurin-kube/tests/track_it.rs
+expression: text
+---
+resource failure: image pull failure: registry.k8s.io/pause:does-not-exist (pod default/web-5d8f7b6c4-x2v9p, container web) — check the registry mirror configuration and that the image reference exists upstream; still not ready: Pod default/web-5d8f7b6c4-x2v9p: Pending/ImagePullBackOff

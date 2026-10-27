@@ -1,0 +1,5 @@
+---
+source: crates/kurin-kube/tests/track_it.rs
+expression: text
+---
+readiness timeout after 60ms: container web in pod default/web-5d8f7b6c4-x2v9p is crash-looping — check its logs above; still not ready: Deployment default/web: 1/2 updated, 1/2 available

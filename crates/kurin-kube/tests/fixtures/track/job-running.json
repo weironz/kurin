@@ -1,0 +1,17 @@
+{
+  "apiVersion": "batch/v1",
+  "kind": "Job",
+  "metadata": {
+    "name": "migrate",
+    "namespace": "default",
+    "generation": 1
+  },
+  "spec": {
+    "completions": 1,
+    "parallelism": 1
+  },
+  "status": {
+    "succeeded": 0,
+    "active": 1
+  }
+}

@@ -22,3 +22,6 @@ kube = { version = "4.2", default-features = false, features = ["client", "rustl
 # Exactly one k8s-openapi version feature. Bump it with the Kubernetes line
 # kurin supports (see src/lib.rs); the dynamic API paths need no changes.
 k8s-openapi = { version = "0.28", features = ["v1_33"] }
+
+[dev-dependencies]
+insta.workspace = true

@@ -33,10 +33,15 @@ use kurin_core::executor::SessionPool;
 
 mod kubeconfig;
 mod kubectl;
+mod track;
 mod tunnel;
 
 pub use kubeconfig::rewrite_kubeconfig;
 pub use kubectl::{KubectlApi, SessionKubectl};
+pub use track::{
+    evaluate, track, TrackOpts, TrackResult, TrackedObject, DEFAULT_HEARTBEAT, DEFAULT_INTERVAL,
+    FAILURE_WAIT_REASONS,
+};
 pub use tunnel::{install_crypto_provider, TunnelApi};
 
 /// Namespace selector meaning "every namespace" (`kubectl -A`).
@@ -133,7 +138,7 @@ impl Gvk {
 }
 
 /// A reference to one object.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ObjRef {
     /// `v1` or `group/version`.
     pub api_version: String,

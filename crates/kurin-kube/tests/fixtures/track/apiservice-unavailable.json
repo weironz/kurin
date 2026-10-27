@@ -1,0 +1,17 @@
+{
+  "apiVersion": "apiregistration.k8s.io/v1",
+  "kind": "APIService",
+  "metadata": {
+    "name": "v1beta1.metrics.k8s.io"
+  },
+  "status": {
+    "conditions": [
+      {
+        "type": "Available",
+        "status": "False",
+        "reason": "MissingEndpoints",
+        "message": "no endpoints available for service metrics-server"
+      }
+    ]
+  }
+}

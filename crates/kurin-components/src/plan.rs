@@ -314,7 +314,10 @@ pub fn build_with_pool(
     // CNI + post.
     push(10, tasks::cni::plugin_task(cluster, facts, run)?);
     if cluster.storage_kind.is_some() {
-        push(10, Arc::new(tasks::storage::StorageInstall::new(cluster)?));
+        push(
+            10,
+            Arc::new(tasks::storage::StorageInstall::new(cluster, run)?),
+        );
     }
     push(11, Arc::new(tasks::post::KubeconfigPull::new(cluster)));
     if let Some(summary) = pool {

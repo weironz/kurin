@@ -1,0 +1,39 @@
+{
+  "apiVersion": "v1",
+  "kind": "Pod",
+  "metadata": {
+    "name": "web-5d8f7b6c4-x2v9p",
+    "namespace": "default",
+    "uid": "11111111-1111-1111-1111-111111111111"
+  },
+  "spec": {
+    "containers": [
+      {
+        "name": "web",
+        "image": "docker.io/library/nginx:1.27"
+      }
+    ]
+  },
+  "status": {
+    "phase": "Pending",
+    "conditions": [
+      {
+        "type": "Ready",
+        "status": "False",
+        "reason": "ContainersNotReady"
+      }
+    ],
+    "containerStatuses": [
+      {
+        "name": "web",
+        "image": "docker.io/library/nginx:1.27",
+        "ready": false,
+        "state": {
+          "waiting": {
+            "reason": "ContainerCreating"
+          }
+        }
+      }
+    ]
+  }
+}

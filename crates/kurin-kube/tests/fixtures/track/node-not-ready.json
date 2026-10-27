@@ -1,0 +1,21 @@
+{
+  "apiVersion": "v1",
+  "kind": "Node",
+  "metadata": {
+    "name": "m1"
+  },
+  "status": {
+    "conditions": [
+      {
+        "type": "Ready",
+        "status": "False",
+        "reason": "KubeletNotReady",
+        "message": "container runtime network not ready"
+      },
+      {
+        "type": "MemoryPressure",
+        "status": "False"
+      }
+    ]
+  }
+}

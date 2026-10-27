@@ -16,6 +16,7 @@ use miette::Result;
 use kurin_core::engine::{Drift, Outcome, Session, Stage, Task};
 use kurin_core::run::RunContext;
 use kurin_core::zone::Zone;
+use kurin_kube::{evaluate, ClusterApi, ObjRef, SessionKubectl};
 
 /// cilium/cilium image version the CLI installs. The CLI itself is pinned
 /// separately in the artifact manifest (`cilium-cli`); 0.20.x ↔ 1.20.x.
@@ -30,6 +31,8 @@ pub struct Cilium {
     node_name: String,
     node_internal_ip: String,
     pod_cidr: String,
+    /// kubectl flavor of the distribution (readiness goes through it).
+    flavor: kurin_kube::Flavor,
     run: Arc<RunContext>,
 }
 
@@ -42,15 +45,14 @@ impl Cilium {
                 .map(|n| n.internal_address.to_string())
                 .unwrap_or_default(),
             pod_cidr: cluster.pod_cidr.to_string(),
+            flavor: cluster.distribution.into(),
             run: Arc::clone(run),
         }
     }
 
-    fn check_command() -> String {
-        format!(
-            "kubectl --kubeconfig {KUBECONFIG} -n kube-system get ds cilium \
-             -o jsonpath='{{.status.desiredNumberScheduled}} {{.status.numberReady}}' 2>/dev/null"
-        )
+    /// Readiness reference of the cilium DaemonSet (shared tracker rule).
+    fn daemon_set() -> ObjRef {
+        ObjRef::namespaced("apps/v1", "DaemonSet", "kube-system", "cilium")
     }
 
     /// `cilium install` invocation. `zone_cn` swaps the image registries to
@@ -100,9 +102,16 @@ impl Task for Cilium {
     }
 
     async fn check(&self, session: &dyn Session) -> Result<Drift> {
-        let out = session.exec(&Self::check_command()).await?;
-        let fields: Vec<&str> = out.stdout.split_whitespace().collect();
-        if out.ok() && fields.len() == 2 && fields[0] == fields[1] && fields[0] != "0" {
+        // Same verdict as the old jsonpath comparison
+        // (numberReady == desiredNumberScheduled != 0), now shared with
+        // the tracker's DaemonSet rule (WP-18).
+        let api = SessionKubectl::new(session, self.flavor);
+        let r = Self::daemon_set();
+        let ready = api
+            .get_json(&r)
+            .await?
+            .is_some_and(|obj| evaluate(&r, &obj).ready);
+        if ready {
             Ok(Drift::InSync)
         } else {
             Ok(Drift::Drifted("cilium daemonset not fully ready".into()))
@@ -281,21 +290,30 @@ mod tests {
         assert!(cmd.contains("nativeRoutingCIDR=10.244.0.0/16"), "{cmd}");
     }
 
+    /// A DaemonSet JSON body with the given desired/ready counts.
+    fn ds(desired: u32, ready: u32) -> String {
+        format!(r#"{{"status":{{"desiredNumberScheduled":{desired},"numberReady":{ready}}}}}"#)
+    }
+
     #[tokio::test]
     async fn check_in_sync_when_desired_equals_ready_and_positive() {
-        let session = ScriptSession::new(vec![output(0, "1 1", "")]);
+        let session = ScriptSession::new(vec![output(0, &ds(1, 1), "")]);
         let seen = Cilium::new(&cluster("10.244.0.0/16"), &crate::test_util::run())
             .check(&session)
             .await
             .unwrap();
         assert!(matches!(seen, Drift::InSync));
         let commands = session.commands.lock().unwrap();
-        assert!(commands[0].contains("get ds cilium"), "{}", commands[0]);
+        assert!(
+            commands[0].contains("get daemonsets cilium"),
+            "{}",
+            commands[0]
+        );
     }
 
     #[tokio::test]
     async fn check_drifted_when_ready_lags_desired() {
-        let session = ScriptSession::new(vec![output(0, "2 1", "")]);
+        let session = ScriptSession::new(vec![output(0, &ds(2, 1), "")]);
         let seen = Cilium::new(&cluster("10.244.0.0/16"), &crate::test_util::run())
             .check(&session)
             .await
@@ -305,14 +323,15 @@ mod tests {
 
     #[tokio::test]
     async fn check_drifted_on_zero_desired_or_missing_ds() {
-        let session = ScriptSession::new(vec![output(0, "0 0", "")]);
+        let session = ScriptSession::new(vec![output(0, &ds(0, 0), "")]);
         let seen = Cilium::new(&cluster("10.244.0.0/16"), &crate::test_util::run())
             .check(&session)
             .await
             .unwrap();
         assert!(matches!(seen, Drift::Drifted(_)));
 
-        let session = ScriptSession::new(vec![output(1, "", "NotFound")]);
+        // kubectl --ignore-not-found prints nothing for a missing object.
+        let session = ScriptSession::new(vec![output(0, "", "")]);
         let seen = Cilium::new(&cluster("10.244.0.0/16"), &crate::test_util::run())
             .check(&session)
             .await

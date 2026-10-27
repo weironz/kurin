@@ -1,0 +1,21 @@
+{
+  "apiVersion": "apps/v1",
+  "kind": "DaemonSet",
+  "metadata": {
+    "name": "kube-flannel-ds",
+    "namespace": "kube-flannel",
+    "generation": 1
+  },
+  "spec": {
+    "selector": {
+      "matchLabels": {
+        "app": "flannel"
+      }
+    }
+  },
+  "status": {
+    "desiredNumberScheduled": 3,
+    "numberReady": 2,
+    "numberAvailable": 2
+  }
+}

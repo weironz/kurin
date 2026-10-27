@@ -1,0 +1,40 @@
+{
+  "apiVersion": "v1",
+  "kind": "Pod",
+  "metadata": {
+    "name": "web-5d8f7b6c4-x2v9p",
+    "namespace": "default",
+    "uid": "11111111-1111-1111-1111-111111111111"
+  },
+  "spec": {
+    "containers": [
+      {
+        "name": "web",
+        "image": "registry.k8s.io/pause:does-not-exist"
+      }
+    ]
+  },
+  "status": {
+    "phase": "Pending",
+    "conditions": [
+      {
+        "type": "Ready",
+        "status": "False",
+        "reason": "ContainersNotReady"
+      }
+    ],
+    "containerStatuses": [
+      {
+        "name": "web",
+        "image": "registry.k8s.io/pause:does-not-exist",
+        "ready": false,
+        "state": {
+          "waiting": {
+            "reason": "ImagePullBackOff",
+            "message": "Back-off pulling image \"registry.k8s.io/pause:does-not-exist\""
+          }
+        }
+      }
+    ]
+  }
+}

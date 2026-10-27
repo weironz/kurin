@@ -5,6 +5,18 @@ All notable changes to kurin. Format follows Keep a Changelog; semver.
 ## 0.4.0 - 2026-10-27 (unreleased)
 
 ### Added
+- nelm-style readiness tracking (WP-18): `kurin-kube::track` waits for a set
+  of objects until every one satisfies its readiness rule — Deployment,
+  StatefulSet, DaemonSet, Job, Pod, PVC, CRD, APIService and Node have
+  built-in rules, unknown kinds use the `Ready`/`Available` condition
+  heuristic — publishing `resource` events only on state change plus a
+  30 s heartbeat. On timeout or a failed state (`CrashLoopBackOff`,
+  `ImagePullBackOff`, `ErrImagePull`, failed Job) it lists the related
+  pods' last 20 events and the problem container's last 50 log lines as
+  warn logs and names the most likely cause (e.g. an image pull failure
+  with the registry mirror hint). The CNI installs (calico, flannel,
+  cilium, kube-ovn) and the storage provisioners now wait through it,
+  keeping their previous pass/fail semantics and timeouts.
 - Mutating operations are mutually exclusive per cluster: `create cluster`,
   `add nodes`, `delete node`, `delete cluster`, `upgrade` and `certs renew`
   take an OS file lock on `$XDG_STATE_HOME/kurin/locks/<cluster>.lock`

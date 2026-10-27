@@ -18,12 +18,12 @@
 
 use std::sync::Arc;
 
-use kurin_config::Cluster;
-use miette::Result;
-
 use crate::templates;
+use kurin_config::Cluster;
 use kurin_core::engine::{Drift, Outcome, Session, Stage, Task};
 use kurin_core::run::RunContext;
+use kurin_kube::{evaluate, ClusterApi, ObjRef, SessionKubectl};
+use miette::Result;
 
 const STAGING_PATH: &str = "/tmp/kurin-kube-ovn.yaml";
 const DEFAULT_POD_CIDR: &str = "10.233.64.0/18";
@@ -38,6 +38,8 @@ pub struct KubeOvn {
     pod_cidr: String,
     service_cidr: String,
     gateway: String,
+    /// kubectl flavor of the distribution (readiness goes through it).
+    flavor: kurin_kube::Flavor,
     run: Arc<RunContext>,
 }
 
@@ -59,9 +61,34 @@ impl KubeOvn {
             cp_names: cluster.control_plane().map(|n| n.name.clone()).collect(),
             pod_cidr: cluster.pod_cidr.to_string(),
             service_cidr: cluster.service_cidr.to_string(),
+            flavor: cluster.distribution.into(),
             gateway,
             run: Arc::clone(run),
         }
+    }
+
+    /// The three objects whose readiness `check` (and any future tracker
+    /// wait) gates on, with the labels the old probe reported.
+    fn readiness_refs() -> [(&'static str, ObjRef); 3] {
+        [
+            (
+                "controller",
+                ObjRef::namespaced(
+                    "apps/v1",
+                    "Deployment",
+                    "kube-system",
+                    "kube-ovn-controller",
+                ),
+            ),
+            (
+                "central",
+                ObjRef::namespaced("apps/v1", "Deployment", "kube-system", "ovn-central"),
+            ),
+            (
+                "ovs",
+                ObjRef::namespaced("apps/v1", "DaemonSet", "kube-system", "ovs-ovn"),
+            ),
+        ]
     }
 
     fn render(&self) -> String {
@@ -96,31 +123,26 @@ impl Task for KubeOvn {
     async fn check(&self, session: &dyn Session) -> Result<Drift> {
         // Controller available, ovn-central ready and the OVS daemonset fully
         // up: the three pieces that must converge before the node is usable.
-        let k = "kubectl --kubeconfig /etc/kubernetes/admin.conf -n kube-system";
-        let ctrl = session
-            .exec(&format!(
-                "{k} get deploy kube-ovn-controller -o jsonpath='{{.status.readyReplicas}}' 2>/dev/null"
-            ))
-            .await?;
-        let central = session
-            .exec(&format!(
-                "{k} get deploy ovn-central -o jsonpath='{{.status.readyReplicas}}' 2>/dev/null"
-            ))
-            .await?;
-        let ovs = session
-            .exec(&format!(
-                "{k} get ds ovs-ovn -o jsonpath='{{.status.desiredNumberScheduled}} {{.status.numberReady}}' 2>/dev/null"
-            ))
-            .await?;
-        let ctrl_ok = ctrl.ok() && ctrl.stdout.trim().parse::<u32>().unwrap_or(0) >= 1;
-        let central_ok = central.ok() && central.stdout.trim().parse::<u32>().unwrap_or(0) >= 1;
-        let f: Vec<&str> = ovs.stdout.split_whitespace().collect();
-        let ovs_ok = ovs.ok() && f.len() == 2 && f[0] == f[1] && f[0] != "0";
-        if ctrl_ok && central_ok && ovs_ok {
+        // Same verdicts as the old jsonpath probes (both deployments ship
+        // with a single replica, so the tracker's Deployment rule matches
+        // the old readyReplicas >= 1), now shared with WP-18's rule table.
+        let api = SessionKubectl::new(session, self.flavor);
+        let mut all_ready = true;
+        let mut parts = Vec::new();
+        for (label, r) in Self::readiness_refs() {
+            let ready = api
+                .get_json(&r)
+                .await?
+                .is_some_and(|obj| evaluate(&r, &obj).ready);
+            all_ready &= ready;
+            parts.push(format!("{label}={ready}"));
+        }
+        if all_ready {
             Ok(Drift::InSync)
         } else {
             Ok(Drift::Drifted(format!(
-                "kube-ovn not ready (controller={ctrl_ok}, central={central_ok}, ovs={ovs_ok})"
+                "kube-ovn not ready ({})",
+                parts.join(", ")
             )))
         }
     }

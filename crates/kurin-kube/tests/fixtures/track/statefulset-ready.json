@@ -1,0 +1,18 @@
+{
+  "apiVersion": "apps/v1",
+  "kind": "StatefulSet",
+  "metadata": {
+    "name": "db",
+    "namespace": "default",
+    "generation": 1
+  },
+  "spec": {
+    "replicas": 2
+  },
+  "status": {
+    "observedGeneration": 1,
+    "updatedReplicas": 2,
+    "readyReplicas": 2,
+    "currentReplicas": 2
+  }
+}

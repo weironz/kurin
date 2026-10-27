@@ -1,0 +1,58 @@
+---
+source: crates/kurin-kube/tests/track_it.rs
+expression: text
+---
+error: readiness timeout after 60ms: container web in pod default/web-5d8f7b6c4-x2v9p is crash-looping — check its logs above; still not ready: Deployment default/web: 1/2 updated, 1/2 available
+event default/web-5d8f7b6c4-x2v9p: Created: Created container web
+event default/web-5d8f7b6c4-x2v9p: BackOff: Back-off restarting failed container (x5)
+event default/web-5d8f7b6c4-x2v9p: Unhealthy: Startup probe failed: HTTP probe failed with statuscode: 500 (x3)
+logs default/web-5d8f7b6c4-x2v9p/web: nginx: [emerg] host not found in upstream "db.default.svc.cluster.local" in /etc/nginx/nginx.conf:42
+logs default/web-5d8f7b6c4-x2v9p/web: nginx: [emerg] host not found in upstream "db.default.svc.cluster.local" in /etc/nginx/nginx.conf:42
+logs default/web-5d8f7b6c4-x2v9p/web: nginx: [emerg] host not found in upstream "db.default.svc.cluster.local" in /etc/nginx/nginx.conf:42
+logs default/web-5d8f7b6c4-x2v9p/web: nginx: [emerg] host not found in upstream "db.default.svc.cluster.local" in /etc/nginx/nginx.conf:42
+logs default/web-5d8f7b6c4-x2v9p/web: nginx: [emerg] host not found in upstream "db.default.svc.cluster.local" in /etc/nginx/nginx.conf:42
+logs default/web-5d8f7b6c4-x2v9p/web: nginx: [emerg] host not found in upstream "db.default.svc.cluster.local" in /etc/nginx/nginx.conf:42
+logs default/web-5d8f7b6c4-x2v9p/web: nginx: [emerg] host not found in upstream "db.default.svc.cluster.local" in /etc/nginx/nginx.conf:42
+logs default/web-5d8f7b6c4-x2v9p/web: nginx: [emerg] host not found in upstream "db.default.svc.cluster.local" in /etc/nginx/nginx.conf:42
+logs default/web-5d8f7b6c4-x2v9p/web: nginx: [emerg] host not found in upstream "db.default.svc.cluster.local" in /etc/nginx/nginx.conf:42
+logs default/web-5d8f7b6c4-x2v9p/web: nginx: [emerg] host not found in upstream "db.default.svc.cluster.local" in /etc/nginx/nginx.conf:42
+logs default/web-5d8f7b6c4-x2v9p/web: nginx: [emerg] host not found in upstream "db.default.svc.cluster.local" in /etc/nginx/nginx.conf:42
+logs default/web-5d8f7b6c4-x2v9p/web: nginx: [emerg] host not found in upstream "db.default.svc.cluster.local" in /etc/nginx/nginx.conf:42
+logs default/web-5d8f7b6c4-x2v9p/web: nginx: [emerg] host not found in upstream "db.default.svc.cluster.local" in /etc/nginx/nginx.conf:42
+logs default/web-5d8f7b6c4-x2v9p/web: nginx: [emerg] host not found in upstream "db.default.svc.cluster.local" in /etc/nginx/nginx.conf:42
+logs default/web-5d8f7b6c4-x2v9p/web: nginx: [emerg] host not found in upstream "db.default.svc.cluster.local" in /etc/nginx/nginx.conf:42
+logs default/web-5d8f7b6c4-x2v9p/web: nginx: [emerg] host not found in upstream "db.default.svc.cluster.local" in /etc/nginx/nginx.conf:42
+logs default/web-5d8f7b6c4-x2v9p/web: nginx: [emerg] host not found in upstream "db.default.svc.cluster.local" in /etc/nginx/nginx.conf:42
+logs default/web-5d8f7b6c4-x2v9p/web: nginx: [emerg] host not found in upstream "db.default.svc.cluster.local" in /etc/nginx/nginx.conf:42
+logs default/web-5d8f7b6c4-x2v9p/web: nginx: [emerg] host not found in upstream "db.default.svc.cluster.local" in /etc/nginx/nginx.conf:42
+logs default/web-5d8f7b6c4-x2v9p/web: nginx: [emerg] host not found in upstream "db.default.svc.cluster.local" in /etc/nginx/nginx.conf:42
+logs default/web-5d8f7b6c4-x2v9p/web: nginx: [emerg] host not found in upstream "db.default.svc.cluster.local" in /etc/nginx/nginx.conf:42
+logs default/web-5d8f7b6c4-x2v9p/web: nginx: [emerg] host not found in upstream "db.default.svc.cluster.local" in /etc/nginx/nginx.conf:42
+logs default/web-5d8f7b6c4-x2v9p/web: nginx: [emerg] host not found in upstream "db.default.svc.cluster.local" in /etc/nginx/nginx.conf:42
+logs default/web-5d8f7b6c4-x2v9p/web: nginx: [emerg] host not found in upstream "db.default.svc.cluster.local" in /etc/nginx/nginx.conf:42
+logs default/web-5d8f7b6c4-x2v9p/web: nginx: [emerg] host not found in upstream "db.default.svc.cluster.local" in /etc/nginx/nginx.conf:42
+logs default/web-5d8f7b6c4-x2v9p/web: nginx: [emerg] host not found in upstream "db.default.svc.cluster.local" in /etc/nginx/nginx.conf:42
+logs default/web-5d8f7b6c4-x2v9p/web: nginx: [emerg] host not found in upstream "db.default.svc.cluster.local" in /etc/nginx/nginx.conf:42
+logs default/web-5d8f7b6c4-x2v9p/web: nginx: [emerg] host not found in upstream "db.default.svc.cluster.local" in /etc/nginx/nginx.conf:42
+logs default/web-5d8f7b6c4-x2v9p/web: nginx: [emerg] host not found in upstream "db.default.svc.cluster.local" in /etc/nginx/nginx.conf:42
+logs default/web-5d8f7b6c4-x2v9p/web: nginx: [emerg] host not found in upstream "db.default.svc.cluster.local" in /etc/nginx/nginx.conf:42
+logs default/web-5d8f7b6c4-x2v9p/web: nginx: [emerg] host not found in upstream "db.default.svc.cluster.local" in /etc/nginx/nginx.conf:42
+logs default/web-5d8f7b6c4-x2v9p/web: nginx: [emerg] host not found in upstream "db.default.svc.cluster.local" in /etc/nginx/nginx.conf:42
+logs default/web-5d8f7b6c4-x2v9p/web: nginx: [emerg] host not found in upstream "db.default.svc.cluster.local" in /etc/nginx/nginx.conf:42
+logs default/web-5d8f7b6c4-x2v9p/web: nginx: [emerg] host not found in upstream "db.default.svc.cluster.local" in /etc/nginx/nginx.conf:42
+logs default/web-5d8f7b6c4-x2v9p/web: nginx: [emerg] host not found in upstream "db.default.svc.cluster.local" in /etc/nginx/nginx.conf:42
+logs default/web-5d8f7b6c4-x2v9p/web: nginx: [emerg] host not found in upstream "db.default.svc.cluster.local" in /etc/nginx/nginx.conf:42
+logs default/web-5d8f7b6c4-x2v9p/web: nginx: [emerg] host not found in upstream "db.default.svc.cluster.local" in /etc/nginx/nginx.conf:42
+logs default/web-5d8f7b6c4-x2v9p/web: nginx: [emerg] host not found in upstream "db.default.svc.cluster.local" in /etc/nginx/nginx.conf:42
+logs default/web-5d8f7b6c4-x2v9p/web: nginx: [emerg] host not found in upstream "db.default.svc.cluster.local" in /etc/nginx/nginx.conf:42
+logs default/web-5d8f7b6c4-x2v9p/web: nginx: [emerg] host not found in upstream "db.default.svc.cluster.local" in /etc/nginx/nginx.conf:42
+logs default/web-5d8f7b6c4-x2v9p/web: nginx: [emerg] host not found in upstream "db.default.svc.cluster.local" in /etc/nginx/nginx.conf:42
+logs default/web-5d8f7b6c4-x2v9p/web: nginx: [emerg] host not found in upstream "db.default.svc.cluster.local" in /etc/nginx/nginx.conf:42
+logs default/web-5d8f7b6c4-x2v9p/web: nginx: [emerg] host not found in upstream "db.default.svc.cluster.local" in /etc/nginx/nginx.conf:42
+logs default/web-5d8f7b6c4-x2v9p/web: nginx: [emerg] host not found in upstream "db.default.svc.cluster.local" in /etc/nginx/nginx.conf:42
+logs default/web-5d8f7b6c4-x2v9p/web: nginx: [emerg] host not found in upstream "db.default.svc.cluster.local" in /etc/nginx/nginx.conf:42
+logs default/web-5d8f7b6c4-x2v9p/web: nginx: [emerg] host not found in upstream "db.default.svc.cluster.local" in /etc/nginx/nginx.conf:42
+logs default/web-5d8f7b6c4-x2v9p/web: nginx: [emerg] host not found in upstream "db.default.svc.cluster.local" in /etc/nginx/nginx.conf:42
+logs default/web-5d8f7b6c4-x2v9p/web: nginx: [emerg] host not found in upstream "db.default.svc.cluster.local" in /etc/nginx/nginx.conf:42
+logs default/web-5d8f7b6c4-x2v9p/web: nginx: [emerg] host not found in upstream "db.default.svc.cluster.local" in /etc/nginx/nginx.conf:42
+logs default/web-5d8f7b6c4-x2v9p/web: nginx: [emerg] host not found in upstream "db.default.svc.cluster.local" in /etc/nginx/nginx.conf:42
