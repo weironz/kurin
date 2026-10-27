@@ -55,7 +55,7 @@
 | WP-48 CNI 改用 chart | todo | | | `just tier1-cilium`、kube-ovn、接管场景 | |
 | WP-49 registry zot 默认与 external | todo | | | `e2e/tier3/registry.sh` | |
 | WP-50 kurin-server 骨架与认证 | done | 见提交 | 无（纯新增 crate 与 `serve` 子命令） | 无（仅回环监听自测） | axum 0.8 + axum-server(rustls/ring)；错误信封 `camelCase` 对齐 WP-60 前端契约；403 `forbidden-host` 为 §6.10 Host 规则新增状态码 |
-| WP-51 Store 与配置修订 | todo | | | | |
+| WP-51 Store 与配置修订 | done | 见提交 | 无 | 无（纯本地 DB） | rusqlite WAL + 单写线程/读池；user_version 迁移；秘密哨兵；base_rev 409；镜像 0600 |
 | WP-52 OpRunner/事件持久化/SSE | todo | | | `scripts/api-smoke.sh` | |
 | WP-53 Collector | todo | | | 3 集群总览 | |
 | WP-54 其余 API | todo | | | | |
@@ -86,6 +86,7 @@
 - WP-50：Host 拒绝用 403 `forbidden-host`（§7 清单外）；错误/DTO 采用顶层 `{code,message,diagnostics?}` + camelCase（对齐 WP-60 前端）；默认白名单含 `[::1]`；会话 TTL 24h；新增 `GET /session` 与 `GET /api/v1/healthz`。
 - WP-33：`inspect --json` 改为 `--manifest`（全局 `--json` 与子命令长选项冲突），`list` 用 `--format text|json`；`prune` 需全量重哈希（3.7GiB 约 2 分钟）。
 - WP-32：`kurin artifact` 现在产出 OCI layout（旧目录树由 WP-34 兼容读取）；镜像按所选架构携带子 manifest，上游 index 原样保留；修复 busybox URL 模板（Docker Hub tag 无 `v` 前缀）。
+- WP-51：本 WP 只提供 Rust store API，未接入 HTTP/AppState（WP-52 集成）；`ApiError::Internal` 为增量变体。
 - WP-41：「内置推荐值」实现为 `values.yaml.j2` 按集群上下文渲染；`kubernetes.distribution` 暴露 kubeadm/k3s；`registry.mirror` 未配置为 null。
 - WP-40：`BUILTIN_ADDONS` 与内嵌目录接线留给 WP-43/46（目录暂空）；`oci://` 源明确报错，依赖 WP-33 的 pull。
 - WP-27：`add nodes` 复用 `merge()`，v1alpha1 配置会先迁移为 v1alpha2 再写回；`--set` 写在 WP-26 已实现，本 WP 补测试/文档。顺带修复 `package inspect --json` 与全局 `--json` 的 clap 冲突（改用全局开关）。
@@ -122,6 +123,7 @@
 - WP-50：`kurin serve` 回环冒烟（一次性登录链接、`/session`、401/403/400、TLS h2）；`cargo clippy -p kurin --features ui`。
 - WP-33：本地 zot 容器三形态互转（layout→zot→tar→verify→inspect，二次 push 零发送，错误凭据 401）；已清理容器。
 - WP-32：`kurin package create base --arch amd64,arm64 -o file:///tmp/base.tar.zst`，再 `kurin package inspect file:///tmp/base.tar.zst`（真实网络下载约 10 分钟；本地假上游测试已覆盖校验路径）。
+- WP-51：`cargo test -p kurin-server --test store`；`rusqlite bundled` 的 musl/zig 交叉编译需在发布机验证。
 - WP-41：纯本地渲染/校验，无需远端 e2e；13 个集成 + 5 个单测。
 - WP-40：纯本地解析/校验，无需远端 e2e；`just addon-schema` 与漂移测试。
 - WP-27：`just tier2 && just tier2-test`，再 `e2e/tier2/add-worker.sh target/tier2/debug/kurin`。

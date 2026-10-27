@@ -22,6 +22,8 @@ pub const CODE_CONFLICT: &str = "conflict";
 pub const CODE_VALIDATION_FAILED: &str = "validation-failed";
 /// 503 — the server is shutting down (machine code).
 pub const CODE_UNAVAILABLE: &str = "unavailable";
+/// 500 — an unexpected server-side failure (database, filesystem).
+pub const CODE_INTERNAL: &str = "internal";
 
 /// One span of a validation diagnostic: `text` is the offending source
 /// snippet at `offset`/`len` inside the submitted document (UI §7).
@@ -79,6 +81,9 @@ pub enum ApiError {
     /// 503 — graceful shutdown in progress.
     #[error("服务正在关闭")]
     ShuttingDown,
+    /// 500 — unexpected server-side failure (store, IO).
+    #[error("{0}")]
+    Internal(String),
 }
 
 impl ApiError {
@@ -116,6 +121,7 @@ impl ApiError {
             Self::Conflict(_) => StatusCode::CONFLICT,
             Self::Validation(_) => StatusCode::UNPROCESSABLE_ENTITY,
             Self::ShuttingDown => StatusCode::SERVICE_UNAVAILABLE,
+            Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
 
@@ -129,6 +135,7 @@ impl ApiError {
             Self::Conflict(_) => CODE_CONFLICT,
             Self::Validation(_) => CODE_VALIDATION_FAILED,
             Self::ShuttingDown => CODE_UNAVAILABLE,
+            Self::Internal(_) => CODE_INTERNAL,
         }
     }
 
@@ -137,6 +144,47 @@ impl ApiError {
         match self {
             Self::Validation(diags) => diags.clone(),
             _ => Vec::new(),
+        }
+    }
+}
+
+/// Store failures map onto the UI §7 envelope: a stale `base_rev` (or a
+/// duplicate cluster name) is a 409, a missing cluster a 404, malformed TOML
+/// or a bad name a 400, and anything else is an internal error.
+impl From<crate::store::StoreError> for ApiError {
+    fn from(error: crate::store::StoreError) -> Self {
+        use crate::store::StoreError;
+        match error {
+            StoreError::NotFound(_) | StoreError::RevisionNotFound { .. } => Self::NotFound,
+            StoreError::AlreadyExists(name) => {
+                Self::Conflict(format!("集群 {name:?} 已存在；集群名是唯一键"))
+            }
+            StoreError::RevConflict {
+                cluster,
+                expected,
+                current,
+            } => Self::Conflict(format!(
+                "集群 {cluster:?} 的配置已被其他会话更新（提交基于 rev {expected}，当前 rev {current}），\
+                 请重新加载后再保存"
+            )),
+            StoreError::InvalidName(name) => {
+                Self::BadRequest(format!("集群名不合法：{name:?}"))
+            }
+            StoreError::Toml(message) => {
+                Self::BadRequest(format!("配置 TOML 无法解析：{message}"))
+            }
+            StoreError::MissingSecret { path } => Self::BadRequest(format!(
+                "秘密字段 {path} 提交了哨兵值，但上一修订没有可恢复的值"
+            )),
+            StoreError::Sqlite(error) => Self::Internal(format!("数据库错误：{error}")),
+            StoreError::Io(error) => Self::Internal(format!("文件操作失败：{error}")),
+            StoreError::SchemaTooNew { found, supported } => Self::Internal(format!(
+                "数据库 schema 版本 {found} 高于本程序支持的 {supported}"
+            )),
+            StoreError::InvalidOptions(message) => {
+                Self::Internal(format!("存储参数不合法：{message}"))
+            }
+            StoreError::WriterClosed => Self::Internal("存储写线程已停止".into()),
         }
     }
 }
@@ -203,6 +251,10 @@ mod tests {
                 StatusCode::UNPROCESSABLE_ENTITY,
             ),
             (ApiError::ShuttingDown, StatusCode::SERVICE_UNAVAILABLE),
+            (
+                ApiError::Internal("boom".into()),
+                StatusCode::INTERNAL_SERVER_ERROR,
+            ),
         ];
         for (error, status) in cases {
             assert_eq!(error.status(), status, "{error:?}");

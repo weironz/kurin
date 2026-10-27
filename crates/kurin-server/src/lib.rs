@@ -24,6 +24,7 @@ mod host;
 mod routes;
 mod session;
 mod state;
+pub mod store;
 
 use std::os::unix::fs::DirBuilderExt;
 use std::time::Duration;
@@ -39,6 +40,10 @@ pub use host::HostAllowlist;
 pub use routes::router;
 pub use session::{SessionStore, SESSION_COOKIE, SESSION_TTL};
 pub use state::AppState;
+pub use store::{
+    ClusterRecord, ConfigRevision, Lifecycle, RevisionSummary, Store, StoreError, StoreOptions,
+    SECRET_SENTINEL,
+};
 
 /// Failures of `kurin serve` itself (bad arguments, IO).
 #[derive(Debug, thiserror::Error)]
