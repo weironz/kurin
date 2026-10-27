@@ -1,8 +1,15 @@
 # Kurin Web UI 最终方案
 
-> **状态：定稿 v1.0（取代两份调研稿作为实施依据）**
+> **状态：定稿 v1.1（取代两份调研稿作为实施依据）**
 > **日期：2026-10-27**
 > **代码基线：v0.4.0（`da2d4ba`）**
+>
+> **v1.1 修订**（与 [`docs/architecture/`](../architecture/README.md) 同步）：
+> 1. 创建集群改为**表单优先**：节点批量录入、连通性测试、addon 参数由 JSON Schema 自动生成表单；TOML 降为“高级 / 导出”（§8.1、§8.2）。
+> 2. 新增**带时间戳的详细日志控制台**（§8.5），依赖核心层的事件 v2 + 远端命令流式输出（architecture/02 §3.5、§3.10）。原先“v1 不做逐行实时输出”的约束取消。
+> 3. 代码结构随 workspace 拆分改为独立 crate `crates/kurin-server`（§4.1），不再是 `kurin` crate 里的 feature 模块。
+> 4. §6.1～§6.5 的“M0 核心改造”已并入 architecture/02，以那边为准；§11 的里程碑由 [`06-dev-plan.md`](../architecture/06-dev-plan.md) 的阶段 P5/P6 取代。
+> 5. 新增 addon 管理与包管理页面（§8.1、§10）。
 > **输入：** [`ui-architecture-rfc-gemini.md`](ui-architecture-rfc-gemini.md)（下称 G 稿）、[`ui-architecture-proposachatgptl.md`](ui-architecture-proposachatgptl.md)（下称 C 稿），以及对当前仓库源码的逐项核对。
 >
 > 本文所有 `serve` 命令、HTTP API、Cargo feature、数据库表都是**待实现的设计**；“现状”一节中的结论均附源码位置，可直接复核。
@@ -14,13 +21,13 @@
 | 问题 | 决定 |
 |---|---|
 | 一体还是分离？ | **开发上分离、交付上一体。** 同仓库新增独立前端工程 `web/`（React SPA），构建产物 gzip 后经 `rust-embed` 嵌入 `kurin` 二进制，`kurin serve` 一条命令起服务。v1 **不**支持也不测试前后端分离部署，但 API 全部走同源相对路径 `/api/v1`，日后需要时零改动即可拆。 |
-| 前端栈 | React + TypeScript + Vite，**Ant Design 5**，TanStack Query，React Router，CodeMirror 6（TOML 编辑）。不用 Monaco、React Flow、xterm.js、Redux、Tailwind。 |
+| 前端栈 | React + TypeScript + Vite，**Ant Design 5**，TanStack Query，React Router，CodeMirror 6（TOML 编辑），**@rjsf/antd**（JSON Schema → 表单，用于 addon 参数），**@tanstack/react-virtual**（日志虚拟滚动）。不用 Monaco、React Flow、xterm.js、Redux、Tailwind。 |
 | 后端栈 | **axum**（复用现有 tokio）、**SSE** 推送进度、**rusqlite（bundled）** 单文件 SQLite、**ts-rs** 从 Rust DTO 生成 TS 类型。 |
-| 代码放哪 | `kurin` crate 内新增 `server/` 模块，由 Cargo feature `ui` 控制；**不**新建 crate（原因见 §4.1）。 |
+| 代码放哪 | 独立 crate `crates/kurin-server`，由 bin 包 `kurin` 的 Cargo feature `ui` 引入（workspace 拆分后不再有包循环，见 §4.1）。 |
 | 构建影响 | 默认 `cargo build` / `cargo test` / `just check` **不需要 Node**、行为不变；只有 `--features ui`（发布构建）才需要 `web/dist`。 |
 | 执行模型 | 进程内 tokio 后台任务 + SQLite 持久化 Operation 与事件；中断后**靠 kurin 已有的幂等任务重跑恢复**，不另建复杂核对状态机。 |
 | 安全基线 | 默认只监听 `127.0.0.1`；**永远需要访问令牌**（防 CSRF / DNS rebinding）；远程访问首推 `ssh -L` 端口转发；非回环地址必须 TLS 或显式 `--allow-insecure-http`。 |
-| 先做什么 | **M0 核心改造（无 UI）**：拆出 `ops` 服务层、去掉进程级全局状态、统一进度输出、可取消、跨进程集群锁。这些不做，UI 做不对。 |
+| 先做什么 | **核心改造先行（无 UI）**：见 architecture/02 与 06-dev-plan 的 P0/P1（共享操作层、RunContext、事件 v2 与流式日志、可取消、跨进程集群锁）。这些不做，UI 做不对。 |
 
 ---
 
@@ -44,7 +51,7 @@
 | G | `lto = "thin"` | **否决** | 现有 `Cargo.toml` 已是 `lto = true`（fat）+ `strip` + `codegen-units = 1`，比 thin 更省体积，保持不动。 |
 | G | 在 `kurin-config` 结构体上直接 `#[derive(TS)]` | **否决** | 内部 `Cluster` 含原始配置全文 `source` 及 SSH 密码、私钥口令、registry 密码（`kurin-config/src/model.rs:38-69`、`config.rs:231`）。类型应生成在专用 DTO 上。 |
 | G | React Flow 画 DAG | **否决** | 计划是**严格串行的 11 个 stage、stage 内按节点并行**（`executor.rs` 头注释、`engine.rs` `Stage`），本质是“阶段 × 节点”矩阵，表格/网格比图布局更清晰，还省一个大依赖。 |
-| G | xterm.js 实时终端日志 | **否决（v1）** | `Session::exec` 在命令结束后才返回完整 stdout/stderr（`engine.rs` `Session` trait），没有逐行流。v1 展示结构化事件 + 失败原因即可。 |
+| G | xterm.js 实时终端日志 | **改为自研日志控制台** | 需要的是“可筛选、可搜索、带时间戳的结构化日志”，不是交互终端。核心层新增 `exec_stream` 后（architecture/02 §3.5），远端输出逐行进入事件流，由 §8.5 的日志控制台展示；xterm 无法按节点、任务、级别筛选，所以不用。 |
 | G | “单文件约 15–20 MB”“增量 2–3.5 MB” | **不引用** | 未经测量。v0.4.0 的 x86_64 发布 tar.gz 为 3.6 MiB；Web 版体积在 M1 实测后再定预算（§9）。 |
 | C | 一体与分离**两种部署同时正式支持**，四种构建变体（CLI / server / embed-ui / web） | **收缩** | 单人/小团队项目，多一种部署形态就多一套测试矩阵与反向代理文档。v1 只发一种：带 UI 的二进制；分离部署列为触发条件明确的后续项（§12）。 |
 | C | utoipa + OpenAPI + openapi-typescript | **改用 ts-rs** | 前后端同仓同 tag 发布、无第三方客户端，OpenAPI 的价值（对外契约、多语言 SDK）暂时用不上，却要给每个 handler 写注解。将来开放 API 再加 utoipa。 |
@@ -127,20 +134,16 @@ kurin serve --data-dir /var/lib/kurin
 
 ## 4. 代码组织与构建
 
-### 4.1 为什么是 feature 模块而不是新 crate
+### 4.1 crate 布局（v1.1 修订）
 
-`kurin` 包同时包含 lib 和 bin。新建 `kurin-server` 必然依赖 `kurin` lib；而 `serve` 子命令在 `kurin` bin 里，bin 又得依赖 `kurin-server`——Cargo 不允许这种包级循环。要拆就得把 bin 移到新的 `kurin-cli` 包，`just release-musl -p kurin`、安装脚本、二进制名都要跟着动。收益（编译隔离）用 feature 也能拿到：所有 web 依赖都是 `optional`，默认构建不编译。
+workspace 拆分（architecture/02 §3.1，ADR-01）之后，bin 是独立的 `kurin` 包，`kurin-server` 只依赖 `kurin-ops` 等库 crate，不再有 v1.0 中担心的包循环，因此 server 改为独立 crate：
 
 ```text
-kurin/
-  src/
-    ops/            # 新：共享应用服务（M0）
-      mod.rs  context.rs  progress.rs  lock.rs
-      create.rs  nodes.rs  teardown.rs  upgrade.rs  certs.rs  status.rs  plan_view.rs
-    server/         # 新：#[cfg(feature = "ui")]
-      mod.rs  routes/  auth.rs  store/  runner.rs  collector.rs  sse.rs  assets.rs  dto.rs
-    main.rs         # 只剩 argv 解析 + 选择 ProgressSink；cfg(feature="ui") 时多一个 Serve
-web/                # 新：独立前端工程
+crates/
+  kurin-ops/        # CLI 与 Web 共用的操作层（原 §6.1 的 ops/）
+  kurin-server/     # axum 路由、auth、store、runner、collector、sse、assets、dto
+kurin/              # bin：clap；feature "ui" 打开时依赖 kurin-server 并多出 `serve` 子命令
+web/                # 独立前端工程
   package.json  pnpm-lock.yaml  vite.config.ts
   src/
     api/generated/  # ts-rs 产物，入库，CI 校验无漂移
@@ -151,15 +154,15 @@ web/                # 新：独立前端工程
 ### 4.2 Cargo feature
 
 ```toml
-# kurin/Cargo.toml（示意）
+# kurin/Cargo.toml（bin 包，示意）
 [features]
 default = []
-ui = ["dep:axum", "dep:tower-http", "dep:rusqlite", "dep:ts-rs", "dep:axum-server", "tokio/net"]
+ui = ["dep:kurin-server"]
 ```
 
-- `cargo build` / `cargo test --workspace` / `just check`：与今天完全一致，不需要 Node。
-- `cargo build --features ui`：`build.rs` 检查 `web/dist/index.html.gz` 是否存在，缺失时报清晰错误（“先运行 `just web-build`”），而不是让 `rust-embed` 报晦涩的错。
-- `just check` 增加一条 `cargo clippy --features ui`，前提是放一个占位 `web/dist`（CI 中先 `just web-build`）。
+- `cargo build` / `cargo test --workspace` / `just check`：与今天完全一致，不需要 Node。`kurin-server` 自身的单测用一个占位 `web/dist` 运行（`assets` 模块在 `cfg(test)` 下不嵌入）。
+- `cargo build -p kurin --features ui`：`kurin-server` 的 `build.rs` 检查 `web/dist/index.html.gz` 是否存在，缺失时报清晰错误（“先运行 `just web-build`”），而不是让 `rust-embed` 报晦涩的错。
+- `just check` 增加 `cargo clippy -p kurin --features ui`（CI 中先 `just web-build`）。
 
 ### 4.3 just 配方（新增）
 
@@ -208,6 +211,8 @@ ui = ["dep:axum", "dep:tower-http", "dep:rusqlite", "dep:ts-rs", "dep:axum-serve
 ---
 
 ## 6. 后端设计
+
+> **v1.1 说明**：§6.1～§6.5 描述的核心改造已并入 [architecture/02](../architecture/02-core-architecture.md)（共享操作层 → `crates/kurin-ops`，`ProgressSink`/`StepEvent` → 事件 v2，upgrade/teardown/certs 改为任务计划）。下面保留原文作为背景，**接口以 architecture/02 为准**。
 
 ### 6.1 M0：共享服务层 `ops/`
 
@@ -337,7 +342,12 @@ CREATE TABLE snapshots (
 );
 ```
 
-迁移用 `PRAGMA user_version` 递增脚本，不引入迁移框架。一次 create 操作约数百到一千余条事件，直接存表即可，无需日志文件。
+迁移用 `PRAGMA user_version` 递增脚本，不引入迁移框架。
+
+**v1.1 修订：日志行单独存文件。** 引入远端命令流式输出后，一次 create 可能产生数万行日志（kubeadm init、镜像导入、helm）。因此：
+- `op_events` 只存结构化事件（任务、阶段、资源状态、告警、状态变更），一次操作通常在数千条以内；
+- `Log` 类事件写入核心层已有的 JSONL 日志文件 `<data>/logs/<cluster>/<op-id>.jsonl`（与 CLI 使用同一格式，architecture/02 §3.10），`operations` 表增加 `log_path`、`log_lines` 两列；
+- 两者共用同一个 `seq` 序列，SSE 补读时按 `seq` 归并，客户端看到的是一条完整时间线。
 
 ### 6.8 事件与 SSE
 
@@ -399,6 +409,13 @@ CREATE TABLE snapshots (
 | `GET /operations/{id}/events` | SSE，支持 `Last-Event-ID` | M1 |
 | `POST /operations/{id}/cancel` | 请求取消 | M2 |
 | `POST /operations/{id}/retry` | 重新执行（新操作，`retry_of`） | M2 |
+| `POST /nodes/probe` | （v1.1）向导“连通性测试”：对给定地址与认证执行 discover，返回 facts 或错误；不保存任何东西 | M2 |
+| `POST /nodes/parse` | （v1.1）批量录入解析（IP 范围 / 多行文本 → 节点列表），与 CLI 快速参数共用解析器 | M2 |
+| `GET /addons/catalog` | （v1.1）可用 addon 列表 + 兼容性 + values JSON Schema | M2 |
+| `GET /clusters/{name}/addons` | （v1.1）已装 addon（读 kurin-state） | M2 |
+| `GET /schema/cluster` | （v1.1）集群配置 JSON Schema（schemars 导出），表单帮助文本来源 | M2 |
+| `GET /operations/{id}/logs?after=&limit=&node=&level=&q=` | （v1.1）日志分页查询与筛选；`/logs.download?format=log\|jsonl` 下载 | M2 |
+| `GET /packages`、`POST /packages/import`、`POST /packages/{id}/verify`、`POST /packages/{id}/push` | （v1.1）包管理 | M3 |
 | `GET /healthz` | 存活 | M1 |
 
 `PlanView`：
@@ -419,19 +436,36 @@ CREATE TABLE snapshots (
 | 页面 | 内容 |
 |---|---|
 | **集群总览** `/` | 表格：名称、发行版（kubeadm/k3s）、K8s 版本、节点 Ready x/y、健康徽标（健康 / 异常 / 不可达 / 过期）、证书最早到期、最近观测时间、当前操作（可点进）。15 秒轮询快照。 |
-| **新建集群** `/clusters/new` | 两个入口：**向导** 或 **导入 TOML**（粘贴/选择文件）。向导步骤：基本信息（名称、发行版、版本、zone、离线目录）→ 网络与 CNI → HA（kube-vip / external-endpoint / kurin-lb）→ 节点（可编辑表格：名称、地址、内网地址、角色、可选 SSH 覆盖）→ SSH 认证 → 可选组件（registry / storage）→ TOML 预览 → 校验 + precheck → 计划 → 确认执行。 |
+| **新建集群** `/clusters/new` | **表单向导是主入口**（详见 §8.2）；“导入 TOML”和“从模板开始”是次入口。 |
 | **集群详情** `/clusters/:name` | Tab：概览（节点表、未运行 Pod、etcd、证书）· 节点（配置期望与观测合并展示；“添加节点”“删除节点”入口）· 配置（CodeMirror + 行内诊断 + 保存）· 操作历史 · 危险区（销毁集群、移除纳管，两者分开、文案说明差异）。 |
-| **操作详情** `/operations/:id` | 头部状态与耗时；**阶段 × 节点进度网格**（任务 ID 格式 `<stage>/<kind>@<node>` 直接聚合，格子颜色：待执行/执行中/跳过/完成/已核对/失败）；step 类事件按节点分组的时间线；失败原因高亮；取消 / 重新执行按钮。断线自动续读。 |
+| **操作详情** `/operations/:id` | 上半部分：状态、耗时、**阶段 × 节点进度网格**（任务 key `<phase>/<kind>@<node>` 直接聚合，格子颜色：待执行/执行中/跳过/完成/已核对/告警/失败，点击格子过滤下方日志）；addon 阶段显示资源就绪表（来自 `Resource` 事件）。下半部分：**日志控制台**（§8.5）。按钮：取消 / 重新执行 / 下载日志。断线自动续读。 |
+| **Addon** `/clusters/:name/addons` | 已装 addon（版本、状态、values 摘要）；目录卡片（分类、兼容性标签、不兼容时置灰并说明原因）；安装/升级对话框中的参数表单由 values-schema 自动生成；卸载需要确认。 |
+| **包** `/packages` | 管理机本地缓存与已登记的包源：kind、版本、架构、大小、签名状态、SBOM 下载；导入（URI 或服务端路径）、校验、推送到仓库、制作 base 包（后台操作）。 |
 | **操作列表** `/operations` | 按集群、类型、状态筛选。 |
 | **关于** `/about` | kurin 版本、组件版本表、能力表、数据目录。 |
 
-### 8.2 表单与 TOML：单向而非双向同步
+### 8.2 表单优先的创建向导（v1.1 重写）
 
-双向绑定“表单 ⇄ TOML”实现复杂且容易丢注释。v1 规则：
+目标：**不懂 TOML 也能建集群**。TOML 只是向导的产物，可以查看、导出，但不是必经步骤。
 
-1. **创建时**：向导维护一个 DTO，每一步调用 `POST /configs/render` 由 Rust 渲染出规范 TOML（F12）并展示；用户可在最后一步切换到 TOML 手改，**一旦手改就以 TOML 为准**，不再回填表单。
-2. **创建后**：TOML 编辑器是主编辑界面；常用的结构化动作（添加节点）由服务端用 toml_edit 修改 TOML 后生成新修订，保留注释。
-3. 校验永远以 `POST /configs/validate` 为准；`ConfigError` 的 span（F11）转换为 CodeMirror lint 标注。
+| 步骤 | 内容 | 交互细节 |
+|---|---|---|
+| 1. 模板 | 单节点体验 / 3 主 HA（kube-vip）/ 3 主 + LB 节点（kurin-lb）/ k3s 边缘 / 空白 | 选模板会预填后续步骤，随时可改 |
+| 2. 基本信息 | 名称、发行版（kubeadm/k3s）、K8s 版本（下拉，来自 `/meta` 的版本表与已导入包）、运行时、区域（global/cn） | 不兼容的选项置灰并附原因（§8.3） |
+| 3. 节点 | 可编辑表格：名称（可自动）、地址、内网地址、角色、SSH 覆盖、标签 | **批量录入**：粘贴多行 `IP 角色`，或输入 `192.168.10.11-13` 范围后选择角色，与 CLI 快速参数使用同一套解析（architecture/05）；**连通性测试**按钮逐节点执行 discover，回填架构、OS、CPU、内存、磁盘、sudo 状态，异常行标红 |
+| 4. 认证 | 全局 SSH 用户、端口、认证方式（密码/私钥路径）、become；节点级覆盖在第 3 步 | 密码只提交到服务端内存/0600 存储，界面不回显（§6.6）；可勾选“用密码登录后改为密钥” |
+| 5. 网络与高可用 | Pod/Service CIDR（默认值 + 冲突即时校验）、CNI 卡片选择（每种附简介与离线支持标记）、HA 模式与 VIP | VIP 落在节点地址或 CIDR 内时即时报错（复用服务端校验） |
+| 6. 组件 | 私有仓库（无 / 节点上安装 zot·docker-registry·harbor / 外部）；addon 勾选（metrics-server、ingress、cert-manager、存储…），每个 addon 展开后是由 values-schema 生成的参数表单 | addon 依赖自动勾选并提示 |
+| 7. 离线 | 选择已导入的包，或填写包 URI；自动检查该包是否覆盖所选版本、CNI、addon 与节点架构 | 缺什么列什么 |
+| 8. 检查 | 服务端完整校验 + precheck（逐节点结果表）+ 计划预览（阶段 × 任务） | 有失败项时“创建”按钮不可用；告警项需要勾选“我已知晓” |
+| 9. 确认 | 摘要表（与 CLI 快速创建的摘要同源）、TOML 预览（只读，可下载） | 提交后跳转到操作详情页 |
+
+规则：
+
+1. 向导状态是一个 DTO；每一步都调用 `POST /configs/render` 由 Rust 生成规范 TOML，再调用 `POST /configs/validate` 拿诊断，前端不复刻校验逻辑。
+2. 想手改 TOML 时，在第 9 步点击“高级：编辑 TOML”，从此以 TOML 为准，不再回填表单（避免双向同步丢失注释）。
+3. 集群创建后，详情页的“配置”Tab 默认显示**只读表单视图**，常用变更（加节点、启停 addon、改 addon 参数）走结构化动作，服务端用 toml_edit 生成新修订；TOML 编辑器作为“高级”入口保留。
+4. 表单字段的帮助文本来自 JSON Schema 的 `description`（由 `kurin-config` 的文档注释通过 schemars 导出），保证与 `docs/configuration.md` 一致。
 
 ### 8.3 能力约束来自后端
 
@@ -442,6 +476,39 @@ CREATE TABLE snapshots (
 - 文案集中在一个字典文件，首版 `zh-CN`；antd 使用 `zh_CN` locale；`en` 在 M3 补。
 - 不使用任何 CDN；所有资源打包进 `dist`。
 - 路由懒加载 CodeMirror（只在配置页加载）。
+
+### 8.5 日志控制台（v1.1 新增）
+
+数据来源：事件 v2（architecture/02 §3.10），每条都带毫秒级 UTC 时间戳和 `seq`。
+
+```text
+┌ 筛选：[节点 ▾] [阶段 ▾] [任务 ▾] [级别: info ▾] [仅错误/告警]  搜索: [________]  [跟随 ●] [相对时间] [下载 ▾] ┐
+│ 10:21:03.412  INFO  cp-1     prepare/containerd-config   wrote /etc/containerd/config.toml (sha 3f2a…)     │
+│ 10:21:03.977  INFO  cp-2     prepare/containerd-config   unchanged                                          │
+│ ▸ 10:21:05.120  ──  cp-1     bootstrap/kubeadm-init      started                                  (1m42s)   │
+│   10:21:05.388  OUT cp-1     │ [init] Using Kubernetes version: v1.33.1                                     │
+│   10:21:06.002  OUT cp-1     │ [preflight] Running pre-flight checks                                        │
+│   …                                                                                                         │
+│ 10:22:47.501  DONE  cp-1     bootstrap/kubeadm-init      done in 1m42.381s                                  │
+│ 10:23:10.004  RES   —        addons/ingress-nginx        Deployment ingress-nginx-controller 1/2 ready      │
+│ 10:23:41.733  FAIL  worker-2 join/kubeadm-join           exit 1: [ERROR FileAvailable--etc-kubernetes-…]   │
+└─────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+| 能力 | 说明 |
+|---|---|
+| 时间戳 | 默认本地时区的绝对时间（精确到毫秒），可切换为“相对操作开始”（`+01:42.381`）；悬停显示 UTC 原值 |
+| 分组 | 每个任务的远端输出（`OUT`/`ERR` 行）折叠在任务行下，任务行显示耗时；失败的任务自动展开 |
+| 筛选 | 节点、阶段、任务、级别（debug/info/warn/error）、流（kurin/stdout/stderr）；点击上方进度网格的格子即按“节点 + 任务”筛选 |
+| 搜索 | 全文搜索并高亮，支持上一个/下一个；“跳到第一个错误” |
+| 跟随 | 默认跟随最新输出；用户向上滚动时自动暂停，出现“回到最新”按钮 |
+| 颜色 | 级别配色；远端输出中的 ANSI 颜色码在服务端去除并转换为样式片段（不在前端解析转义序列） |
+| 规模 | 虚拟滚动（`@tanstack/react-virtual`），十万行级别不卡；历史按 `seq` 分页加载 |
+| 下载 | 当前筛选结果或完整日志，格式为 `.log`（人读，带时间戳）或 `.jsonl`（机读，与 `kurin logs --json` 一致） |
+| 脱敏 | 服务端在事件入库前已替换秘密值；前端不做二次处理 |
+| 资源跟踪 | `RES` 行来自就绪跟踪器；卡住时自动附带的 Pod 事件与容器日志尾部以子行展示 |
+
+CLI 同样可以使用这些能力：`kurin logs --op <id> [--follow] [--node cp-1] [--level debug]`，以及执行时的 `--timestamps -v`。
 
 ---
 
@@ -470,7 +537,10 @@ CREATE TABLE snapshots (
 | `delete cluster` | 危险区“销毁集群” + 输入集群名确认 | 操作 `delete-cluster` | M2 |
 | `upgrade [--dry-run] --with-kubernetes --batch` | 升级对话框：目标版本、批大小、计划预览 | 操作 `upgrade` | M3 |
 | `certs renew [--force]` | 证书 Tab “续期” | 操作 `certs-renew` | M3 |
-| `artifact --out --arch --with-kubernetes` | 制品页：在管理机上构建离线包 | 操作 `artifact`（无集群） | M3 |
+| `artifact --out --arch --with-kubernetes` / `package create\|inspect\|verify\|push` | 包页面：导入、校验、推送，在管理机上制作包 | 操作 `package`（无集群） | M3 |
+| `addon list\|install\|upgrade\|remove` | Addon 页面，schema 表单 | 操作 `addon-*` | M2（安装/卸载）/ M3（升级） |
+| `logs` | 操作详情页日志控制台 | SSE + 分页 | M2 |
+| `create cluster --control-plane … --worker …`（快速参数） | 向导第 3 步批量录入（同一解析器） | `configs/render` | M2 |
 | （新）移除纳管 / 重新执行 / 取消 / 历史 | 详情、操作页 | 服务端能力 | M2 |
 
 M1 + M2 即满足“创建、销毁、多集群状态展示”的核心需求。
@@ -479,46 +549,13 @@ M1 + M2 即满足“创建、销毁、多集群状态展示”的核心需求。
 
 ## 11. 实施里程碑与验收
 
-### M0 — 核心改造（无 UI，可单独合并发布）
-
-1. 新建 `ops/`，把 `main.rs` 的编排逻辑下沉（F1）。
-2. `RunContext` 取代 `OnceLock`（F2）。
-3. `ProgressSink` + `StepEvent`，改造 upgrade / teardown / certs 输出（F4）；`upgrade_plan` 返回结构（F5）。
-4. `CancellationToken` 接入执行器与 teardown/upgrade 循环。
-5. `ClusterLock`，CLI 变更命令全部加锁。
-6. `PlanView`、`StatusReport: Serialize`、status 拆分证书与多控制面回退（F6–F8）。
-7. 交叉编译 spike：`rusqlite` bundled 在 x86_64 musl 与 aarch64 zig 下可构建。
-
-**验收**：`just check` 绿；tier0 / tier1 / tier2 e2e 通过且 CLI 输出与改造前一致（快照测试）；双 zone 单进程单测通过；两个终端同时 `kurin add nodes` 同一集群，第二个立即报锁冲突。
-
-### M1 — `kurin serve` 与只读能力
-
-axum 服务、令牌会话、Host 校验、Store 与迁移、静态资源嵌入、集群登记/导入、TOML 编辑与校验、计划页、precheck、Collector 与总览/详情、证书检查、操作详情页 + SSE（以 precheck 验证事件链路）、`just` 配方与发布流程。
-
-**验收**：发布二进制 `kurin serve` 在断网环境打开页面正常；导入 3 个集群（含一个不可达），总览中不可达集群显示“不可达”且不影响其他集群；关掉页面再打开，precheck 历史仍在；未带会话的请求全部 401；体积实测写入 §9。
-
-### M2 — 生命周期闭环
-
-create / add nodes / delete node / delete cluster 操作、向导、取消、重新执行、中断标记、移除纳管、操作列表。
-
-**验收**（在现有 multipass 环境手工执行，记录到 `docs/progress.md`）：
-- 浏览器完成：tier1 单节点创建 → 状态正常 → tier2 添加 worker → 删除 worker → 销毁集群；
-- 创建中途关闭浏览器，操作继续完成；重新打开后进度可完整回放；
-- 创建中途 `kill` 服务 → 重启后操作为 `interrupted` → “重新执行”成功且已完成任务被跳过；
-- Web 正在创建时，CLI 对同一集群执行 `add nodes` 被锁拒绝；
-- 数据库、事件、API 响应中搜索不到配置里的密码明文（除 0600 的修订存储本身）。
-
-### M3 — 运维扩展
-
-upgrade、certs renew、artifact 构建、配置修订对比、kubeconfig 下载（需二次确认并记审计）、英文文案。
-
-### M4 — 按触发条件再做（§12）
+> **v1.1：本节由 [`docs/architecture/06-dev-plan.md`](../architecture/06-dev-plan.md) 取代。** 对应关系：原 M0 → P0+P1；原 M1 → P5（后端只读）+ P6（前端只读页面）；原 M2 → P5/P6 的生命周期部分（含表单向导与日志控制台）；原 M3 → P6 末段 + P7。验收标准已逐条迁移到相应工作包。
 
 ---
 
 ## 12. 明确不做与后续触发条件
 
-**v1 不做**：通用 K8s 资源管理（Deployment/Service 编辑等）、监控指标与告警、浏览器内 SSH 终端、逐行实时命令输出、多用户 RBAC/SSO、服务端凭据库、私钥上传、前后端分离部署、多实例服务、远程 CLI 模式、纳管非 kurin 创建的集群。
+**v1 不做**：通用 K8s 资源管理（Deployment/Service 编辑等）、监控指标与告警、浏览器内交互式 SSH 终端、多用户 RBAC/SSO、服务端凭据库、私钥上传、前后端分离部署、多实例服务、远程 CLI 模式、纳管非 kurin 创建的集群（`kurin import --from-cluster` 只针对带 `kurin-state` 记录的集群）。
 
 | 能力 | 触发条件 |
 |---|---|
@@ -526,7 +563,6 @@ upgrade、certs renew、artifact 构建、配置修订对比、kubeconfig 下载
 | OpenAPI（utoipa） | 出现第三方 API 调用方 |
 | RBAC / OIDC | 多人共用一个服务实例 |
 | 服务端凭据库 | 需要在不落盘私钥文件的前提下管理集群，或多人共享时需隔离凭据 |
-| 逐行日志 / xterm | `Session` 增加流式 exec 接口之后 |
 | 远程 CLI 模式（CLI 把操作提交给 server） | 多台管理机协作管理同一批集群 |
 | PostgreSQL / 外部队列 | 多实例服务或测得 SQLite 写入瓶颈 |
 
@@ -538,9 +574,9 @@ upgrade、certs renew、artifact 构建、配置修订对比、kubeconfig 下载
 |---|---|---|
 | D1 | 前端工程 | 同仓 `web/`，独立构建 |
 | D2 | 交付 | 嵌入单二进制，`kurin serve`；v1 不支持分离部署 |
-| D3 | 前端栈 | React + TS + Vite + Ant Design 5 + TanStack Query + React Router + CodeMirror 6 |
+| D3 | 前端栈 | React + TS + Vite + Ant Design 5 + TanStack Query + React Router + CodeMirror 6 + @rjsf/antd + @tanstack/react-virtual |
 | D4 | 后端栈 | axum + SSE + rusqlite（WAL）+ ts-rs + toml_edit；TLS 用 rustls（可选） |
-| D5 | 代码结构 | `kurin` crate 内 `ops/`（共享）+ `server/`（feature `ui`），不新建 crate |
+| D5 | 代码结构 | （v1.1）`crates/kurin-ops`（共享）+ `crates/kurin-server`，由 bin 的 feature `ui` 引入 |
 | D6 | 默认构建 | 不含 UI、无需 Node；发布构建含 UI |
 | D7 | 集群身份 | 集群 `name` 唯一，v1 不支持改名 |
 | D8 | 恢复语义 | 中断 → `interrupted` → 幂等重跑；不做回滚、不做人工核对流程 |
@@ -548,4 +584,6 @@ upgrade、certs renew、artifact 构建、配置修订对比、kubeconfig 下载
 | D10 | 秘密 | 存储与 CLI 同信任级（0600）；API/事件不回显；哨兵回写 |
 | D11 | 安全 | 始终需要令牌；回环默认；非回环需 TLS 或显式放行 |
 | D12 | 事件兼容 | 现有 `--json` 事件不改，Web 事件外包信封 |
-| D13 | 首个可用版本 | M0 + M1 + M2 |
+| D13 | 首个可用版本 | （v1.1）06-dev-plan 的 P0～P6 中标为“首版必需”的工作包 |
+| D14 | 创建方式 | （v1.1）表单向导为主，TOML 为高级/导出；addon 参数表单由 JSON Schema 生成 |
+| D15 | 日志 | （v1.1）带毫秒时间戳的结构化日志控制台，远端输出逐行可见，日志行存 JSONL 文件、结构化事件存 SQLite |
