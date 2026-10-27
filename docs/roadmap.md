@@ -107,3 +107,14 @@ tier-0~3 + offline 五层 e2e 全绿，CI 为 check + tier0（push/PR）+ releas
 2. 批次 2.1（国内镜像）：目标用户价值最高，可与任何人并行（纯数据 + trait 接线）。
 3. 批次 3.1（跨 minor 升级）：M2 最后一个"结构性"能力，做完 kubekey 平权。
 4. 其余按真实需求触发（CNI/K3s/外部 LB/CRI-O 不做预设优先级）。
+
+## 对标 kubekey（2026-10-27 完成）
+
+| kubekey 能力 | kurin 对应 | 状态 |
+|---|---|---|
+| create/add/delete/upgrade/certs/artifact | 同名命令 | ✅ 既有 |
+| init registry | [registry]（docker-registry/zot/harbor） | ✅ |
+| precheck | kurin precheck | ✅ |
+| OS roles（存储/基础环境治理） | [storage]（local-path/nfs）+ prepare/os-baseline | ✅ |
+| rpm 系发行版 | Rocky 9 e2e 验证 | ✅ |
+| playbook/web/通用任务引擎、KubeSphere | — | 明确非目标 |

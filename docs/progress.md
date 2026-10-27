@@ -13,8 +13,9 @@
 - 侦察结论（scout）：仓库里真正的 Ubuntu 假设只有 4 处（kernel_deps、
   external_lb、preflight、无 firewalld 处理）；multipass 无 rpm 镜像，
   e2e 走 Rocky GenericCloud qcow2 URL 直启（cloud-init 注入 root key）。
-- e2e：`e2e/tier1/rocky.sh`（2GB 镜像下载受限于 ~0.9MB/s，先手工缓存再
-  file:// 启动）。
+- e2e：`e2e/tier1/rocky.sh` **PASS**（Rocky 9.8 单节点 kubeadm：cluster-ready
+  零失败、os-baseline 执行、pod 全健康、selinux=Permissive / swap=off /
+  firewalld=inactive）。镜像下载：官方 CDN ~1MB/s，新加坡 mirror 23MB/s。
 
 ## 对标 kubekey：precheck / registry / storage（2026-10-27）
 
