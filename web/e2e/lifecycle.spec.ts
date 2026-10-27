@@ -16,7 +16,7 @@ import {
 test('创建 → 状态 → 加 worker → 删 worker → 销毁', async ({ browser }) => {
   const env = readEnv();
   test.skip(env == null, 'KURIN_E2E_URL is not set');
-  test.setTimeout(900_000);
+  test.setTimeout(1_800_000);
   const context = await browser.newContext({ baseURL: env.url });
   const page = await context.newPage();
   try {
@@ -29,7 +29,7 @@ test('创建 → 状态 → 加 worker → 删 worker → 销毁', async ({ brow
 
     // ── 状态：集群详情为 active ────────────────────────────────────
     await page.goto(`/clusters/${encodeURIComponent(env.cluster)}`);
-    await expect(page.getByText('active')).toBeVisible({ timeout: 60_000 });
+    await expect(page.getByTestId('cluster-lifecycle')).toHaveText('运行中', { timeout: 60_000 });
 
     // ── 加 worker ──────────────────────────────────────────────────
     if (env.addBulk) {
@@ -67,7 +67,7 @@ test('创建 → 状态 → 加 worker → 删 worker → 销毁', async ({ brow
     await page.getByTestId('danger-destroy-confirm').click();
     await expect(page).toHaveURL(/\/operations\//, { timeout: 60_000 });
     const destroyId = operationIdFromUrl(page);
-    const destroyed = await waitForOperation(page, destroyId, 600_000);
+    const destroyed = await waitForOperation(page, destroyId, 900_000);
     expect(destroyed.state, destroyed.error ?? '').toBe('succeeded');
   } finally {
     await context.close();

@@ -26,7 +26,8 @@ import {
   Tag,
   Typography,
 } from 'antd';
-import { ApiError, apiFetch } from '../api/client';
+import { ApiError } from '../api/client';
+import { fetchClusterDetail } from '../api/clusters';
 import {
   addonCompatibility,
   fetchAddonCatalog,
@@ -41,7 +42,7 @@ import {
   type InstalledAddonRow,
   type OperationReceipt,
 } from '../api/addons';
-import type { AddonCatalogEntry, ClusterDetail } from '../api/types';
+import type { AddonCatalogEntry } from '../api/types';
 import { t, type MessageKey } from '../i18n/zh-CN';
 import { AddonValuesForm } from '../wizard/AddonValuesForm';
 import { isActiveOperation, operationKindLabel, operationStateLabel } from '../utils/operation';
@@ -211,7 +212,7 @@ export default function AddonsPage() {
 
   const clusterQuery = useQuery({
     queryKey: ['cluster', name],
-    queryFn: () => apiFetch<ClusterDetail>(`/clusters/${encodeURIComponent(name ?? '')}`),
+    queryFn: () => fetchClusterDetail(name ?? ''),
     enabled: name != null,
   });
   const catalogQuery = useQuery({

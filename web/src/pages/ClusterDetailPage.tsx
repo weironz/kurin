@@ -21,6 +21,7 @@ import {
   Typography,
 } from 'antd';
 import { ApiError, apiFetch } from '../api/client';
+import { fetchClusterDetail } from '../api/clusters';
 import type {
   ClusterDetail,
   ClusterSnapshot,
@@ -78,6 +79,19 @@ function mergeNodes(desired: NodeSpec[], observed: ObservedNode[]): MergedNodeRo
   }
   return [...rows.values()];
 }
+
+/** 生命周期标签（UI §6.7）：颜色与文案集中在这里。 */
+const lifecycleMeta: Record<
+  ClusterDetail['lifecycle'],
+  { color: string; labelKey: MessageKey }
+> = {
+  draft: { color: 'default', labelKey: 'cluster.lifecycle.draft' },
+  provisioning: { color: 'processing', labelKey: 'cluster.lifecycle.provisioning' },
+  active: { color: 'green', labelKey: 'cluster.lifecycle.active' },
+  deleting: { color: 'orange', labelKey: 'cluster.lifecycle.deleting' },
+  deleted: { color: 'red', labelKey: 'cluster.lifecycle.deleted' },
+  archived: { color: 'default', labelKey: 'cluster.lifecycle.archived' },
+};
 
 const roleLabel: Record<NodeSpec['role'], MessageKey> = {
   'control-plane': 'cluster.role.control-plane',
@@ -614,7 +628,7 @@ export default function ClusterDetailPage() {
   const [upgradeOpen, setUpgradeOpen] = useState(false);
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ['cluster', name],
-    queryFn: () => apiFetch<ClusterDetail>(`/clusters/${encodeURIComponent(name ?? '')}`),
+    queryFn: () => fetchClusterDetail(name ?? ''),
     enabled: name != null,
   });
 
@@ -637,6 +651,11 @@ export default function ClusterDetailPage() {
       </Typography.Title>
       <Space align="center" style={{ marginBottom: 8 }} wrap>
         <Typography.Text code>{name}</Typography.Text>
+        {data ? (
+          <Tag color={lifecycleMeta[data.lifecycle].color} data-testid="cluster-lifecycle">
+            {t(lifecycleMeta[data.lifecycle].labelKey)}
+          </Tag>
+        ) : null}
         <Typography.Text type="secondary">{t('page.clusterDetail.description')}</Typography.Text>
         <Link to={`/clusters/${encodeURIComponent(name)}/addons`}>{t('addons.link')}</Link>
         <Button

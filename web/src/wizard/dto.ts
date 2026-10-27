@@ -86,7 +86,8 @@ export function buildDto(
     dns_domain: form.dnsDomain || undefined,
     vip: form.haMode !== 'none' && form.vip !== '' ? form.vip : undefined,
     ha_mode: form.haMode === 'none' ? undefined : form.haMode,
-    zone: form.zone,
+    // `global` 是默认值；artifacts.zone 只接受 "cn"，不要把它写进文档。
+    zone: form.zone === 'cn' ? 'cn' : undefined,
     packages: packages.length > 0 ? packages : undefined,
     addons: addons.length > 0 ? addons : undefined,
     addon_values: addonValues.length > 0 ? addonValues : undefined,

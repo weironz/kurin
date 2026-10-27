@@ -159,9 +159,16 @@ export async function startCreate(page: Page, env: E2eEnv): Promise<string> {
   await page.getByTestId('wizard-next').click();
   await page.getByTestId('wizard-next').click();
 
-  // 检查：precheck 通过后才能继续。
+  // 检查：等去抖 render/validate 产出 TOML 后再跑 precheck。
+  await expect(page.getByTestId('wizard-precheck-run')).toBeEnabled({ timeout: 60_000 });
   await page.getByTestId('wizard-precheck-run').click();
-  await expect(page.getByText(/项通过|项告警/)).toBeVisible({ timeout: 300_000 });
+  await expect(page.getByText(/项通过|项告警|项失败/)).toBeVisible({ timeout: 300_000 });
+  if (await page.getByText(/项失败/).isVisible()) {
+    throw new Error('precheck reported failures; the tier is not clean');
+  }
+  // 有告警时必须显式确认，否则「下一步」保持禁用。
+  const ack = page.getByTestId('wizard-ack-warnings');
+  if ((await ack.count()) > 0) await ack.check();
   await page.getByTestId('wizard-next').click();
 
   // 确认：提交 create。

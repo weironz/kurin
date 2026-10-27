@@ -34,6 +34,7 @@ const kindLabelKey: Record<OperationKind, MessageKey> = {
   precheck: 'operation.kind.precheck',
   artifact: 'operation.kind.artifact',
   package: 'operation.kind.package',
+  unknown: 'operation.kind.unknown',
 };
 
 export function operationStateLabel(state: OperationState): string {

@@ -196,7 +196,8 @@ export type OperationKind =
   | 'certs-renew'
   | 'precheck'
   | 'artifact'
-  | 'package';
+  | 'package'
+  | 'unknown';
 
 /** 操作状态（operations 表 state 列）。 */
 export type OperationState =

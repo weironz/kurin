@@ -910,6 +910,11 @@ export function ReviewStep({
   const needsAck = warned > 0;
 
   const runPrecheck = async () => {
+    // 渲染/校验尚未产出 TOML 时不能登记（空文档会被服务端拒绝）。
+    if (toml === '') {
+      setState({ precheckError: t('wizard.review.precheckWaiting') });
+      return;
+    }
     setState({ precheckRunning: true, precheckError: null });
     try {
       const { rev } = await ensureClusterRegistered(form.name, toml);
@@ -961,6 +966,7 @@ export function ReviewStep({
             <Button
               onClick={runPrecheck}
               loading={state.precheckRunning}
+              disabled={toml === ''}
               data-testid="wizard-precheck-run"
             >
               {t('wizard.review.precheckRun')}

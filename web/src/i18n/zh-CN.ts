@@ -182,6 +182,12 @@ const zhCN = {
     '仅把 {cluster} 标记为 archived：不再采集、不再执行操作，远端集群与节点完全不受影响。如需销毁远端资源请改用「销毁集群」。',
 
   // 节点 / etcd / 高可用标签
+  'cluster.lifecycle.draft': '草稿',
+  'cluster.lifecycle.provisioning': '创建中',
+  'cluster.lifecycle.active': '运行中',
+  'cluster.lifecycle.deleting': '删除中',
+  'cluster.lifecycle.deleted': '已删除',
+  'cluster.lifecycle.archived': '已移除纳管',
   'cluster.node.ready': '就绪',
   'cluster.node.notReady': '未就绪',
   'cluster.role.control-plane': '控制面',
@@ -214,6 +220,7 @@ const zhCN = {
   'operation.kind.certs-renew': '证书续期',
   'operation.kind.precheck': '预检查',
   'operation.kind.artifact': '制品',
+  'operation.kind.unknown': '未知操作',
   'operation.kind.package': '包',
 
   // 操作详情（WP-63）
@@ -517,6 +524,7 @@ const zhCN = {
   'wizard.review.validate': '服务端校验',
   'wizard.review.precheck': '预检查（逐节点）',
   'wizard.review.plan': '计划预览',
+  'wizard.review.precheckWaiting': '等待配置渲染完成…',
   'wizard.review.precheckRun': '运行 precheck',
   'wizard.review.planRun': '生成计划',
   'wizard.review.running': '执行中…',
