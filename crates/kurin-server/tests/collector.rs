@@ -18,7 +18,8 @@ use axum::Router;
 use kurin_components::status::{NodeStatus, StatusReport};
 use kurin_config::Cluster;
 use kurin_server::{
-    Collector, CollectorSettings, Lifecycle, RefreshOutcome, StatusProvider, Store, StoreOptions,
+    Collection, Collector, CollectorSettings, Lifecycle, RefreshOutcome, StatusProvider, Store,
+    StoreOptions,
 };
 use miette::Result;
 use serde_json::{json, Value};
@@ -96,7 +97,7 @@ impl FakeProvider {
 
 #[async_trait]
 impl StatusProvider for FakeProvider {
-    async fn collect(&self, spec: &Cluster, certs: bool) -> Result<StatusReport> {
+    async fn collect(&self, spec: &Cluster, certs: bool) -> Result<Collection> {
         self.calls.lock().unwrap().push((spec.name.clone(), certs));
         let behavior = self.behaviors.lock().unwrap().pop_front();
         let entered = self
@@ -114,7 +115,10 @@ impl StatusProvider for FakeProvider {
             Some(Behavior::Report(report)) => {
                 self.in_flight
                     .fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
-                Ok(report)
+                Ok(Collection {
+                    report,
+                    addons: None,
+                })
             }
             Some(Behavior::Gate) => {
                 let mut gate = self.release.clone();
@@ -125,12 +129,18 @@ impl StatusProvider for FakeProvider {
                 }
                 self.in_flight
                     .fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
-                Ok(self.report.clone())
+                Ok(Collection {
+                    report: self.report.clone(),
+                    addons: None,
+                })
             }
             _ => {
                 self.in_flight
                     .fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
-                Ok(self.report.clone())
+                Ok(Collection {
+                    report: self.report.clone(),
+                    addons: None,
+                })
             }
         }
     }
@@ -252,7 +262,13 @@ async fn certificate_rounds_run_only_every_cert_interval() {
     // A previous cert probe two days ago: the first round is due, and the
     // persisted cert value survives into the stored report meanwhile.
     store
-        .save_snapshot_success("alpha", r#"{"healthy":true,"nodes":[]}"#, true, Some(7))
+        .save_snapshot_success(
+            "alpha",
+            r#"{"healthy":true,"nodes":[]}"#,
+            true,
+            Some(7),
+            None,
+        )
         .unwrap();
     store
         .write(|conn| {
@@ -366,7 +382,13 @@ async fn a_slow_collection_times_out_and_keeps_the_last_good_snapshot() {
     active_cluster(&store, "alpha");
 
     store
-        .save_snapshot_success("alpha", r#"{"healthy":true,"nodes":[]}"#, true, Some(9))
+        .save_snapshot_success(
+            "alpha",
+            r#"{"healthy":true,"nodes":[]}"#,
+            true,
+            Some(9),
+            None,
+        )
         .unwrap();
     let previous = store.get_snapshot("alpha").unwrap().unwrap();
 
@@ -539,6 +561,7 @@ fn noop_backend() -> Arc<dyn kurin_server::OperationBackend> {
             kurin_server::OpExecution {
                 state: kurin_server::OperationState::Succeeded,
                 error: None,
+                result: None,
             }
         }
     }
@@ -673,6 +696,7 @@ async fn the_overview_carries_the_snapshot_and_the_health_badge() {
             &serde_json::to_string(&report(true, Some(210))).unwrap(),
             true,
             Some(210),
+            None,
         )
         .unwrap();
     // A degraded one: fresh report, unhealthy verdict.
@@ -682,6 +706,7 @@ async fn the_overview_carries_the_snapshot_and_the_health_badge() {
             "degraded",
             &serde_json::to_string(&report(false, None)).unwrap(),
             true,
+            None,
             None,
         )
         .unwrap();
@@ -693,6 +718,7 @@ async fn the_overview_carries_the_snapshot_and_the_health_badge() {
             &serde_json::to_string(&report(true, Some(45))).unwrap(),
             true,
             Some(45),
+            None,
         )
         .unwrap();
     store
@@ -706,6 +732,7 @@ async fn the_overview_carries_the_snapshot_and_the_health_badge() {
             &serde_json::to_string(&report(true, Some(45))).unwrap(),
             true,
             Some(45),
+            None,
         )
         .unwrap();
     store

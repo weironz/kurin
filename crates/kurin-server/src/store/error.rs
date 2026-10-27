@@ -34,6 +34,9 @@ pub enum StoreError {
     /// No operation with that id.
     #[error("操作 {0:?} 不存在")]
     OperationNotFound(String),
+    /// No registered package with that id.
+    #[error("包 {0:?} 不存在")]
+    PackageNotFound(String),
     /// The cluster already has a queued/running mutating operation
     /// (UI §6.5: the partial unique index plus the lock).
     #[error("集群 {cluster:?} 已有活动操作 {op_id}")]
@@ -67,7 +70,10 @@ impl StoreError {
     /// HTTP status the API must answer with (UI §7).
     pub fn status_code(&self) -> u16 {
         match self {
-            Self::NotFound(_) | Self::RevisionNotFound { .. } | Self::OperationNotFound(_) => 404,
+            Self::NotFound(_)
+            | Self::RevisionNotFound { .. }
+            | Self::OperationNotFound(_)
+            | Self::PackageNotFound(_) => 404,
             Self::AlreadyExists(_) | Self::RevConflict { .. } | Self::ActiveOperation { .. } => 409,
             Self::Toml(_) | Self::InvalidName(_) | Self::MissingSecret { .. } => 400,
             Self::Sqlite(_)

@@ -1,12 +1,10 @@
-//! Cluster, configuration and operation endpoints (UI §7, WP-52).
-//!
-//! These are the routes the OpRunner needs: register/import a cluster,
-//! submit an operation, follow its events/logs, cancel and retry. The
-//! remaining read-only endpoints (plan, schema, addons, packages) belong to
-//! WP-54.
+//! Cluster, configuration and operation endpoints (UI §7, WP-52) plus
+//! the WP-54 surface: meta, schema, config utilities, plan preview, node
+//! probing/parsing, the addon catalog and package management.
 
 mod clusters;
 mod operations;
+pub(crate) mod wp54;
 
 use std::net::SocketAddr;
 
@@ -23,6 +21,7 @@ use crate::state::AppState;
 /// Routes merged into the main router.
 pub fn router() -> Router<AppState> {
     Router::new()
+        .merge(wp54::router())
         .route(
             "/api/v1/clusters",
             get(clusters::list).post(clusters::create),

@@ -88,11 +88,22 @@ impl Default for CollectorSettings {
 /// The collector's view of "run one status collection". The production
 /// implementation goes through [`kurin_components::status::collect`]
 /// (and therefore `ClusterApi`, WP-17); tests swap in a fake.
+/// What one collection round produced.
+#[derive(Debug, Clone)]
+pub struct Collection {
+    /// The core status report.
+    pub report: StatusReport,
+    /// The installed-addon inventory read from `kurin-state`, when the
+    /// round reached the cluster (WP-54: `GET /clusters/{name}/addons`
+    /// reads it from the snapshot row).
+    pub addons: Option<String>,
+}
+
 #[async_trait]
 pub trait StatusProvider: Send + Sync {
     /// Collect the core status of `spec`; `certs` is set only on the
     /// (throttled) rounds that also probe certificate expiry.
-    async fn collect(&self, spec: &Cluster, certs: bool) -> Result<StatusReport>;
+    async fn collect(&self, spec: &Cluster, certs: bool) -> Result<Collection>;
 }
 
 /// The production provider: a fresh SSH session pool per collection and
@@ -102,13 +113,24 @@ pub struct KurinStatusProvider;
 
 #[async_trait]
 impl StatusProvider for KurinStatusProvider {
-    async fn collect(&self, spec: &Cluster, certs: bool) -> Result<StatusReport> {
+    async fn collect(&self, spec: &Cluster, certs: bool) -> Result<Collection> {
         let secrets = spec.resolve_secrets()?;
         let pool = Arc::new(kurin_ssh::SshSessionPool::from_cluster(spec, &secrets)?);
         let dyn_pool: Arc<dyn kurin_core::executor::SessionPool> = pool.clone();
         let report = kurin_components::status::collect(spec, &dyn_pool, StatusOpts { certs }).await;
+        // The addon inventory rides the same connection: `kurin-state`
+        // is one ConfigMap read away from the status probe. An
+        // unreachable cluster fails the whole collection anyway; a
+        // cluster without the record simply has no addons yet.
+        let addons = match kurin_ops::addon_inventory(spec).await {
+            Ok(inventory) => serde_json::to_string(&inventory).ok(),
+            Err(error) => {
+                tracing::warn!(cluster = %spec.name, "{error}");
+                None
+            }
+        };
         pool.close().await;
-        report
+        report.map(|report| Collection { report, addons })
     }
 }
 
@@ -316,9 +338,10 @@ impl Collector {
         }
 
         match self.probe(&name).await {
-            Ok((report, certs_due)) => {
+            Ok((collection, certs_due)) => {
                 let previous = self.inner.store.get_snapshot(&name).ok().flatten();
-                let report = merge_cert_days(report, certs_due, previous.as_ref());
+                let mut report = collection.report;
+                report.cert_min_days = merge_cert_days(&report, certs_due, previous.as_ref());
                 // Only a round that actually probed certificates may
                 // overwrite the certificate columns.
                 let cert_days = if certs_due {
@@ -328,11 +351,13 @@ impl Collector {
                 };
                 match serde_json::to_string(&report) {
                     Ok(json) => {
-                        if let Err(error) = self
-                            .inner
-                            .store
-                            .save_snapshot_success(&name, &json, certs_due, cert_days)
-                        {
+                        if let Err(error) = self.inner.store.save_snapshot_success(
+                            &name,
+                            &json,
+                            certs_due,
+                            cert_days,
+                            collection.addons.as_deref(),
+                        ) {
                             eprintln!("[collector] 保存集群 {name} 快照失败: {error}");
                         }
                     }
@@ -364,7 +389,7 @@ impl Collector {
 
     /// Load the spec, decide whether certificates are due and run the
     /// provider under the collection timeout.
-    async fn probe(&self, name: &str) -> Result<(StatusReport, bool)> {
+    async fn probe(&self, name: &str) -> Result<(Collection, bool)> {
         let revision = self
             .inner
             .store
@@ -373,13 +398,13 @@ impl Collector {
             .ok_or_else(|| miette::miette!("集群还没有配置，无法采集"))?;
         let spec = kurin_config::parse_str(std::path::Path::new("cluster.toml"), &revision.toml)?;
         let certs_due = self.cert_round_due(name);
-        let report = tokio::time::timeout(
+        let collection = tokio::time::timeout(
             self.inner.settings.timeout,
             self.inner.provider.collect(&spec, certs_due),
         )
         .await
         .map_err(|_| miette::miette!("采集超时（{:?}）", self.inner.settings.timeout))??;
-        Ok((report, certs_due))
+        Ok((collection, certs_due))
     }
 
     /// True when the certificate probe is due: every
@@ -434,12 +459,12 @@ fn jittered(settings: &CollectorSettings) -> Duration {
 /// a fresh probe on cert rounds, the last known value otherwise (the probe
 /// runs every 6 h, the core round every minute).
 fn merge_cert_days(
-    mut report: StatusReport,
+    report: &StatusReport,
     certs_due: bool,
     previous: Option<&SnapshotRecord>,
-) -> StatusReport {
+) -> Option<i64> {
     if !certs_due && report.cert_min_days.is_none() {
-        report.cert_min_days = previous.and_then(|snapshot| snapshot.cert_min_days);
+        return previous.and_then(|snapshot| snapshot.cert_min_days);
     }
-    report
+    report.cert_min_days
 }

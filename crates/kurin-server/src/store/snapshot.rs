@@ -32,6 +32,9 @@ pub struct SnapshotRecord {
     pub certs_at: Option<String>,
     /// Days until the earliest control-plane certificate expiry.
     pub cert_min_days: Option<i64>,
+    /// The addon inventory JSON (`GET /clusters/{name}/addons` reads it;
+    /// `None` until a collection carried it).
+    pub addons: Option<String>,
 }
 
 fn row_to_snapshot(row: &Row<'_>) -> rusqlite::Result<SnapshotRecord> {
@@ -43,12 +46,13 @@ fn row_to_snapshot(row: &Row<'_>) -> rusqlite::Result<SnapshotRecord> {
         error: row.get(4)?,
         certs_at: row.get(5)?,
         cert_min_days: row.get(6)?,
+        addons: row.get(7)?,
     })
 }
 
 fn load_snapshot(conn: &Connection, cluster: &str) -> Result<Option<SnapshotRecord>, StoreError> {
     conn.query_row(
-        "SELECT cluster, attempted_at, observed_at, report, error, certs_at, cert_min_days \
+        "SELECT cluster, attempted_at, observed_at, report, error, certs_at, cert_min_days, addons \
          FROM snapshots WHERE cluster = ?1",
         [cluster],
         row_to_snapshot,
@@ -81,15 +85,17 @@ impl Store {
         report: &str,
         certs_due: bool,
         cert_min_days: Option<i64>,
+        addons: Option<&str>,
     ) -> Result<(), StoreError> {
         let cluster = cluster.to_string();
         let report = report.to_string();
+        let addons = addons.map(str::to_string);
         self.write(move |conn| {
             let timestamp = now();
             conn.execute(
                 "INSERT INTO snapshots (cluster, attempted_at, observed_at, report, error, \
-                 certs_at, cert_min_days) \
-                 VALUES (?1, ?2, ?2, ?3, NULL, CASE WHEN ?4 THEN ?2 ELSE NULL END, ?5) \
+                 certs_at, cert_min_days, addons) \
+                 VALUES (?1, ?2, ?2, ?3, NULL, CASE WHEN ?4 THEN ?2 ELSE NULL END, ?5, ?6) \
                  ON CONFLICT(cluster) DO UPDATE SET \
                  attempted_at = excluded.attempted_at, \
                  observed_at = excluded.observed_at, \
@@ -97,8 +103,16 @@ impl Store {
                  error = NULL, \
                  certs_at = CASE WHEN ?4 THEN excluded.certs_at ELSE snapshots.certs_at END, \
                  cert_min_days = CASE WHEN ?4 THEN excluded.cert_min_days \
-                 ELSE snapshots.cert_min_days END",
-                params![&cluster, &timestamp, &report, certs_due, cert_min_days],
+                 ELSE snapshots.cert_min_days END, \
+                 addons = excluded.addons",
+                params![
+                    &cluster,
+                    &timestamp,
+                    &report,
+                    certs_due,
+                    cert_min_days,
+                    &addons
+                ],
             )?;
             Ok(())
         })
@@ -114,7 +128,7 @@ impl Store {
             let timestamp = now();
             conn.execute(
                 "INSERT INTO snapshots (cluster, attempted_at, observed_at, report, error, \
-                 certs_at, cert_min_days) VALUES (?1, ?2, NULL, NULL, ?3, NULL, NULL) \
+                 certs_at, cert_min_days, addons) VALUES (?1, ?2, NULL, NULL, ?3, NULL, NULL, NULL) \
                  ON CONFLICT(cluster) DO UPDATE SET \
                  attempted_at = excluded.attempted_at, error = excluded.error",
                 params![&cluster, &timestamp, &error],
@@ -142,7 +156,7 @@ mod tests {
         assert!(store.get_snapshot("alpha").unwrap().is_none());
 
         store
-            .save_snapshot_success("alpha", r#"{"healthy":true}"#, true, Some(42))
+            .save_snapshot_success("alpha", r#"{"healthy":true}"#, true, Some(42), None)
             .unwrap();
         let first = store.get_snapshot("alpha").unwrap().unwrap();
         assert_eq!(first.report.as_deref(), Some(r#"{"healthy":true}"#));
@@ -153,7 +167,7 @@ mod tests {
 
         // A core-only round refreshes the report but keeps the cert data.
         store
-            .save_snapshot_success("alpha", r#"{"healthy":false}"#, false, None)
+            .save_snapshot_success("alpha", r#"{"healthy":false}"#, false, None, None)
             .unwrap();
         let second = store.get_snapshot("alpha").unwrap().unwrap();
         assert_eq!(second.report.as_deref(), Some(r#"{"healthy":false}"#));
@@ -172,7 +186,7 @@ mod tests {
 
         // Recovery clears the error again.
         store
-            .save_snapshot_success("alpha", r#"{"healthy":true}"#, true, Some(40))
+            .save_snapshot_success("alpha", r#"{"healthy":true}"#, true, Some(40), None)
             .unwrap();
         let fourth = store.get_snapshot("alpha").unwrap().unwrap();
         assert_eq!(fourth.error, None);

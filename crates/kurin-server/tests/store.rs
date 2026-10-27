@@ -71,8 +71,9 @@ fn migrates_an_empty_database_to_the_latest_schema() {
         })
         .expect("user_version");
     assert_eq!(
-        version, 3,
-        "v1 + v1.1 log columns + the read-only index exemption"
+        version, 4,
+        "v1 + v1.1 log columns + the read-only index exemption + WP-54 \
+         (operations.result, snapshots.addons, packages)"
     );
 
     let journal: String = store
@@ -98,6 +99,7 @@ fn migrates_an_empty_database_to_the_latest_schema() {
         "operations",
         "op_events",
         "snapshots",
+        "packages",
     ] {
         assert!(
             tables.iter().any(|table| table == expected),
@@ -115,6 +117,7 @@ fn migrates_an_empty_database_to_the_latest_schema() {
         .expect("operations columns");
     assert!(columns.iter().any(|column| column == "log_path"));
     assert!(columns.iter().any(|column| column == "log_lines"));
+    assert!(columns.iter().any(|column| column == "result"));
 
     // Reopening an already migrated database is a no-op and keeps data.
     store
@@ -136,7 +139,7 @@ fn migrates_an_empty_database_to_the_latest_schema() {
                 .map_err(StoreError::from)
         })
         .expect("user_version after reopen");
-    assert_eq!(version, 3);
+    assert_eq!(version, 4);
 }
 
 #[test]

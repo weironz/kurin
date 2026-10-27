@@ -492,6 +492,13 @@ impl OpRunner {
         {
             eprintln!("[serve] 结束操作失败: {error}");
         }
+        if let Some(result) = &execution.result {
+            if let Ok(text) = serde_json::to_string(result) {
+                if let Err(error) = self.inner.store.set_operation_result(&operation.id, &text) {
+                    eprintln!("[serve] 记录操作结果失败: {error}");
+                }
+            }
+        }
         sink.flush_meta();
         drop(permit);
     }
@@ -647,6 +654,7 @@ mod tests {
             crate::ops::OpExecution {
                 state: OperationState::Succeeded,
                 error: None,
+                result: None,
             }
         }
     }

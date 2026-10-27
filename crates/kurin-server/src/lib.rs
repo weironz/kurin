@@ -33,7 +33,7 @@ use axum::Router;
 
 pub use auth::TokenStore;
 pub use collector::{
-    Collector, CollectorSettings, KurinStatusProvider, RefreshOutcome, StatusProvider,
+    Collection, Collector, CollectorSettings, KurinStatusProvider, RefreshOutcome, StatusProvider,
     DEFAULT_CERT_INTERVAL, DEFAULT_CONCURRENCY, DEFAULT_INTERVAL, DEFAULT_REFRESH_DEDUPE,
     DEFAULT_TIMEOUT, STALE_AFTER,
 };
@@ -51,8 +51,8 @@ pub use session::{SessionStore, SESSION_COOKIE, SESSION_TTL};
 pub use state::AppState;
 pub use store::{
     ClusterRecord, ConfigRevision, Lifecycle, NewOperation, OperationFilter, OperationRecord,
-    OperationState, RevisionSummary, SnapshotRecord, Store, StoreError, StoreOptions,
-    SECRET_SENTINEL,
+    OperationState, PackageRegistration, RevisionSummary, SnapshotRecord, Store, StoreError,
+    StoreOptions, SECRET_SENTINEL,
 };
 
 /// Failures of `kurin serve` itself (bad arguments, IO).

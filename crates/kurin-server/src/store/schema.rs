@@ -11,7 +11,7 @@ use rusqlite::Connection;
 use super::StoreError;
 
 /// Schema version this build creates and expects.
-pub const LATEST_VERSION: i32 = 3;
+pub const LATEST_VERSION: i32 = 4;
 
 /// The v1 table set, exactly as UI §6.7 lists it.
 const V1: &str = r#"
@@ -79,8 +79,40 @@ CREATE UNIQUE INDEX one_active_op ON operations(cluster)
   WHERE state IN ('queued','running') AND kind NOT IN ('precheck','status');
 "#;
 
+/// v1.3 (WP-54): operations carry a JSON `result` payload (the plan view
+/// of a `plan` operation, the precheck report, package reports);
+/// snapshots gain the addon inventory read from `kurin-state`; `packages`
+/// registers the package sources the packages page manages; and the
+/// active-operation index learns the new lock-free kinds (`plan` and the
+/// clusterless package operations), so they neither take nor collide on
+/// the cluster guard.
+const V4: &str = r#"
+ALTER TABLE operations ADD COLUMN result TEXT;
+ALTER TABLE snapshots ADD COLUMN addons TEXT;
+DROP INDEX one_active_op;
+CREATE UNIQUE INDEX one_active_op ON operations(cluster)
+  WHERE state IN ('queued','running') AND kind NOT IN
+  ('precheck','status','plan','package-verify','package-push','package-create-base');
+CREATE TABLE packages (
+  id          TEXT PRIMARY KEY,
+  source      TEXT NOT NULL,
+  origin      TEXT NOT NULL,
+  kind        TEXT NOT NULL,
+  name        TEXT NOT NULL,
+  version     TEXT NOT NULL,
+  distribution TEXT NOT NULL,
+  arch        TEXT NOT NULL,
+  size        INTEGER NOT NULL,
+  "index"     TEXT NOT NULL,
+  signatures  INTEGER NOT NULL DEFAULT 0,
+  sbom        TEXT,
+  created_at  TEXT NOT NULL,
+  verified_at TEXT NOT NULL
+);
+"#;
+
 /// Ordered migrations. Keep append-only: a shipped version is never edited.
-const MIGRATIONS: &[(i32, &str)] = &[(1, V1), (2, V2), (3, V3)];
+const MIGRATIONS: &[(i32, &str)] = &[(1, V1), (2, V2), (3, V3), (4, V4)];
 
 /// Bring `conn` from any older schema up to [`LATEST_VERSION`].
 pub fn migrate(conn: &mut Connection) -> Result<(), StoreError> {

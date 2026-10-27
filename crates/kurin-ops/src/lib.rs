@@ -29,6 +29,7 @@ mod execute;
 mod logs;
 mod output;
 mod packages;
+mod plan_only;
 mod plan_view;
 mod precheck;
 mod status;
@@ -56,6 +57,7 @@ pub use kurin_components::status::StatusReport;
 pub use kurin_components::tasks::post::ClusterStateRecord;
 pub use logs::LogsRequest;
 pub use output::{JsonMode, OpOutcome, OpResult, OutputOpts};
+pub use plan_only::plan_only;
 pub use plan_view::{plan_view, DriftView, PhaseView, PlanView, TaskView};
 pub use precheck::precheck_with_handle;
 
@@ -586,6 +588,12 @@ pub async fn build_artifacts(
     with_kubernetes: Option<String>,
 ) -> Result<()> {
     artifact::build(out_dir, arch, with_kubernetes).await
+}
+
+/// The pinned component versions this build installs
+/// (`create config --print-versions`).
+pub fn component_versions() -> Vec<(&'static str, &'static str)> {
+    kurin_artifact::version::component_versions()
 }
 
 /// `kurin capabilities --json`: the aggregated component capability table.

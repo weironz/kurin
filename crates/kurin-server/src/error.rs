@@ -157,7 +157,8 @@ impl From<crate::store::StoreError> for ApiError {
         match error {
             StoreError::NotFound(_)
             | StoreError::RevisionNotFound { .. }
-            | StoreError::OperationNotFound(_) => Self::NotFound,
+            | StoreError::OperationNotFound(_)
+            | StoreError::PackageNotFound(_) => Self::NotFound,
             StoreError::ActiveOperation { cluster, op_id } => Self::Conflict(format!(
                 "集群 {cluster:?} 已有活动操作 {op_id}；请等待其结束或先取消"
             )),

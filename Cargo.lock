@@ -2548,6 +2548,7 @@ dependencies = [
  "async-trait",
  "axum",
  "axum-server",
+ "kurin-artifact",
  "kurin-components",
  "kurin-config",
  "kurin-core",

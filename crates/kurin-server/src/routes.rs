@@ -2,7 +2,6 @@
 //! placeholder `/api/v1/meta`; cluster and operation APIs are merged from
 //! [`crate::api`]).
 
-use std::collections::BTreeMap;
 use std::time::SystemTime;
 
 use axum::extract::rejection::JsonRejection;
@@ -12,6 +11,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
 
@@ -120,23 +120,10 @@ async fn delete_session(State(state): State<AppState>, headers: HeaderMap) -> Re
     )
 }
 
-/// `GET /api/v1/meta`: placeholder returning the version; WP-54 fills the
-/// component version table (`create config --print-versions`) and the
-/// capability table.
-async fn meta(State(state): State<AppState>) -> Json<Meta> {
-    Json(Meta {
-        version: state.version(),
-        component_versions: BTreeMap::new(),
-        capabilities: BTreeMap::new(),
-    })
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct Meta {
-    version: &'static str,
-    component_versions: BTreeMap<String, String>,
-    capabilities: BTreeMap<String, String>,
+/// `GET /api/v1/meta`: kurin version, the component version table
+/// (`create config --print-versions`) and the capability table (WP-54).
+async fn meta(State(state): State<AppState>) -> Json<Value> {
+    Json(crate::api::wp54::meta_body(state.version()))
 }
 
 /// Unknown path → the unified 404 envelope. (WP-55 splits this into the

@@ -10,6 +10,7 @@ description = "Kurin web service"
 async-trait.workspace = true
 axum.workspace = true
 axum-server.workspace = true
+kurin-artifact.workspace = true
 kurin-components.workspace = true
 kurin-config.workspace = true
 kurin-core.workspace = true

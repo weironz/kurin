@@ -27,6 +27,36 @@ All notable changes to kurin. Format follows Keep a Changelog; semver.
   missing an addon image (or its files) is refused before anything
   touches a node, and `Addon::from_base_package` lets the selection read
   an addon straight out of `[packages] base`.
+### Added (WP-54)
+- The remaining `kurin serve` API surface (UI §7 v1.1):
+  `GET /meta` (kurin version, the pinned component table of
+  `create config --print-versions`, the component capability table),
+  `GET /schema/cluster` (the v1alpha2 JSON Schema behind schemars),
+  `POST /configs/render` (wizard DTO → canonical v1alpha2 TOML; an
+  incomplete wizard step still gets its document plus diagnostics, since
+  the wizard renders at every step and `POST /configs/validate` stays
+  the judge), `POST /configs/validate` (diagnostics carry
+  `{message, help, labels:[{offset,len,text}]}` spans into the submitted
+  text), `POST /clusters/{name}/plan` (a read-only operation whose
+  `result` is the `PlanView`; `?check=true` additionally discovers live
+  facts and annotates every task with its drift), `POST /nodes/probe`
+  (one-node discover; credentials are accepted only as env/file
+  references and never echoed back), `POST /nodes/parse` (the quick-create
+  bulk parser), `GET /addons/catalog` (configured sources of every
+  registered cluster plus the embedded catalog, with values JSON
+  Schemas), `GET /clusters/{name}/addons` (the `kurin-state` inventory
+  the collector persists), the addon operations
+  (`POST`/`PUT`/`DELETE /clusters/{name}/addons`, remove requires
+  `confirm`), and `/packages*`: list/import/get/delete registrations,
+  plus verify/push/create-base as clusterless operations whose reports
+  land in the operation's `result`.
+- Store schema v4: `operations.result` (JSON payload),
+  `snapshots.addons` (the collected addon inventory), the `packages`
+  registration table, and `one_active_op` extended to exempt the new
+  lock-free kinds (`plan`, `package-verify`, `package-push`,
+  `package-create-base`) the way `precheck`/`status` already were.
+- The collector now reads the addon inventory alongside the core report,
+  so `GET /clusters/{name}/addons` answers from the snapshot row.
 
 ### Changed (WP-49)
 - v1alpha2 defaults a `role = "registry"` node without an explicit

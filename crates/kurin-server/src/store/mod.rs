@@ -17,6 +17,7 @@
 mod cluster;
 mod error;
 mod operation;
+mod package;
 mod schema;
 mod secret;
 mod snapshot;
@@ -26,6 +27,7 @@ pub use error::StoreError;
 pub use operation::{
     is_read_only_kind, NewOperation, OperationFilter, OperationRecord, OperationState, StoredEvent,
 };
+pub use package::{package_id, PackageRecord, PackageRegistration};
 pub use secret::SECRET_SENTINEL;
 pub use snapshot::SnapshotRecord;
 

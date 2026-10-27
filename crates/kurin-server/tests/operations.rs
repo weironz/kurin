@@ -168,6 +168,7 @@ impl OperationBackend for ScriptedBackend {
         OpExecution {
             state: OperationState::Succeeded,
             error: None,
+            result: None,
         }
     }
 }
@@ -326,6 +327,7 @@ impl OperationBackend for PhaseBackend {
         OpExecution {
             state: OperationState::Cancelled,
             error: None,
+            result: None,
         }
     }
 }
@@ -390,6 +392,7 @@ impl OperationBackend for BlockingBackend {
         OpExecution {
             state: OperationState::Succeeded,
             error: None,
+            result: None,
         }
     }
 }
@@ -466,6 +469,7 @@ impl OperationBackend for LogBackend {
         OpExecution {
             state: OperationState::Succeeded,
             error: None,
+            result: None,
         }
     }
 }
@@ -546,6 +550,7 @@ impl OperationBackend for FailOnceBackend {
             OpExecution {
                 state: OperationState::Failed,
                 error: Some("first run fails".into()),
+                result: None,
             }
         } else {
             ctx.bus
@@ -553,6 +558,7 @@ impl OperationBackend for FailOnceBackend {
             OpExecution {
                 state: OperationState::Succeeded,
                 error: None,
+                result: None,
             }
         }
     }

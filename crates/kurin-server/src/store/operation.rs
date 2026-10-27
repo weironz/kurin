@@ -82,6 +82,9 @@ pub struct OperationRecord {
     pub started_at: Option<String>,
     pub finished_at: Option<String>,
     pub log_path: Option<String>,
+    /// JSON payload the backend attached on success (the plan view of a
+    /// `plan` operation, a precheck or package report); `None` until then.
+    pub result: Option<String>,
     pub log_lines: i64,
 }
 
@@ -118,8 +121,17 @@ pub struct StoredEvent {
 
 /// Kinds that never take the mutation lock and are exempt from the partial
 /// unique index (UI §6.5).
+///
+/// Beyond the read-only probes (`precheck`, `status`, `plan`) this covers
+/// the clusterless package operations (WP-54): their synthetic `packages`
+/// cluster is a persistence anchor, not a mutation target, so a package
+/// build must not collide with a concurrent verify the way a cluster
+/// mutation would.
 pub fn is_read_only_kind(kind: &str) -> bool {
-    matches!(kind, "precheck" | "status")
+    matches!(
+        kind,
+        "precheck" | "status" | "plan" | "package-verify" | "package-push" | "package-create-base"
+    )
 }
 
 impl Store {
@@ -174,6 +186,7 @@ impl Store {
                 started_at: None,
                 finished_at: None,
                 log_path: None,
+                result: None,
                 log_lines: 0,
             })
         })
@@ -193,7 +206,7 @@ impl Store {
         self.read(move |conn| {
             let mut sql = String::from(
                 "SELECT id, cluster, kind, state, config_rev, params, retry_of, actor, error, \
-                 created_at, started_at, finished_at, log_path, log_lines FROM operations",
+                 created_at, started_at, finished_at, log_path, result, log_lines FROM operations",
             );
             let mut clauses = Vec::new();
             if filter.cluster.is_some() {
@@ -316,6 +329,21 @@ impl Store {
         })
     }
 
+    /// Attach the backend's JSON result payload to a finished operation
+    /// (the plan view, a package report, ...). Only the backend writes
+    /// this, after the operation succeeded.
+    pub fn set_operation_result(&self, id: &str, result: &str) -> Result<(), StoreError> {
+        let id = id.to_string();
+        let result = result.to_string();
+        self.write(move |conn| {
+            conn.execute(
+                "UPDATE operations SET result = ?2 WHERE id = ?1",
+                params![&id, &result],
+            )?;
+            Ok(())
+        })
+    }
+
     /// Append one structured event (`op_events`). Duplicate `(op_id, seq)`
     /// is ignored so a retried write cannot fail the operation.
     pub fn append_event(
@@ -386,7 +414,7 @@ impl Store {
 fn load_operation(conn: &Connection, id: &str) -> Result<Option<OperationRecord>, StoreError> {
     conn.query_row(
         "SELECT id, cluster, kind, state, config_rev, params, retry_of, actor, error, \
-         created_at, started_at, finished_at, log_path, log_lines FROM operations WHERE id = ?1",
+         created_at, started_at, finished_at, log_path, result, log_lines FROM operations WHERE id = ?1",
         [id],
         row_to_operation,
     )
@@ -400,7 +428,7 @@ fn load_active_operation(
 ) -> Result<Option<OperationRecord>, StoreError> {
     conn.query_row(
         "SELECT id, cluster, kind, state, config_rev, params, retry_of, actor, error, \
-         created_at, started_at, finished_at, log_path, log_lines FROM operations \
+         created_at, started_at, finished_at, log_path, result, log_lines FROM operations \
          WHERE cluster = ?1 AND state IN ('queued','running') ORDER BY created_at LIMIT 1",
         [cluster],
         row_to_operation,
@@ -425,7 +453,8 @@ fn row_to_operation(row: &Row<'_>) -> rusqlite::Result<OperationRecord> {
         started_at: row.get(10)?,
         finished_at: row.get(11)?,
         log_path: row.get(12)?,
-        log_lines: row.get::<_, Option<i64>>(13)?.unwrap_or(0),
+        result: row.get(13)?,
+        log_lines: row.get::<_, Option<i64>>(14)?.unwrap_or(0),
     })
 }
 
