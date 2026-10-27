@@ -366,6 +366,28 @@
       }
     },
     {
+      "name": "kube-ovn-image",
+      "kind": "image",
+      "version": "1.16.15",
+      "file": "index.json",
+      "url_template": "docker.io/kubeovn/kube-ovn:v{version}",
+      "sha256": {
+        "linux-amd64": "073e4efd1f96864f1ad880297d46308e73c165952e2a814253709140ab4a97e0",
+        "linux-arm64": "b72704160ad61570d80182ad9946235323257494c28b3da1d576c52bfd0ac1a9"
+      }
+    },
+    {
+      "name": "kube-ovn-vpc-nat-gateway",
+      "kind": "image",
+      "version": "1.16.15",
+      "file": "index.json",
+      "url_template": "docker.io/kubeovn/vpc-nat-gateway:v{version}",
+      "sha256": {
+        "linux-amd64": "7222788317af999f46167be45264eca8b41e80438a21af776bfccf9b68856034",
+        "linux-arm64": "2a7976411c8cb2ac62fdd34a20ec97492202fb7919d6da9ec496cb5356adb714"
+      }
+    },
+    {
       "name": "zot",
       "kind": "binary",
       "version": "2.1.22",

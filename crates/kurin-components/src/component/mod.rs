@@ -635,7 +635,7 @@ mod tests {
         assert_eq!(calico.distributions, ["k8s"]);
         assert_eq!(calico.offline, "bundle");
         let kube_ovn = report.iter().find(|r| r.id == "cni/kube-ovn").unwrap();
-        assert_eq!(kube_ovn.offline, "rejected");
+        assert_eq!(kube_ovn.offline, "bundle");
         let kube_vip = report.iter().find(|r| r.id == "ha/kube-vip").unwrap();
         assert_eq!(kube_vip.offline, "online-only");
         assert_eq!(kube_vip.distributions, ["k8s", "k3s"]);
@@ -752,12 +752,12 @@ mod tests {
         assert!(names.contains(&"runtime/crio"));
         assert!(names.contains(&"registry/zot"));
         assert!(names.contains(&"registry/harbor"));
-        // Every CNI contributes (kube-ovn's list is empty and is left
-        // out — its images are chart-rendered, not manifest-pinned).
+        // Every CNI contributes, kube-ovn included: its images are now
+        // pinned in the artifact manifest.
         assert!(names.contains(&"cni/calico"));
         assert!(names.contains(&"cni/flannel"));
         assert!(names.contains(&"cni/cilium"));
-        assert!(!names.contains(&"cni/kube-ovn"));
+        assert!(names.contains(&"cni/kube-ovn"));
         assert!(!names.contains(&"cni/none"));
         // The artifact list matches the component's declaration.
         let distro = components

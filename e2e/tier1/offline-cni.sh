@@ -6,7 +6,7 @@
 # preloads them; with egress refuted the install would fail otherwise).
 set -euo pipefail
 
-CNI=${1:?usage: offline-cni.sh <flannel|cilium> [bundle-dir]}
+CNI=${1:?usage: offline-cni.sh <flannel|cilium|kube-ovn> [bundle-dir]}
 BUNDLE=${2:-/tmp/kurin-bundle}
 NAME=kurin-tier1
 CFG=e2e/tier1/config.toml
@@ -77,7 +77,9 @@ done
 
 # The CNI image must have come from the bundle (egress blocked): its
 # ghcr/quay reference is present in containerd.
-REGEX=ghcr.io; [ "$CNI" = cilium ] && REGEX=quay.io/cilium
+REGEX=ghcr.io
+[ "$CNI" = cilium ] && REGEX=quay.io/cilium
+[ "$CNI" = kube-ovn ] && REGEX=kubeovn
 NIMG=$(multipass exec "$NAME" -- sudo ctr -n k8s.io images list 2>/dev/null | grep -c "$REGEX" || true)
 [ "$NIMG" -gt 0 ] || { echo "[FAIL] no $REGEX images preloaded in containerd"; exit 1; }
 echo "[ok] $NIMG $REGEX image ref(s) present under refuted egress"

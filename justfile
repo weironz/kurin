@@ -201,7 +201,7 @@ release ver *title:
     git push origin "v$ver"
     rm -f "$notes"
 
-# tier-1 offline × CNI (flannel | cilium): needs /tmp/kurin-bundle (just bundle)
+# tier-1 offline × CNI (flannel | cilium | kube-ovn): needs /tmp/kurin-bundle (just bundle)
 tier1-offline-cni cni="flannel":
     e2e/tier1/offline-cni.sh "{{cni}}" /tmp/kurin-bundle
 

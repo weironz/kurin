@@ -289,7 +289,7 @@ dns-domain   = "cluster.local"    # 缺省 cluster.local
 
 [network.cni]                    # 互斥 tagged enum；改 kind 需要重建集群
 kind = "calico"                  # "calico" | "flannel" | "cilium" | "kube-ovn" | "none"
-# offline bundle carries calico/flannel/cilium images; kube-ovn must be online
+# offline bundle carries every CNI's images (calico/flannel/cilium/kube-ovn)
 
 # ── ssh ────────────────────────────────────────────────────────
 [ssh]

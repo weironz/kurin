@@ -12,9 +12,10 @@
 //! controller cannot reach the NB database). That label pass runs here right
 //! after the manifest apply, and is idempotent.
 //!
-//! Offline parity: kube-ovn images are not in the artifact image set yet, so
-//! offline installs with `cni = "kube-ovn"` are rejected in config
-//! validation (honest state, not silently broken).
+//! Offline parity: the two images the rendered output references
+//! (`kube-ovn`, `vpc-nat-gateway`) are pinned in the artifact manifest
+//! and enter the offline bundle through `cni/kube-ovn`'s `artifacts()`,
+//! so air-gapped installs preload them like every other CNI.
 
 use std::sync::Arc;
 

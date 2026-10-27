@@ -267,7 +267,7 @@ expression: json
       "amd64",
       "arm64"
     ],
-    "offline": "rejected",
+    "offline": "bundle",
     "zones": [
       "global",
       "cn"

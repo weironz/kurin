@@ -138,6 +138,8 @@ fn bootstrap_images_match_the_hand_maintained_import_set() {
                 "kube-proxy",
                 "coredns",
                 "etcd",
+                "kube-ovn-image",
+                "kube-ovn-vpc-nat-gateway",
             ],
         ),
         (

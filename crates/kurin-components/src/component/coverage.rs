@@ -370,6 +370,64 @@ role = "worker"
         assert!(coverage_gaps(&spec, &amd64_facts(&spec), &package_from_spec(&spec)).is_empty());
     }
 
+    /// The same minimal spec with another CNI choice.
+    fn spec_with_cni(cni: &str) -> Cluster {
+        let mut c = spec();
+        c.cni = match cni {
+            "calico" => CniConfig::Calico,
+            "flannel" => CniConfig::Flannel,
+            "cilium" => CniConfig::Cilium,
+            "kube-ovn" => CniConfig::KubeOvn,
+            other => panic!("unknown cni {other}"),
+        };
+        c
+    }
+
+    #[test]
+    fn an_offline_plan_with_each_cni_has_no_gaps() {
+        // WP-37: every CNI is air-gap ready; a base package built from
+        // the same config covers the run for all of them.
+        for cni in ["calico", "flannel", "cilium", "kube-ovn"] {
+            let spec = spec_with_cni(cni);
+            let gaps = coverage_gaps(&spec, &amd64_facts(&spec), &package_from_spec(&spec));
+            assert!(gaps.is_empty(), "{cni}: {gaps:?}");
+        }
+    }
+
+    #[test]
+    fn base_package_carries_every_cni_image_for_every_arch() {
+        // `--cni all` (the default) must include every supported CNI's
+        // image payload, for both architectures, so an offline plan with
+        // any CNI choice has no gaps.
+        use super::super::{base_components, CniSelection};
+        let manifest = kurin_artifact::artifact::ArtifactManifest::embedded()
+            .expect("the embedded manifest parses");
+        let components = base_components(Distribution::K8s, &CniSelection::All);
+        for cni in ["cni/calico", "cni/flannel", "cni/cilium", "cni/kube-ovn"] {
+            let component = components
+                .iter()
+                .find(|c| c.id == cni)
+                .unwrap_or_else(|| panic!("{cni} is not in the base package"));
+            let images: Vec<&str> = component
+                .artifacts
+                .iter()
+                .map(String::as_str)
+                .filter(|name| {
+                    manifest
+                        .get(name)
+                        .is_some_and(|e| e.kind == ArtifactKind::Image)
+                })
+                .collect();
+            assert!(!images.is_empty(), "{cni} contributes no images");
+            for name in images {
+                let entry = manifest.get(name).expect(name);
+                for arch in ["linux-amd64", "linux-arm64"] {
+                    assert!(entry.sha256.contains_key(arch), "{name} has no {arch} pin");
+                }
+            }
+        }
+    }
+
     #[test]
     fn every_gap_category_is_listed() {
         let spec = spec();

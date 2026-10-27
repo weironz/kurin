@@ -2,6 +2,15 @@
 
 All notable changes to kurin. Format follows Keep a Changelog; semver.
 
+### Added (WP-37)
+- flannel, cilium and kube-ovn are air-gap ready: their images are
+  pinned in the artifact manifest and enter the base package and the
+  offline bundle through each CNI component's `artifacts()`, so the
+  offline image set stays derived from the component registry. Kube-OVN
+  (`docker.io/kubeovn/kube-ovn`, `docker.io/kubeovn/vpc-nat-gateway`) no
+  longer needs online access, and its validation-time offline rejection
+  is gone.
+
 ### Added (WP-36)
 - registry-based distribution (04 §5.2): `[registry] kind = "external"`
   accepts `address`, `ca-file`, `username`, `password` and `namespace`

@@ -209,30 +209,26 @@ impl Component for KubeOvn {
         spec.cni == CniConfig::KubeOvn
     }
 
-    fn validate(&self, spec: &Cluster, d: &mut Diagnostics) {
-        // Moved from kurin-config's validate (WP-16); wording unchanged.
-        if spec.offline_dir().is_some() {
-            d.error(
-                "network.cni = \"kube-ovn\" is not air-gap ready yet (its images are not part of the offline bundle); use calico, flannel or cilium for offline installs",
-            );
-        }
-    }
+    fn validate(&self, _spec: &Cluster, _d: &mut Diagnostics) {}
 
     fn capabilities(&self) -> Capabilities {
         Capabilities {
             distributions: &[Distribution::K8s],
             archs: &[Arch::Amd64, Arch::Arm64],
-            offline: Offline::Rejected,
+            offline: Offline::Bundle,
             zones: ALL_ZONES,
             ops: &[OpKind::Create],
         }
     }
 
-    fn artifacts(&self, _spec: &Cluster, _arch: Arch) -> Vec<ArtifactRef> {
-        // The chart-rendered fleet is not pinned in the artifact
-        // manifest (mirrors rewrite only); see `validate` for the
-        // offline consequence.
-        Vec::new()
+    fn artifacts(&self, _spec: &Cluster, arch: Arch) -> Vec<ArtifactRef> {
+        // The two images the rendered chart output references; both are
+        // pinned in the artifact manifest, so the offline bundle and the
+        // base package carry them.
+        vec![
+            ArtifactRef::of("kube-ovn-image", arch),
+            ArtifactRef::of("kube-ovn-vpc-nat-gateway", arch),
+        ]
     }
 
     fn plan(&self, b: &mut PlanBuilder<'_>) -> Result<()> {
@@ -353,19 +349,20 @@ role = "worker"
     }
 
     #[test]
-    fn kube_ovn_rejects_offline_installs_with_the_previous_error_text() {
-        // The rule moved from kurin-config (WP-16); the text is frozen.
-        let mut c = spec("kube-ovn");
-        c.packages.offline_dir = Some(std::path::PathBuf::from("/tmp/does-not-matter"));
-        let mut d = Diagnostics::new("");
-        KubeOvn.validate(&c, &mut d);
-        assert_eq!(
-            d.first_error().map(|e| e.to_string()),
-            Some(
-                "invalid configuration: network.cni = \"kube-ovn\" is not air-gap ready yet (its images are not part of the offline bundle); use calico, flannel or cilium for offline installs"
-                    .to_string()
-            )
-        );
+    fn every_cni_accepts_offline_installs() {
+        // WP-37: all CNIs are air-gap ready; the offline bundle carries
+        // their images through `artifacts()`.
+        for cni in ["calico", "flannel", "cilium", "kube-ovn", "none"] {
+            let mut c = spec(cni);
+            c.packages.offline_dir = Some(std::path::PathBuf::from("/tmp/does-not-matter"));
+            let mut d = Diagnostics::new("");
+            for component in super::super::registry().iter() {
+                if component.enabled(&c) {
+                    component.validate(&c, &mut d);
+                }
+            }
+            assert_eq!(d.first_error().map(|e| e.to_string()), None, "{cni}");
+        }
     }
 
     #[test]
@@ -392,7 +389,10 @@ role = "worker"
                 "cni/cilium",
                 vec!["cilium-image", "cilium-operator-generic", "cilium-envoy"],
             ),
-            ("cni/kube-ovn", vec![]),
+            (
+                "cni/kube-ovn",
+                vec!["kube-ovn-image", "kube-ovn-vpc-nat-gateway"],
+            ),
             ("cni/none", vec![]),
         ] {
             let component = super::super::registry().get(id).expect(id);

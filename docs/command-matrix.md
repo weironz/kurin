@@ -14,7 +14,7 @@
 | `cni/calico` | ✅ | ✅ | — | ✅ | ✅ | ✅ |
 | `cni/flannel` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `cni/cilium` | ✅ | ✅ | — | ✅ | ✅ | ✅ |
-| `cni/kube-ovn` | ✅ | ✅ | — | ❌ 拒绝 | ✅ | ✅ |
+| `cni/kube-ovn` | ✅ | ✅ | — | ✅ | ✅ | ✅ |
 | `cni/none` | ✅ | ✅ | ✅ | ✅ | ✅ | — |
 <!-- docs-matrix:end -->
 
@@ -174,4 +174,4 @@ HTTP，远程仓库默认 HTTPS，`oci://http://…` 可显式指定。
 - 所有 kubectl/k3s 命令经 session 下发到锚点节点执行；控制机（跑 kurin 的机器）无需安装任何集群组件。
 - `❌ 拒绝` 是**校验期**的明确报错，不是运行到一半失败。
 - kurin-lb / external-endpoint 与 distribution 正交；`role = "lb"` 节点只在这两种模式下出现。
-- 离线安装对 Calico / Flannel / Cilium 完整（镜像都在 bundle 内，由组件注册表 `artifacts()` 聚合）；kube-ovn 的 chart 渲染镜像不在 bundle 内，校验期拒绝。
+- 离线安装对 Calico / Flannel / Cilium / Kube-OVN 完整（镜像都在 bundle 内，由组件注册表 `artifacts()` 聚合）。
