@@ -5,7 +5,7 @@
 import { useMemo } from 'react';
 import { Table, Tag, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import { t } from '../i18n/zh-CN';
+import { t } from '../i18n';
 import { formatLogTimeAbsolute } from '../utils/format';
 import type { ResourceRow } from './timeline';
 

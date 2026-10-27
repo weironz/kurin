@@ -11,7 +11,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { receiptOperationId, type OperationReceipt } from '../api/addons';
 import { upgradeCluster } from '../api/maintenance';
 import { Alert, App, Button, Checkbox, Form, Input, InputNumber, Modal, Space } from 'antd';
-import { t } from '../i18n/zh-CN';
+import { t } from '../i18n';
 import { isValidSemver } from '../utils/semver';
 
 interface UpgradeFormValues {

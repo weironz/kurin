@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Card, Form, Input, Button, Alert, Typography, Space } from 'antd';
 import { loginWithToken, ApiError } from '../api/client';
 import type { SessionInfo } from '../api/types';
-import { t } from '../i18n/zh-CN';
+import { t } from '../i18n';
 
 interface LoginForm {
   token: string;

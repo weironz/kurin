@@ -1,11 +1,12 @@
 /**
- * 文案字典（UI §8.4）：键名英文，值中文；首版只有 zh-CN，`en` 在 M3 补（WP-78）。
- * `t()` 是最简单的查表 + 插值，不做 ICU 复数等。
+ * 中文文案字典（UI §8.4）：键名英文，值中文；`en` 见 ./en.ts（WP-78）。
+ * 纯数据模块：查表 + `{var}` 插值的 `t()` 与语言切换在 ./index.ts。
  */
 
-const zhCN = {
+export const zhCN = {
   // 通用
   'app.title': 'kurin 控制台',
+  'app.language': '语言',
   'common.loading': '加载中…',
   'common.empty': '暂无数据',
   'common.error': '请求失败',
@@ -672,16 +673,6 @@ const zhCN = {
   'error.unavailable': '服务正在关闭',
 } as const;
 
-export type Dictionary = typeof zhCN;
-export type MessageKey = keyof Dictionary;
-
-/** 查表 + `{var}` 插值。 */
-export function t(key: MessageKey, vars?: Record<string, string | number>): string {
-  let text: string = zhCN[key] ?? key;
-  if (vars) {
-    for (const [k, v] of Object.entries(vars)) {
-      text = text.replaceAll(`{${k}}`, String(v));
-    }
-  }
-  return text;
-}
+export type MessageKey = keyof typeof zhCN;
+/** 与 zh 键集对齐的字典形状（en.ts 用它强制键集一致）。 */
+export type Dictionary = Record<MessageKey, string>;

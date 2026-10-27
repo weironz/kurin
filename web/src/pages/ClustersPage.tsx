@@ -5,7 +5,7 @@ import { Button, Empty, Result, Skeleton, Table, Tag, Tooltip, Typography } from
 import { PlusOutlined } from '@ant-design/icons';
 import type { ClusterSummary } from '../api/types';
 import { clustersQuery } from '../api/queries';
-import { t, type MessageKey } from '../i18n/zh-CN';
+import { t, useLocale, type MessageKey } from '../i18n';
 import { formatAbsolute, formatRelative } from '../utils/format';
 import { isActiveOperation, operationKindLabel } from '../utils/operation';
 
@@ -23,9 +23,11 @@ export default function ClustersPage() {
   const navigate = useNavigate();
   const { data, isLoading, isFetching, error, refetch } = useQuery(clustersQuery);
 
+  const locale = useLocale();
+
   useEffect(() => {
     document.title = `${t('page.clusters.title')} · kurin`;
-  }, []);
+  }, [locale]);
 
 
   const errorMessage = error instanceof Error ? error.message : String(error);

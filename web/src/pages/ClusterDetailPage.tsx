@@ -33,7 +33,7 @@ import type {
 import { renewCertificates } from '../api/maintenance';
 import { addClusterNodes, receiptOperationId } from '../api/addons';
 import { parseNodes } from '../api/wizard';
-import { t, type MessageKey } from '../i18n/zh-CN';
+import { t, useLocale, type MessageKey } from '../i18n';
 import {
   formatAbsolute,
   formatDurationBetween,
@@ -632,9 +632,11 @@ export default function ClusterDetailPage() {
     enabled: name != null,
   });
 
+  const locale = useLocale();
+
   useEffect(() => {
     document.title = `${t('page.clusterDetail.title')} · kurin`;
-  }, []);
+  }, [locale]);
 
   if (!name) {
     return null;

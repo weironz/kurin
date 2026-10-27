@@ -32,7 +32,7 @@ import {
   UpOutlined,
 } from '@ant-design/icons';
 import type { LogStream, OperationEventEnvelope } from '../api/types';
-import { t } from '../i18n/zh-CN';
+import { t } from '../i18n';
 import {
   formatLogTimeAbsolute,
   formatLogTimeRelative,

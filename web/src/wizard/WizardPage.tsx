@@ -5,7 +5,7 @@ import { Alert, Button, Card, Steps, Typography, message } from 'antd';
 import { apiFetch } from '../api/client';
 import type { AddonCatalogEntry, Diagnostic, Meta, PackageInfo } from '../api/types';
 import { ensureClusterRegistered, renderAndValidate, submitOperation } from '../api/wizard';
-import { t } from '../i18n/zh-CN';
+import { t, useLocale } from '../i18n';
 import {
   AuthStep,
   BasicStep,
@@ -101,9 +101,11 @@ export default function WizardPage() {
   );
   const offlineSelected = form.packageMode !== 'online';
 
+  const locale = useLocale();
+
   useEffect(() => {
     document.title = `${t('page.clusters.newTitle')} · kurin`;
-  }, []);
+  }, [locale]);
 
   const updateForm = useCallback((patch: Partial<WizardForm>) => {
     setForm((prev) => ({ ...prev, ...patch }));

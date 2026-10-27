@@ -9,7 +9,7 @@ import { useMemo } from 'react';
 import { Table, Tooltip, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import type { TaskCellState } from '../api/types';
-import { t } from '../i18n/zh-CN';
+import { t } from '../i18n';
 import { cellKey, type GridModel } from './grid';
 import { cellStateColor, cellStateLabel } from './cellState';
 

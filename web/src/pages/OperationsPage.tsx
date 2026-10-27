@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Table, Tag, Typography } from 'antd';
 import { apiFetch } from '../api/client';
 import type { OperationKind, OperationList, OperationState } from '../api/types';
-import { t } from '../i18n/zh-CN';
+import { t, useLocale } from '../i18n';
 import { operationKindLabel, operationStateColor, operationStateLabel } from '../utils/operation';
 
 /** `/operations` 列表（WP-61）；详情页在 `/operations/:id`（WP-63）。 */
@@ -14,9 +14,11 @@ export default function OperationsPage() {
     queryFn: () => apiFetch<OperationList>('/operations'),
   });
 
+  const locale = useLocale();
+
   useEffect(() => {
     document.title = `${t('page.operations.title')} · kurin`;
-  }, []);
+  }, [locale]);
 
   return (
     <div>

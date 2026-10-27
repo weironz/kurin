@@ -8,7 +8,7 @@ import Ajv2020 from 'ajv/dist/2020';
 import { customizeValidator } from '@rjsf/validator-ajv8';
 import { Form as RjsfForm } from '@rjsf/antd';
 import type { RJSFSchema } from '@rjsf/utils';
-import { t } from '../i18n/zh-CN';
+import { t } from '../i18n';
 
 /** draft-2020 校验器（模块级单例：跨 addon 复用编译缓存）。 */
 const ajv2020Validator = customizeValidator({ AjvClass: Ajv2020 });

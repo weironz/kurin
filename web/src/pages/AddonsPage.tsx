@@ -43,7 +43,7 @@ import {
   type OperationReceipt,
 } from '../api/addons';
 import type { AddonCatalogEntry } from '../api/types';
-import { t, type MessageKey } from '../i18n/zh-CN';
+import { t, useLocale, type MessageKey } from '../i18n';
 import { AddonValuesForm } from '../wizard/AddonValuesForm';
 import { isActiveOperation, operationKindLabel, operationStateLabel } from '../utils/operation';
 
@@ -206,9 +206,11 @@ export default function AddonsPage() {
   const { message } = App.useApp();
   const queryClient = useQueryClient();
 
+  const locale = useLocale();
+
   useEffect(() => {
     document.title = `${t('page.addons.title')} · kurin`;
-  }, []);
+  }, [locale]);
 
   const clusterQuery = useQuery({
     queryKey: ['cluster', name],

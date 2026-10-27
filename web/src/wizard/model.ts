@@ -6,7 +6,7 @@
  * 只做「没填完不让走」的最小本地门控。
  */
 import type { AddonCatalogEntry, CapabilityRow, PackageInfo } from '../api/types';
-import type { MessageKey } from '../i18n/zh-CN';
+import type { MessageKey } from '../i18n';
 
 /* --------------------------------- 步骤 --------------------------------- */
 

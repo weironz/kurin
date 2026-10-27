@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Card, Descriptions, Spin, Table, Tag, Typography } from 'antd';
 import { apiFetch } from '../api/client';
 import type { CapabilityRow, Meta } from '../api/types';
-import { t } from '../i18n/zh-CN';
+import { t, useLocale } from '../i18n';
 
 /** 离线就绪 → 展示标签颜色（component/mod.rs `Offline`）。 */
 const offlineColor: Record<string, string> = {
@@ -19,9 +19,11 @@ export default function AboutPage() {
     queryFn: () => apiFetch<Meta>('/meta'),
   });
 
+  const locale = useLocale();
+
   useEffect(() => {
     document.title = `${t('page.about.title')} · kurin`;
-  }, []);
+  }, [locale]);
 
   if (isPending) {
     return <Spin />;

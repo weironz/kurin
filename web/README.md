@@ -4,7 +4,7 @@ React SPA，构建产物 gzip 后由 `kurin serve`（`--features ui`）经 rust-
 
 ## 技术栈
 
-Vite + React 18 + TypeScript（strict）+ Ant Design 5（`zh_CN`）+ TanStack Query v5 + React Router v6；测试 Vitest + Testing Library + MSW。
+Vite + React 18 + TypeScript（strict）+ Ant Design 5（zh_CN / en_US 可切换）+ TanStack Query v5 + React Router v6；测试 Vitest + Testing Library + MSW。
 
 ## 常用命令
 
@@ -29,7 +29,7 @@ src/
     sse.ts       # /operations/{id}/events SSE：Last-Event-ID、seq 去重、退避重连
   components/    # AppShell（侧边栏 + 登出头）
   pages/         # 各路由页面（多数为占位，WP-61+ 实现）
-  i18n/zh-CN.ts  # 文案字典（键英文、值中文），t() 查表
+  i18n/          # 文案字典 + 语言切换：zh-CN.ts / en.ts（数据），index.ts（t()、setLocale、useLocale）
   mocks/         # MSW handlers（测试 & dev:mocks 共用）
   test/setup.ts  # Vitest 全局 setup
 ```
@@ -42,3 +42,10 @@ src/
 
 - 不使用任何 CDN；所有资源打包进 `dist`。
 - `src/api/types.ts` 为**手写临时草稿**，WP-55 会在 `src/api/generated/` 生成 ts-rs 绑定并替换它。
+
+## 语言切换（WP-78）
+
+`src/i18n/index.ts` 维护活跃 locale（`localStorage` 的 `kurin.locale`，默认 zh-CN）；
+AppShell 头部的下拉切换 中文 / English —— antd 与 dayjs 的 locale 跟随切换，
+整页即时更新、无需刷新。词典键集以 `zh-CN.ts` 为准，`en.ts` 用
+`Record<MessageKey, string>` 在编译期强制对齐（缺键即类型错误）。

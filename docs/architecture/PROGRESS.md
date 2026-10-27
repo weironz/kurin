@@ -75,7 +75,7 @@
 | WP-75 CIS 加固 | todo | | | | |
 | WP-76 conformance 门禁 | todo | | | | |
 | WP-77 种子仓库 | todo | | | | |
-| WP-78 英文文案与文档站 | todo | | | | |
+| WP-78 英文文案与文档站 | done | 见提交 | 无 | `mdbook build`（docs/site，需安装 mdbook）| 593 键 en 字典（类型强制键集一致）、运行时语言切换（antd/dayjs 跟随、localStorage 持久化）、189 Vitest + 8 Playwright；mdBook 脚手架 + 同步脚本 |
 
 ## 偏离记录
 

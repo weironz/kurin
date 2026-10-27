@@ -36,7 +36,7 @@ import {
 } from '../api/packages';
 import { receiptOperationId, type OperationReceipt } from '../api/addons';
 import type { PackageInfo } from '../api/types';
-import { t, type MessageKey } from '../i18n/zh-CN';
+import { t, useLocale, type MessageKey } from '../i18n';
 import { formatAbsolute, formatBytes } from '../utils/format';
 import { isValidSemver } from '../utils/semver';
 
@@ -325,9 +325,11 @@ export default function PackagesPage() {
   const { message } = App.useApp();
   const queryClient = useQueryClient();
 
+  const locale = useLocale();
+
   useEffect(() => {
     document.title = `${t('page.packages.title')} · kurin`;
-  }, []);
+  }, [locale]);
 
   const packagesQuery = useQuery({
     queryKey: ['packages'],

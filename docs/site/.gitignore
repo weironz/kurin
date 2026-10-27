@@ -1,0 +1,3 @@
+book/
+src/*
+!src/SUMMARY.md

@@ -19,7 +19,7 @@ import {
   receiptOperationId,
   type OperationReceipt,
 } from '../api/addons';
-import { t } from '../i18n/zh-CN';
+import { t } from '../i18n';
 import { isActiveOperation } from '../utils/operation';
 
 export function ClusterDangerZone({ detail }: { detail: ClusterDetail }) {

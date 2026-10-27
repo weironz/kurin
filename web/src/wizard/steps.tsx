@@ -33,7 +33,7 @@ import {
   submitPlan,
   waitForOperation,
 } from '../api/wizard';
-import { t } from '../i18n/zh-CN';
+import { t } from '../i18n';
 import { AddonValuesForm } from './AddonValuesForm';
 import {
   CNI_OPTIONS,

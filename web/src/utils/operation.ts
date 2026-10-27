@@ -3,7 +3,7 @@
  * 集群详情「操作历史」Tab 与 `/operations` 列表页共用，保证文案一致。
  */
 import type { OperationKind, OperationState, OperationSummary } from '../api/types';
-import { t, type MessageKey } from '../i18n/zh-CN';
+import { t, type MessageKey } from '../i18n';
 
 /** 操作状态 → Tag 颜色（详情操作历史与 `/operations` 列表的徽标必须一致）。 */
 export const operationStateColor: Record<OperationState, string> = {

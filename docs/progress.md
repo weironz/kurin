@@ -1,3 +1,10 @@
+## WP-78：英文文案与文档站（2026-10-28）
+
+- **`web/src/i18n/en.ts`**：593 个键全量英文翻译，`Dictionary = Record<MessageKey, string>` 由 zh 字典派生，缺键/多键编译期报错；占位符逐键校验。
+- **运行时切换**：`i18n/index.ts` 提供 `t/setLocale/useLocale`，默认 zh-CN，`localStorage['kurin.locale']` 持久化；`App.tsx` 的 antd `ConfigProvider` 与 dayjs locale 跟随，`AppShell` 头部「中文 / English」切换无需刷新；页面标题随 locale 更新。
+- **测试**：189 Vitest（键集/占位符/回退/持久化/真实 App 切换）+ 8 Playwright（zh→en→reload 持久化→切回）。
+- **文档站**：`docs/site/` mdBook 脚手架（`book.toml`、`SUMMARY.md`、`sync.sh` 从 `docs/` 同步 23 章，`src/`/`book/` gitignore）；本机未装 mdBook，构建命令见 `docs/site/README.md`。
+
 # 进度日志
 
 ## WP-71：证书自动续期（2026-10-28）

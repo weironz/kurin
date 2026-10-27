@@ -2,14 +2,12 @@ import { lazy, Suspense, type ComponentType, type LazyExoticComponent } from 're
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { App as AntdApp, ConfigProvider, Spin } from 'antd';
-import zhCN from 'antd/locale/zh_CN';
-import dayjs from 'dayjs';
-import 'dayjs/locale/zh-cn';
+import antdZhCN from 'antd/locale/zh_CN';
+import antdEnUS from 'antd/locale/en_US';
 import { establishSession } from './api/client';
 import { LoginPage } from './pages/LoginPage';
 import { AppShell } from './components/AppShell';
-
-dayjs.locale('zh-cn');
+import { useLocale } from './i18n';
 
 /**
  * 会话状态：`establishSession` 完成 hash 令牌换取（UI §6.10）。
@@ -55,10 +53,11 @@ function lazily(Component: LazyExoticComponent<ComponentType>) {
 export function App() {
   const session = useSession();
   const queryClient = useQueryClient();
-
+  // 语言切换（WP-78）：antd locale 跟随活跃 locale；dayjs 在 i18n 模块内切换
+  const antdLocale = useLocale() === 'en' ? antdEnUS : antdZhCN;
   if (session.isPending) {
     return (
-      <ConfigProvider locale={zhCN}>
+      <ConfigProvider locale={antdLocale}>
         <AntdApp>
           <div style={{ display: 'grid', placeItems: 'center', height: '100vh' }}>
             <Spin size="large" />
@@ -71,7 +70,7 @@ export function App() {
   const authenticated = session.data != null;
 
   return (
-    <ConfigProvider locale={zhCN}>
+    <ConfigProvider locale={antdLocale}>
       <AntdApp>
         {authenticated ? (
           <Routes>

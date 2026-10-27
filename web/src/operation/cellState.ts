@@ -3,8 +3,8 @@
  * 独立模块：ProgressGrid 只导出组件（react-refresh 约束），常量放这里。
  */
 import type { TaskCellState } from '../api/types';
-import { t } from '../i18n/zh-CN';
-import type { MessageKey } from '../i18n/zh-CN';
+import { t } from '../i18n';
+import type { MessageKey } from '../i18n';
 
 /** 格子状态 → 背景色（浅色系，failed 红底）。 */
 export const cellStateColor: Record<TaskCellState, string> = {

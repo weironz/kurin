@@ -23,7 +23,7 @@ import { ApiError } from '../api/client';
 import { fetchClusterConfig, saveClusterConfig } from '../api/config';
 import { validateConfig } from '../api/wizard';
 import type { Diagnostic } from '../api/types';
-import { t } from '../i18n/zh-CN';
+import { t } from '../i18n';
 import { diagnosticsToEditor, VALIDATE_DEBOUNCE_MS } from './diagnostics';
 
 /** 编辑器基础扩展：行号、历史、TOML 语法、默认键位与外观。 */

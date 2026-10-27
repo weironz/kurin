@@ -31,7 +31,7 @@ import type {
   OperationLogsPage,
   OperationSummary,
 } from '../api/types';
-import { t } from '../i18n/zh-CN';
+import { t, useLocale } from '../i18n';
 import {
   formatAbsolute,
   formatDurationBetween,
@@ -219,9 +219,11 @@ export default function OperationDetailPage() {
     });
   };
 
+  const locale = useLocale();
+
   useEffect(() => {
     document.title = `${t('page.operationDetail.title')} · kurin`;
-  }, []);
+  }, [locale]);
 
   if (!id) return null;
 

@@ -1,0 +1,7 @@
+# kurin 文档站的 mdBook 配置（WP-78）。
+# 内容源文件在 ../../（docs/），由 sync.sh 拷进 src/；构建见 README.md。
+[book]
+title = "kurin"
+authors = ["kurin contributors"]
+language = "zh-CN"
+src = "src"
