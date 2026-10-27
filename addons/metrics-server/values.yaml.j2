@@ -1,0 +1,7 @@
+# Built-in recommended values (03 §4.3): the zone picks the image
+# registry; the user layer (validated by values.schema.json) sets the
+# replica count on top.
+{% if zone == "cn" %}
+image:
+  repository: k8s.m.daocloud.io/metrics-server/metrics-server
+{% endif %}

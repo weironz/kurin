@@ -307,15 +307,27 @@ fn dry_run_prints_the_plan_and_leaves_the_config_alone() {
 }
 
 #[test]
-fn list_without_a_config_prints_the_header() {
+fn list_without_a_config_lists_the_builtin_catalog() {
     let tmp = TempDir::new().unwrap();
     let output = run_cli(tmp.path(), &["addon", "list"]);
     assert!(output.status.success());
-    assert_eq!(
-        String::from_utf8_lossy(&output.stdout),
-        "NAME  VERSION  CATEGORY  STATUS  DESCRIPTION\n"
-    );
-    assert!(String::from_utf8_lossy(&output.stderr).contains("built-in addon catalog is empty"));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.starts_with("NAME"), "missing header: {stdout}");
+    for name in [
+        "metrics-server",
+        "ingress-nginx",
+        "cert-manager",
+        "local-path",
+        "nfs-subdir",
+        "metallb",
+        "headlamp",
+        "kube-prometheus-stack",
+    ] {
+        assert!(
+            stdout.contains(name),
+            "missing built-in {name} in: {stdout}"
+        );
+    }
 }
 
 #[test]

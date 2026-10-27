@@ -132,6 +132,12 @@ tier1-ssh-key:
     CARGO_TARGET_DIR=target/tier1 cargo build -q -p kurin
     e2e/tier1/ssh-key.sh target/tier1/debug/kurin
 
+# tier-1 built-in addon catalog (WP-46): per addon install -> ready -> remove.
+# optional arg: online (default) | cn
+tier1-addons mode="online":
+    CARGO_TARGET_DIR=target/tier1a cargo build -q -p kurin
+    e2e/tier1/addons.sh target/tier1a/debug/kurin "{{mode}}"
+
 tier3-quick-ha:
     CARGO_TARGET_DIR=target/tier3 cargo build -q -p kurin
     e2e/tier3/quick-ha.sh target/tier3/debug/kurin

@@ -1,0 +1,106 @@
+{#- kubernetes-sigs/nfs-subdir-external-provisioner v4.0.2 manifests, matching
+    the first-layer storage component (crates/kurin-components/src/tasks/storage.rs)
+    so the WP-47 cutover does not recreate resources. Upstream source:
+    deploy objects of kubernetes-sigs/nfs-subdir-external-provisioner. -#}
+{%- set provisioner_image -%}
+{%- if zone == "cn" -%}
+k8s.m.daocloud.io/sig-storage/nfs-subdir-external-provisioner:v4.0.2
+{%- else -%}
+registry.k8s.io/sig-storage/nfs-subdir-external-provisioner:v4.0.2
+{%- endif -%}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: nfs-client-provisioner
+---
+kind: ClusterRole
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: nfs-client-provisioner-runner
+rules:
+- apiGroups: [""]
+  resources: ["nodes"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["persistentvolumes"]
+  verbs: ["get", "list", "watch", "create", "delete"]
+- apiGroups: [""]
+  resources: ["persistentvolumeclaims"]
+  verbs: ["get", "list", "watch", "update"]
+- apiGroups: ["storage.k8s.io"]
+  resources: ["storageclasses"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["events"]
+  verbs: ["create", "update", "patch"]
+- apiGroups: [""]
+  resources: ["endpoints"]
+  verbs: ["create", "delete", "get", "list", "watch", "patch", "update"]
+---
+kind: ClusterRoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: run-nfs-client-provisioner
+subjects:
+- kind: ServiceAccount
+  name: nfs-client-provisioner
+  namespace: default
+roleRef:
+  kind: ClusterRole
+  name: nfs-client-provisioner-runner
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nfs-subdir-external-provisioner
+  namespace: default
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: nfs-subdir-external-provisioner
+  template:
+    metadata:
+      labels:
+        app: nfs-subdir-external-provisioner
+    spec:
+      serviceAccountName: nfs-client-provisioner
+      tolerations:
+      - key: node-role.kubernetes.io/control-plane
+        operator: Exists
+        effect: NoSchedule
+      containers:
+      - name: nfs-subdir-external-provisioner
+        image: {{ provisioner_image }}
+        imagePullPolicy: IfNotPresent
+        volumeMounts:
+        - name: nfs-client-root
+          mountPath: /persistentvolumes
+        env:
+        - name: PROVISIONER_NAME
+          value: k8s-sigs.io/nfs-subdir-external-provisioner
+        - name: NFS_SERVER
+          value: "{{ addon.values.server }}"
+        - name: NFS_PATH
+          value: "{{ addon.values.path }}"
+      volumes:
+      - name: nfs-client-root
+        nfs:
+          server: "{{ addon.values.server }}"
+          path: "{{ addon.values.path }}"
+---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: kurin-nfs
+{%- if addon.values['default-class'] %}
+  annotations:
+    storageclass.kubernetes.io/is-default-class: "true"
+{%- endif %}
+provisioner: k8s-sigs.io/nfs-subdir-external-provisioner
+parameters:
+  onDelete: retain
+volumeBindingMode: Immediate

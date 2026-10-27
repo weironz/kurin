@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "nfs-subdir values",
+  "description": "nfs-subdir 常用参数 / common nfs-subdir parameters",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "server": {
+      "type": "string",
+      "minLength": 1,
+      "description": "NFS 服务器地址（启用时必填）/ NFS server address (required when enabled)"
+    },
+    "path": {
+      "type": "string",
+      "minLength": 1,
+      "description": "NFS 导出路径（启用时必填）/ NFS export path (required when enabled)"
+    },
+    "default-class": {
+      "type": "boolean",
+      "default": false,
+      "description": "把 kurin-nfs 设为默认 StorageClass / make kurin-nfs the default StorageClass"
+    }
+  }
+}

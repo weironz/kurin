@@ -1,0 +1,37 @@
+# Built-in recommended values (03 §4.3): the zone picks every image
+# registry the stack renders (the operator, Prometheus and Alertmanager
+# CR images, grafana and its sidecar/test images, the webhook certgen
+# job, kube-state-metrics and node-exporter); the user layer (validated
+# by values.schema.json) sits on top.
+{% if zone == "cn" %}
+alertmanager:
+  alertmanagerSpec:
+    image:
+      registry: quay.m.daocloud.io
+prometheusOperator:
+  image:
+    registry: quay.m.daocloud.io
+  admissionWebhooks:
+    patch:
+      image:
+        registry: ghcr.m.daocloud.io
+prometheus:
+  prometheusSpec:
+    image:
+      registry: quay.m.daocloud.io
+grafana:
+  image:
+    registry: docker.m.daocloud.io
+  testFramework:
+    image:
+      registry: docker.m.daocloud.io
+  sidecar:
+    image:
+      registry: quay.m.daocloud.io
+kube-state-metrics:
+  image:
+    registry: k8s.m.daocloud.io
+prometheus-node-exporter:
+  image:
+    registry: quay.m.daocloud.io
+{% endif %}

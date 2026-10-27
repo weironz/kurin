@@ -656,7 +656,7 @@ async fn run(cli: Cli) -> Result<()> {
                     cni,
                     addons,
                     output,
-} => package_create_base(kubernetes, distribution, arch, cni, addons, output).await,
+                } => package_create_base(kubernetes, distribution, arch, cni, addons, output).await,
                 PackageCreateWhat::Os {
                     target,
                     arch,

@@ -1,0 +1,37 @@
+apiVersion: addons.kurin.dev/v1alpha1
+kind: Addon
+metadata:
+  name: ingress-nginx
+  version: 1.15.1
+  title: Ingress NGINX Controller
+  description: NGINX Ingress 控制器，通过 Ingress 暴露集群服务
+  category: ingress
+spec:
+  compat:
+    kubernetes: ">=1.30.0"
+    distributions: [kubeadm, k3s]
+    arch: [amd64, arm64]
+  requires: []
+  conflicts: []
+  provides: [ingress]
+  namespace: ingress-nginx
+  install:
+    helm:
+      chart: https://github.com/kubernetes/ingress-nginx/releases/download/helm-chart-4.15.1/ingress-nginx-4.15.1.tgz
+      release: ingress-nginx
+      values: values.yaml.j2
+  images:
+    - registry.k8s.io/ingress-nginx/controller:v1.15.1@sha256:594ceea76b01c592858f803f9ff4d2cb40542cae2060410b2c95f75907d659e1
+    - registry.k8s.io/ingress-nginx/kube-webhook-certgen:v1.6.9@sha256:01038e7de14b78d702d2849c3aad72fd25903c4765af63cf16aa3398f5d5f2dd
+    - k8s.m.daocloud.io/ingress-nginx/controller:v1.15.1@sha256:594ceea76b01c592858f803f9ff4d2cb40542cae2060410b2c95f75907d659e1
+    - k8s.m.daocloud.io/ingress-nginx/kube-webhook-certgen:v1.6.9@sha256:01038e7de14b78d702d2849c3aad72fd25903c4765af63cf16aa3398f5d5f2dd
+  values-schema: values.schema.json
+  defaults: {}
+  readiness:
+    - kind: Deployment
+      name: ingress-nginx-controller
+  timeout: 10m
+  hooks:
+    post-install: []
+  uninstall:
+    keep: []

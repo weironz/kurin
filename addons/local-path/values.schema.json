@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "local-path values",
+  "description": "local-path 常用参数 / common local-path parameters",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "default-class": {
+      "type": "boolean",
+      "default": false,
+      "description": "把 kurin-local-path 设为默认 StorageClass / make kurin-local-path the default StorageClass"
+    }
+  }
+}

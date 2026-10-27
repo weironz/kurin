@@ -1,0 +1,45 @@
+apiVersion: addons.kurin.dev/v1alpha1
+kind: Addon
+metadata:
+  name: metallb
+  version: 0.16.1
+  title: MetalLB
+  description: 裸金属 LoadBalancer（L2/BGP），给 LoadBalancer Service 分配 IP
+  category: networking
+spec:
+  compat:
+    kubernetes: ">=1.30.0"
+    distributions: [kubeadm, k3s]
+    arch: [amd64, arm64]
+  requires: []
+  conflicts: []
+  provides: [load-balancer]
+  namespace: metallb-system
+  install:
+    helm:
+      chart: https://github.com/metallb/metallb/releases/download/metallb-chart-0.16.1/metallb-0.16.1.tgz
+      release: metallb
+      values: values.yaml.j2
+  images:
+    - quay.io/metallb/controller:v0.16.1@sha256:f51ab515de9ccd20dc3dccb093e48df8adddac019326c456f449e55ba91b6420
+    - quay.io/metallb/speaker:v0.16.1@sha256:16561e96531e1852d5c229ad7fae6e994dcfa983ff7f4de6b6208b34a4e2ddbc
+    - quay.io/metallb/frr-k8s:v0.0.25@sha256:1cb06fb2d5538c9f9b20d3adf00da8d1e6cb0166bc15df8add0d9efe578641a4
+    - quay.io/frrouting/frr:10.4.3@sha256:8745af1f9bbbc26ab11d99ccdf35e07aa3427a199749bef0cd6bb5132bb130df
+    - quay.m.daocloud.io/metallb/controller:v0.16.1@sha256:f51ab515de9ccd20dc3dccb093e48df8adddac019326c456f449e55ba91b6420
+    - quay.m.daocloud.io/metallb/speaker:v0.16.1@sha256:16561e96531e1852d5c229ad7fae6e994dcfa983ff7f4de6b6208b34a4e2ddbc
+    - quay.m.daocloud.io/metallb/frr-k8s:v0.0.25@sha256:1cb06fb2d5538c9f9b20d3adf00da8d1e6cb0166bc15df8add0d9efe578641a4
+    - quay.m.daocloud.io/frrouting/frr:10.4.3@sha256:8745af1f9bbbc26ab11d99ccdf35e07aa3427a199749bef0cd6bb5132bb130df
+  values-schema: values.schema.json
+  defaults: {}
+  readiness:
+    - kind: Deployment
+      name: metallb-controller
+    - kind: DaemonSet
+      name: metallb-speaker
+  timeout: 5m
+  hooks:
+    post-install:
+      - apply:
+          path: manifests/l2-pool.yaml.j2
+  uninstall:
+    keep: []

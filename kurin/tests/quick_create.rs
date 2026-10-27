@@ -202,7 +202,7 @@ fn addons_and_addon_values() {
             "--addon",
             "metrics-server",
             "--addon",
-            "ingress-nginx=4.13.0",
+            "ingress-nginx=1.15.1",
             "--addon-set",
             "metrics-server.replicas=2",
             "--addon-set",

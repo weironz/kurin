@@ -1,0 +1,36 @@
+apiVersion: addons.kurin.dev/v1alpha1
+kind: Addon
+metadata:
+  name: headlamp
+  version: 0.46.0
+  title: Headlamp
+  description: Kubernetes Web 控制台（只读插件式 UI）
+  category: dashboard
+spec:
+  compat:
+    kubernetes: ">=1.30.0"
+    distributions: [kubeadm, k3s]
+    arch: [amd64, arm64]
+  requires: []
+  conflicts: []
+  provides: [dashboard]
+  namespace: headlamp
+  install:
+    helm:
+      chart: https://github.com/kubernetes-sigs/headlamp/releases/download/headlamp-helm-0.46.0/headlamp-0.46.0.tgz
+      release: headlamp
+      values: values.yaml.j2
+  images:
+    - ghcr.io/headlamp-k8s/headlamp:v0.46.0@sha256:8a0ef97527544baa2b35825940ddf4db6e2d09c30cd5aa31fd269ff604cc8b75
+    - ghcr.m.daocloud.io/headlamp-k8s/headlamp:v0.46.0@sha256:8a0ef97527544baa2b35825940ddf4db6e2d09c30cd5aa31fd269ff604cc8b75
+  values-schema: values.schema.json
+  defaults:
+    replicaCount: 1
+  readiness:
+    - kind: Deployment
+      name: headlamp
+  timeout: 5m
+  hooks:
+    post-install: []
+  uninstall:
+    keep: []

@@ -603,10 +603,14 @@ impl ClusterSpec {
         if self.nodes.is_empty() {
             return Err(invalid("at least one node is required in [nodes]".into()));
         }
-        // Addon names are a closed set until WP-40 ships the catalog;
-        // an external addon package is the documented escape hatch.
+        // Addon names are a closed set unless the name comes from an
+        // external addon package or a base package that embeds it; the
+        // coverage check later verifies the package really carries it.
         for (name, addon) in &self.addons {
-            if !crate::v1alpha2::BUILTIN_ADDONS.contains(&name.as_str()) && addon.source.is_none() {
+            if !crate::v1alpha2::BUILTIN_ADDONS.contains(&name.as_str())
+                && addon.source.is_none()
+                && self.packages.base.is_none()
+            {
                 return Err(invalid(format!(
                     "unknown addon {name:?}; known addons: {} (an external addon package must \
                      set source = \"oci://…\")",

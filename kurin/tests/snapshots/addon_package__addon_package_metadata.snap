@@ -4,7 +4,7 @@ expression: meta
 ---
 {
   "schema": 1,
-  "name": "metrics-server",
+  "name": "wp45-demo",
   "kind": "addon",
   "version": "1.0.0",
   "kurin": ">=0.4.0, <0.6.0",
@@ -15,7 +15,7 @@ expression: meta
   ],
   "components": [
     {
-      "id": "addon/metrics-server",
+      "id": "addon/wp45-demo",
       "version": "1.0.0"
     }
   ],
@@ -25,8 +25,8 @@ expression: meta
       "kind": "manifest",
       "version": "1.0.0",
       "arch": "amd64",
-      "digest": "sha256:b5ba5ec5d76b6a01eedc612f7fe506d3727a2efafe72610714920e9c9bf755fb",
-      "size": 715,
+      "digest": "sha256:2de48aaecd4a9c9dd381c78fad226bcea5998491b171aeeb5a0a2e950af73029",
+      "size": 710,
       "upstream": "<addon dir>"
     },
     {

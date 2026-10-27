@@ -207,7 +207,7 @@
       "description": "A Helm-chart install (03 §4.1).",
       "properties": {
         "chart": {
-          "description": "Chart location: a package-relative path (`charts/…tgz`, pulled\ninto the package at build time) or an `oci://…` reference.",
+          "description": "Chart location: a package-relative path (`charts/…tgz`, pulled\ninto the package at build time), an `oci://…` reference, or an\n`https://…tgz` chart archive URL — the last two are fetched by\nhelm itself (through the zone's mirror when it is `cn`).",
           "type": "string"
         },
         "release": {

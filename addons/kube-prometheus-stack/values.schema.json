@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "kube-prometheus-stack values",
+  "description": "kube-prometheus-stack 常用参数 / common kube-prometheus-stack parameters",
+  "type": "object",
+  "additionalProperties": false,
+  "$defs": {
+    "grafana": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "adminPassword": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Grafana 管理员密码，支持秘密引用 { env = \"NAME\" } / { file = \"PATH\" } / Grafana admin password; a secret reference { env = … } / { file = … } works"
+        }
+      }
+    }
+  },
+  "properties": {
+    "grafana": { "$ref": "#/$defs/grafana" }
+  }
+}

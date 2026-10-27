@@ -1,0 +1,45 @@
+apiVersion: addons.kurin.dev/v1alpha1
+kind: Addon
+metadata:
+  name: cert-manager
+  version: 1.21.3
+  title: cert-manager
+  description: X.509 证书的签发与自动续期（ACME、自签、CA 等）
+  category: security
+spec:
+  compat:
+    kubernetes: ">=1.30.0"
+    distributions: [kubeadm, k3s]
+    arch: [amd64, arm64]
+  requires: []
+  conflicts: []
+  provides: [certificates]
+  namespace: cert-manager
+  install:
+    helm:
+      chart: oci://quay.io/jetstack/charts/cert-manager:v1.21.3
+      release: cert-manager
+      values: values.yaml.j2
+  images:
+    - quay.io/jetstack/cert-manager-controller:v1.21.3@sha256:9f4f96a33c7774cef24466fcd85031997531a03a8d117f151126baa8d1290dcc
+    - quay.io/jetstack/cert-manager-webhook:v1.21.3@sha256:055ac8e9de6a0ba6763794838fe38944acc650f68ebe1b01dd8be079e580f458
+    - quay.io/jetstack/cert-manager-cainjector:v1.21.3@sha256:083d0e906f8eb44e255fe4ff817ae54e49f9ed82e22f1011bb4e9e4f4b8a641f
+    - quay.io/jetstack/cert-manager-startupapicheck:v1.21.3@sha256:1c519d4afca1413d1e4ccd78bdc756184418ab55a34569a3b3de39d32f9974e1
+    - quay.m.daocloud.io/jetstack/cert-manager-controller:v1.21.3@sha256:9f4f96a33c7774cef24466fcd85031997531a03a8d117f151126baa8d1290dcc
+    - quay.m.daocloud.io/jetstack/cert-manager-webhook:v1.21.3@sha256:055ac8e9de6a0ba6763794838fe38944acc650f68ebe1b01dd8be079e580f458
+    - quay.m.daocloud.io/jetstack/cert-manager-cainjector:v1.21.3@sha256:083d0e906f8eb44e255fe4ff817ae54e49f9ed82e22f1011bb4e9e4f4b8a641f
+    - quay.m.daocloud.io/jetstack/cert-manager-startupapicheck:v1.21.3@sha256:1c519d4afca1413d1e4ccd78bdc756184418ab55a34569a3b3de39d32f9974e1
+  values-schema: values.schema.json
+  defaults: {}
+  readiness:
+    - kind: Deployment
+      name: cert-manager
+    - kind: Deployment
+      name: cert-manager-webhook
+    - kind: Deployment
+      name: cert-manager-cainjector
+  timeout: 5m
+  hooks:
+    post-install: []
+  uninstall:
+    keep: []

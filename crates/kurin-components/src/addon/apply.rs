@@ -22,6 +22,7 @@ use kurin_artifact::artifact::{install_manifest, Arch, ArtifactManifest, Artifac
 use kurin_core::engine::Session;
 use kurin_core::events::Redactor;
 use kurin_core::run::ArtifactSources;
+use kurin_core::zone::Zone;
 use kurin_kube::{
     AppliedObject, ApplyOpts, ClusterApi, DynamicObject, Flavor, HelmRunner, HelmStatus, ObjRef,
 };
@@ -95,6 +96,9 @@ pub struct ApplyRequest<'a> {
     /// The pinned helm archive; required by the helm path, unused by
     /// the manifests path.
     pub helm: Option<&'a HelmPayload>,
+    /// Effective download zone: `oci://` and `https://` chart
+    /// references helm pulls itself follow the CN mirror table.
+    pub zone: kurin_core::zone::Zone,
     /// Secrets to scrub from error messages (R8).
     pub redactor: &'a Redactor,
 }
@@ -209,7 +213,7 @@ async fn apply_helm(request: &ApplyRequest<'_>) -> Result<AddonApply, AddonError
             "the helm payload was not resolved (required by the helm install path)",
         )
     })?;
-    let chart = chart_payload(request.addon, chart_ref)?;
+    let chart = chart_payload(request.addon, chart_ref, request.zone)?;
 
     let mut runner = HelmRunner::new(
         request.session,
@@ -227,6 +231,7 @@ async fn apply_helm(request: &ApplyRequest<'_>) -> Result<AddonApply, AddonError
             .await
             .map_err(|e| apply_error(&release, e, request.redactor))?,
         ChartPayload::Oci(reference) => runner.use_oci_chart(&reference),
+        ChartPayload::Url(url) => runner.use_url_chart(&url),
     }
     runner
         .write_values(&rendered.values.yaml)
@@ -291,17 +296,33 @@ enum ChartPayload {
     Archive { file_name: String, bytes: Vec<u8> },
     /// An `oci://` reference helm pulls itself.
     Oci(String),
+    /// An `https://` chart archive URL helm downloads itself.
+    Url(String),
 }
 
-fn chart_payload(addon: &Addon, chart: &str) -> Result<ChartPayload, AddonError> {
+fn chart_payload(addon: &Addon, chart: &str, zone: Zone) -> Result<ChartPayload, AddonError> {
     if chart.starts_with("oci://") {
-        return Ok(ChartPayload::Oci(chart.to_string()));
+        // The CN zone mirrors the registry host of the reference; the
+        // digest (when pinned) still governs what helm pulls.
+        let reference = chart
+            .strip_prefix("oci://")
+            .expect("checked the prefix above");
+        return Ok(ChartPayload::Oci(format!(
+            "oci://{}",
+            kurin_core::zone::rewrite_image_ref(reference, zone)
+        )));
+    }
+    if let Some(url) = chart.strip_prefix("https://") {
+        // A URL chart archive: helm downloads it, through the mirror
+        // table in the CN zone (github.com -> gh-proxy.com).
+        let _ = url;
+        return Ok(ChartPayload::Url(kurin_core::zone::rewrite(chart, zone)));
     }
     let path = addon.files().path_for(chart);
     if !chart.ends_with(".tgz") {
         return Err(AddonError::invalid(
             &path,
-            "spec.install.helm.chart must be a .tgz archive or an oci:// reference",
+            "spec.install.helm.chart must be a .tgz archive, an oci:// reference or an https:// URL",
         ));
     }
     let bytes = addon.files().read(chart)?;

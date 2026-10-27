@@ -369,6 +369,7 @@ async fn helm_apply_uploads_payloads_templates_checks_images_then_installs() {
         api: &api,
         flavor: Flavor::Kubeadm,
         helm: Some(&helm),
+        zone: kurin_core::zone::Zone::Global,
         redactor: &redactor,
     })
     .await
@@ -435,6 +436,7 @@ async fn helm_apply_rejects_an_undeclared_rendered_image_before_installing() {
         api: &api,
         flavor: Flavor::Kubeadm,
         helm: Some(&helm),
+        zone: kurin_core::zone::Zone::Global,
         redactor: &redactor,
     })
     .await
@@ -471,6 +473,7 @@ async fn manifests_apply_returns_the_applied_object_list() {
         api: &api,
         flavor: Flavor::Kubeadm,
         helm: Some(&helm),
+        zone: kurin_core::zone::Zone::Global,
         redactor: &redactor,
     })
     .await

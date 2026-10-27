@@ -50,7 +50,7 @@
 | WP-43 addon-engine 组件 | done | 见提交 | 计划新增 addons 阶段（全部计划快照）；能力表新增 addon/engine | tier1 带 `[addons.x]` 创建并观察 hooks | requires/conflicts/环/compat 校验；check 读 kurin-state+helm；apply render→apply→track→hooks→record；remove |
 | WP-44 kurin addon 命令族 | done | 见提交 | 新增 8 个 addon CLI 快照（list/info/schema/install/upgrade/remove/dry-run） | tier1 metrics-server 生命周期（需 WP-46 目录或 `source`） | list/info/install/upgrade/remove；toml_edit 改写（注释保留、成功后写入、`--no-save`）；`--set`/`--values` 合并并预校验 values schema；`--dry-run` 只打印计划；`--keep-crds`；每次操作只收敛目标 addon 及其 requires |
 | WP-45 addon 打包与离线 | todo | | | 离线 tier1 ingress-nginx | |
-| WP-46 首批内置 addon | todo | | | `e2e/tier1/addons.sh` | |
+| WP-46 首批内置 addon | done | 见提交 | 无（catalog 是数据；嵌入目录不触发计划快照） | `e2e/tier1/addons.sh <bin> online|cn`（需人工） | 8 个 addon；chart 版本/镜像 digest 实抓（quay/ghcr OCI 与 GitHub release URL 两种 chart 来源，values 模板按 zone 换镜像源）；check-mirrors.sh 纳入 addon 镜像并修复 zone.rs 路径漂移 |
 | WP-47 存储迁移到 addon | todo | | | `e2e/tier1/storage.sh` | |
 | WP-48 CNI 改用 chart | todo | | | `just tier1-cilium`、kube-ovn、接管场景 | |
 | WP-49 registry zot 默认与 external | done | 见提交 | 新增 registry-default-v1alpha2 计划快照；quick 快照 kind 变 zot | `just tier3-registry zot/docker-registry/external` | v1alpha2 无 kind 默认 zot；v1alpha1 保持旧默认；external 校验与文档 |
@@ -85,6 +85,7 @@
 - WP-16：`storage/*` 标为 online-only（镜像在 bundle 但 bootstrap 不预载，WP-47 接管）；`ha/kube-vip` 镜像 pin 在版本表而非 manifest，标 online-only；`capabilities` 为隐藏命令且恒出 JSON。
 - WP-50：Host 拒绝用 403 `forbidden-host`（§7 清单外）；错误/DTO 采用顶层 `{code,message,diagnostics?}` + camelCase（对齐 WP-60 前端）；默认白名单含 `[::1]`；会话 TTL 24h；新增 `GET /session` 与 `GET /api/v1/healthz`。
 - WP-39：`sigstore` crate 不可用（会引入第二套加密栈/Fulcio/rekor），按 04 §6 预案用 `p256` 实现 cosign simple-signing；新增依赖仅 `p256`（已在依赖图中）。
+- WP-46：`local-path`/`nfs-subdir` 在 WP-47 前仍由第一层 storage 组件安装（模板逐字段一致）；`spec.install.helm.chart` 新增 https tgz URL；`check-mirrors.sh` 原指向已空的 artifact zone.rs，已改指 core zone.rs。
 - WP-45：chart 作为 file-set 层并在 `charts` 元数据行记录 digest（设计写的是标准 Helm OCI 制品）；`upstream_hosts` 签名改为 `(cluster, run)`；纯 digest 镜像以 digest 作为 mirror reference。
 - WP-38：04 §4 的 `package create base --with-os` 未实现（os 行来自独立 os 包或 base 自带 os 行）；arm64 容器路径仅由 CI/qemu 覆盖。
 - WP-37：kube-ovn 镜像 pin 取自 Docker Hub 上游 manifest；`--cni all` 的 base 包含全部 CNI 镜像（双架构）。
@@ -131,6 +132,7 @@
 （随 WP 完成追加）
 - WP-39：签名包校验、篡改 blob 拒绝、未签名包在 signature 模式拒绝（`cargo test -p kurin-artifact --test transfer`）；CI 工作流需在 tag 上人工验证。
 - WP-49：`just tier3-registry zot`、`docker-registry`、`external`（external 指向 zot）。
+- WP-46：`just tier1-addons`（在线）与 `just tier1-addons cn`（zone=cn），逐 addon install→ready→remove。
 - WP-45：`package create addon -f addons/ingress-nginx/addon.yaml` → `package create base --addons ingress-nginx` → 离线 tier1 create。
 - WP-38：`just tier1-rocky-offline`（先构建 os 包；或分步 `package create os` + `rocky-offline.sh`）。
 - WP-37：`just bundle` 后 `just tier1-offline-cni flannel`、`cilium`、`kube-ovn`（需 multipass）。
@@ -146,6 +148,7 @@
 - WP-50：`kurin serve` 回环冒烟（一次性登录链接、`/session`、401/403/400、TLS h2）；`cargo clippy -p kurin --features ui`。
 - WP-39：签名包校验、篡改 blob 拒绝、未签名包在 signature 模式拒绝（`cargo test -p kurin-artifact --test transfer`）；CI 工作流需在 tag 上人工验证。
 - WP-49：`just tier3-registry zot`、`docker-registry`、`external`（external 指向 zot）。
+- WP-46：`just tier1-addons`（在线）与 `just tier1-addons cn`（zone=cn），逐 addon install→ready→remove。
 - WP-45：`package create addon -f addons/ingress-nginx/addon.yaml` → `package create base --addons ingress-nginx` → 离线 tier1 create。
 - WP-38：`just tier1-rocky-offline`（先构建 os 包；或分步 `package create os` + `rocky-offline.sh`）。
 - WP-37：`just bundle` 后 `just tier1-offline-cni flannel`、`cilium`、`kube-ovn`（需 multipass）。

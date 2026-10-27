@@ -207,11 +207,15 @@ values 的合并顺序为 `defaults` → addon 内置推荐值（`values.yaml.j2
 都可以写秘密引用 `{ env = "VAR" }` / `{ file = "/path" }`：渲染时在内存中
 解析一次，并注册到脱敏器，不会出现在日志、事件或错误文本里。
 
-内置 addon 名单（WP-46 起提供具体内容）：`metrics-server`、`local-path`、
-`nfs-subdir`、`ingress-nginx`、`cert-manager`、`metallb`、`headlamp`、
-`kube-prometheus-stack`。名单之外的名字必须带 `source`（外部包），否则加载期
-报 `unknown addon`。`addons.local-path` 与 `addons.nfs-subdir` 不能同时启用
-（一个集群只有一个动态存储 provisioner）。
+内置 addon 名单（WP-46 已随目录交付，版本见 `addons/<name>/addon.yaml` 与
+各 README）：`metrics-server` 0.9.0、`local-path` 0.0.31、`nfs-subdir`
+4.0.2、`ingress-nginx` 1.15.1、`cert-manager` 1.21.3、`metallb` 0.16.1、
+`headlamp` 0.46.0、`kube-prometheus-stack` 0.94.2。名单之外的名字必须带
+`source`（外部包），否则加载期报 `unknown addon`。`addons.local-path` 与
+`addons.nfs-subdir` 不能同时启用（一个集群只有一个动态存储
+provisioner）。常用参数（受各 addon 的 values schema 校验）见
+`addons/<name>/README.md`；`zone = "cn"` 时 values 模板自动把镜像源换成
+`*.m.daocloud.io`（digest 与上游一致，`scripts/check-mirrors.sh` 持续校验）。
 
 `kurin addon install|upgrade|remove` 会按需改写这一节（`toml_edit`，注释保留；
 `--no-save` 关闭），所以“配置即真相”仍然成立：安装成功后条目变成

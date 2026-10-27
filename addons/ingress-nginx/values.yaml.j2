@@ -1,0 +1,9 @@
+# Built-in recommended values (03 §4.3): the zone picks the image
+# registry (the chart pins image digests itself, and the mirror serves
+# the same content); the user layer (validated by values.schema.json)
+# sits on top.
+{% if zone == "cn" %}
+global:
+  image:
+    registry: k8s.m.daocloud.io
+{% endif %}

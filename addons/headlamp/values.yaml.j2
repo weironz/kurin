@@ -1,0 +1,6 @@
+# Built-in recommended values (03 §4.3): the zone picks the image
+# registry; the user layer (validated by values.schema.json) sits on top.
+{% if zone == "cn" %}
+image:
+  registry: ghcr.m.daocloud.io
+{% endif %}

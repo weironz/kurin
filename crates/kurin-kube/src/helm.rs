@@ -130,6 +130,11 @@ impl<'a> HelmRunner<'a> {
         self.chart = Some(reference.to_string());
     }
 
+    /// Select an `https://` chart archive URL; helm downloads it itself.
+    pub fn use_url_chart(&mut self, url: &str) {
+        self.chart = Some(url.to_string());
+    }
+
     /// Write the merged values as `values.yaml` (0600: values may carry
     /// resolved secrets).
     pub async fn write_values(&mut self, yaml: &str) -> Result<()> {

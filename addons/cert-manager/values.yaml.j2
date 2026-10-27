@@ -1,0 +1,8 @@
+# Built-in recommended values (03 §4.3): CRDs ship with the release
+# (upstream's documented default) and stay on uninstall via the chart's
+# `crds.keep` resource policy; the zone picks the image registry.
+crds:
+  enabled: true
+{% if zone == "cn" %}
+imageRegistry: quay.m.daocloud.io
+{% endif %}

@@ -206,7 +206,9 @@ impl Install {
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
 pub struct HelmInstall {
     /// Chart location: a package-relative path (`charts/…tgz`, pulled
-    /// into the package at build time) or an `oci://…` reference.
+    /// into the package at build time), an `oci://…` reference, or an
+    /// `https://…tgz` chart archive URL — the last two are fetched by
+    /// helm itself (through the zone's mirror when it is `cn`).
     pub chart: String,
     /// Helm release name; defaults to the addon's `metadata.name`.
     pub release: Option<String>,

@@ -1,0 +1,23 @@
+{#- The L2 configuration (03 §4.1 `hooks.post-install`): an IPAddressPool
+    plus an L2Advertisement rendered from the user's `addresses` value.
+    Rendered empty when no pool was requested (the hook then applies
+    nothing). BGP users configure their own CRs. -#}
+{% if addon.values.addresses %}
+apiVersion: metallb.io/v1beta1
+kind: IPAddressPool
+metadata:
+  name: kurin
+  namespace: {{ addon.namespace }}
+spec:
+  addresses:
+{% for address in addon.values.addresses %}
+    - {{ address }}
+{% endfor %}
+---
+apiVersion: metallb.io/v1beta1
+kind: L2Advertisement
+metadata:
+  name: kurin
+  namespace: {{ addon.namespace }}
+spec: {}
+{% endif %}

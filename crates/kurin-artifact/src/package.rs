@@ -266,7 +266,7 @@ pub struct PackageBuilder {
     components: Vec<PackageComponent>,
     files: Vec<PackageFile>,
     images: Vec<PackageImage>,
-os: Vec<PackageOs>,
+    os: Vec<PackageOs>,
     charts: Vec<PackageChart>,
     /// Explicit architecture list; `None` derives it from the files.
     arches: Option<Vec<crate::artifact::Arch>>,
@@ -286,7 +286,7 @@ impl PackageBuilder {
             components: Vec::new(),
             files: Vec::new(),
             images: Vec::new(),
-os: Vec::new(),
+            os: Vec::new(),
             charts: Vec::new(),
             arches: None,
         }
@@ -328,7 +328,7 @@ os: Vec::new(),
         self.images.push(image);
     }
 
-/// Add one OS dependency repository (04 §3.4 `os` kind): the repo
+    /// Add one OS dependency repository (04 §3.4 `os` kind): the repo
     /// tar joins the arch's file-set manifest as a file layer, and the
     /// package metadata gains the matching `os` row (WP-38).
     pub fn add_os_repo(
@@ -399,7 +399,7 @@ os: Vec::new(),
                     used_by: i.used_by.clone(),
                 })
                 .collect(),
-charts: self.charts.clone(),
+            charts: self.charts.clone(),
             os: self.os.clone(),
         }
     }

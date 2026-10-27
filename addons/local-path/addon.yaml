@@ -1,0 +1,36 @@
+apiVersion: addons.kurin.dev/v1alpha1
+kind: Addon
+metadata:
+  name: local-path
+  version: 0.0.31
+  title: Local Path Provisioner
+  description: 用节点本地磁盘提供 StorageClass kurin-local-path 的轻量存储
+  category: storage
+spec:
+  compat:
+    kubernetes: ">=1.30.0"
+    distributions: [kubeadm, k3s]
+    arch: [amd64, arm64]
+  requires: []
+  conflicts: [nfs-subdir]
+  provides: [default-storage-class]
+  namespace: local-path-storage
+  install:
+    manifests:
+      - manifests/*.yaml.j2
+  images:
+    - docker.io/rancher/local-path-provisioner:v0.0.31@sha256:80496fdeb307541007621959aa13aed41d31db9cd2dc4167c19833e0bfa3878c
+    - docker.io/library/busybox:1.36.1@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662
+    - docker.m.daocloud.io/rancher/local-path-provisioner:v0.0.31@sha256:80496fdeb307541007621959aa13aed41d31db9cd2dc4167c19833e0bfa3878c
+    - docker.m.daocloud.io/library/busybox:1.36.1@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662
+  values-schema: values.schema.json
+  defaults:
+    default-class: false
+  readiness:
+    - kind: Deployment
+      name: local-path-provisioner
+  timeout: 3m
+  hooks:
+    post-install: []
+  uninstall:
+    keep: []

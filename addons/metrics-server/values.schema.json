@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "metrics-server values",
+  "description": "metrics-server 常用参数 / common metrics-server parameters",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "replicas": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 8,
+      "default": 1,
+      "description": "metrics-server 副本数 / number of metrics-server replicas"
+    }
+  }
+}

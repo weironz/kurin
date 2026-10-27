@@ -1,0 +1,8 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "cert-manager values",
+  "description": "cert-manager 暂不暴露用户参数（安装即用；其余调优走 raw-values）/ cert-manager takes no user values yet (tune via raw-values)",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {}
+}

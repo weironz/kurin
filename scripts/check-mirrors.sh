@@ -27,7 +27,7 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-ZONE_SRC="$ROOT/crates/kurin-artifact/src/zone.rs"
+ZONE_SRC="$ROOT/crates/kurin-core/src/zone.rs"
 MANIFEST="$ROOT/crates/kurin-artifact/src/artifacts/manifest.json"
 VERSION_SRC="$ROOT/crates/kurin-artifact/src/version.rs"
 
@@ -78,7 +78,13 @@ mirror_ref() { # ref -> mirror ref on stdout, 1 if no mapping applies
 # token flow. Prints "sha256:..." on stdout; returns 1 on any error.
 fetch_digest() {
     local ref=$1 host rest repo tag base status challenge realm service
-    local scope token_json token dig hdrfile errfile upstream_host
+    local scope token_json token dig hdrfile errfile upstream_host digest
+    # A pinned reference carries @sha256:… — the tag before it is what
+    # resolves the manifest, the digest is what must come back.
+    digest=""
+    case "$ref" in
+        *@sha256:*) digest="${ref##*@}"; ref="${ref%@*}" ;;
+    esac
     host="${ref%%/*}"
     rest="${ref#*/}"
     repo="${rest%:*}"
@@ -149,6 +155,11 @@ fetch_digest() {
           | sed -E 's/^[^:]+:[[:space:]]*//')
     rm -f "$hdrfile"
     [ -n "$dig" ] || { echo "no docker-content-digest for $ref" >&2; return 1; }
+    # A pinned reference (addon catalogs) must resolve to its pin.
+    if [ -n "$digest" ] && [ "$digest" != "$dig" ]; then
+        echo "pinned $digest != live $dig for $ref" >&2
+        return 1
+    fi
     printf '%s' "$dig"
 }
 
@@ -166,6 +177,25 @@ for a in doc["artifacts"]:
     ref = a["url_template"].replace("{version}", a["version"])
     print(f"{a['name']}\t{ref}")
 PY
+    # WP-46: every addon catalog image. Only the upstream forms are
+    # emitted — the parity loop derives the mirror twin and compares
+    # digests, which is exactly what zone=cn renders.
+    for f in "$ROOT"/addons/*/addon.yaml; do
+        [ -f "$f" ] || continue
+        python3 - "$f" <<'PY'
+import sys, re, pathlib
+text = pathlib.Path(sys.argv[1]).read_text()
+m = re.search(r'^  images:\n((?:    - .*\n?)*)', text, re.M)
+if not m:
+    sys.exit(0)
+name = re.search(r'^  name: (.*)$', text, re.M).group(1)
+for line in m.group(1).splitlines():
+    ref = line.strip()[2:]
+    if ".m.daocloud.io/" in ref:
+        continue  # the mirror twin; checked against its upstream row
+    print(f"addon/{name}\t{ref}")
+PY
+    done
     local kubevip
     kubevip=$(grep -E '^pub const KUBE_VIP_VERSION' "$VERSION_SRC" \
               | sed -E 's/.*= *"([^"]+)".*/\1/')

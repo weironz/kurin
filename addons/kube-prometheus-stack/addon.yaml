@@ -1,0 +1,58 @@
+apiVersion: addons.kurin.dev/v1alpha1
+kind: Addon
+metadata:
+  name: kube-prometheus-stack
+  version: 0.94.2
+  title: kube-prometheus-stack
+  description: Prometheus Operator 全家桶：Prometheus、Alertmanager、Grafana 与默认告警规则
+  category: monitoring
+spec:
+  compat:
+    kubernetes: ">=1.30.0"
+    distributions: [kubeadm, k3s]
+    arch: [amd64, arm64]
+  requires: []
+  conflicts: []
+  provides: [monitoring]
+  namespace: monitoring
+  install:
+    helm:
+      chart: oci://ghcr.io/prometheus-community/charts/kube-prometheus-stack:92.14.0
+      release: kube-prometheus-stack
+      values: values.yaml.j2
+  images:
+    - docker.io/grafana/grafana:13.2.4-distroless@sha256:ae3d3add290adbe6a88412229f5d76fd7bb82743050881698642d3d62f277e35
+    - docker.io/bats/bats:1.14.0@sha256:5322b877351fda0cc435de8c6116de7d0a2ec79d7c680132a0ef329a633bc66f
+    - ghcr.io/jkroepke/kube-webhook-certgen:1.11.0@sha256:778d97dc3986355625e14392419b3364c487a7c807d4d86ddad1df369129b082
+    - quay.io/kiwigrid/k8s-sidecar:2.14.1@sha256:092dbe0c335fba9af414a27630ca68f34df6185784fa847d9954187e69dbfdd7
+    - quay.io/prometheus-operator/prometheus-operator:v0.94.2@sha256:c7edf0379b7271ef1705dce258d2bb73820e299cc95559369e9f6fc3321639ec
+    - quay.io/prometheus/alertmanager:v0.34.1@sha256:e9733bafb1bdef9b00e25a21f8f99dc26a22224bf16641ad754d1649f4c3357a
+    - quay.io/prometheus/node-exporter:v1.12.1-distroless@sha256:8c9bac11973b94b59be88d6e11fee4429aa743c8846cdc75d65b18db33f6a106
+    - quay.io/prometheus/prometheus:v3.15.1-distroless@sha256:451a845bae1d51622b41af1780eb2ad911bbb79a9855bc8e9bb67fabbc03f934
+    - registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.20.0@sha256:42cfe3723a5f058171c627537fb57a3ea0f26e4380fa18555a95cb1a1b4cfc5b
+    - docker.m.daocloud.io/grafana/grafana:13.2.4-distroless@sha256:ae3d3add290adbe6a88412229f5d76fd7bb82743050881698642d3d62f277e35
+    - docker.m.daocloud.io/library/bats/bats:1.14.0@sha256:5322b877351fda0cc435de8c6116de7d0a2ec79d7c680132a0ef329a633bc66f
+    - ghcr.m.daocloud.io/jkroepke/kube-webhook-certgen:1.11.0@sha256:778d97dc3986355625e14392419b3364c487a7c807d4d86ddad1df369129b082
+    - quay.m.daocloud.io/kiwigrid/k8s-sidecar:2.14.1@sha256:092dbe0c335fba9af414a27630ca68f34df6185784fa847d9954187e69dbfdd7
+    - quay.m.daocloud.io/prometheus-operator/prometheus-operator:v0.94.2@sha256:c7edf0379b7271ef1705dce258d2bb73820e299cc95559369e9f6fc3321639ec
+    - quay.m.daocloud.io/prometheus/alertmanager:v0.34.1@sha256:e9733bafb1bdef9b00e25a21f8f99dc26a22224bf16641ad754d1649f4c3357a
+    - quay.m.daocloud.io/prometheus/node-exporter:v1.12.1-distroless@sha256:8c9bac11973b94b59be88d6e11fee4429aa743c8846cdc75d65b18db33f6a106
+    - quay.m.daocloud.io/prometheus/prometheus:v3.15.1-distroless@sha256:451a845bae1d51622b41af1780eb2ad911bbb79a9855bc8e9bb67fabbc03f934
+    - k8s.m.daocloud.io/kube-state-metrics/kube-state-metrics:v2.20.0@sha256:42cfe3723a5f058171c627537fb57a3ea0f26e4380fa18555a95cb1a1b4cfc5b
+  values-schema: values.schema.json
+  defaults: {}
+  readiness:
+    - kind: Deployment
+      name: kube-prometheus-stack-operator
+    - kind: Deployment
+      name: kube-prometheus-stack-grafana
+    - kind: Deployment
+      name: kube-prometheus-stack-kube-state-metrics
+    - kind: DaemonSet
+      name: kube-prometheus-stack-prometheus-node-exporter
+  timeout: 15m
+  hooks:
+    post-install: []
+  uninstall:
+    keep:
+      - kind: CustomResourceDefinition

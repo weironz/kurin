@@ -7,8 +7,8 @@
 //! |---|---|
 //! | `metadata.name` / `spec.namespace` / `install.helm.release` are DNS labels | 03 §4.1 |
 //! | `install` has exactly one of `helm` / `manifests` | 03 §4.1 |
+//! | `install.helm.chart` is a package-relative path, an `oci://` reference or an `https://` chart archive | 03 §4.1 |
 //! | every referenced file exists and stays inside the addon | 03 §4.1 |
-//! | every `images[]` entry is a full reference with a sha256 digest | 03 §4.2 rule 1 |
 //! | `values-schema` is a readable, valid, root-closed JSON Schema | 03 §4.2 rule 3 |
 //! | `defaults` is a mapping satisfying `values-schema` | 03 §4.2 rule 3 |
 //! | hooks use exactly one built-in action with well-formed fields | 03 §4.2 rule 2 |
@@ -164,6 +164,27 @@ fn check_install(addon: &Addon, spec: &Spec, path: &str, diags: &mut Vec<AddonEr
                 diags.push(AddonError::invalid(
                     path,
                     format!("spec.install.helm.chart `{}` must not be empty", helm.chart),
+                ));
+            }
+        } else if let Some(rest) = helm.chart.strip_prefix("https://") {
+            // A URL chart archive: helm fetches it itself (the zone
+            // rewrites it through the mirror table when `cn`).
+            if rest.is_empty() || !rest.contains('/') {
+                diags.push(AddonError::invalid(
+                    path,
+                    format!(
+                        "spec.install.helm.chart `{}` must be an https:// URL to a chart \
+                         archive (host and path)",
+                        helm.chart
+                    ),
+                ));
+            } else if !helm.chart.ends_with(".tgz") {
+                diags.push(AddonError::invalid(
+                    path,
+                    format!(
+                        "spec.install.helm.chart `{}` must point at a .tgz chart archive",
+                        helm.chart
+                    ),
                 ));
             }
         } else {

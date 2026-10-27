@@ -40,7 +40,7 @@ use sha2::{Digest as _, Sha256};
 const ADDON_YAML: &str = r#"apiVersion: addons.kurin.dev/v1alpha1
 kind: Addon
 metadata:
-  name: metrics-server
+  name: wp45-demo
   version: 1.0.0
   title: Demo
   description: A demo addon used by the packaging tests
@@ -193,7 +193,7 @@ fn synthetic_manifest_image(
     }
 }
 
-/// The addon's files as a base package embeds them (`addons/metrics-server/…`).
+/// The addon's files as a base package embeds them (`addons/wp45-demo/…`).
 fn embedded_addon_files(store: &ArtifactStore, dir: &Path) -> Vec<PackageFile> {
     let mut files: Vec<PathBuf> = Vec::new();
     collect(dir, &mut files);
@@ -208,13 +208,13 @@ fn embedded_addon_files(store: &ArtifactStore, dir: &Path) -> Vec<PackageFile> {
             let bytes = std::fs::read(&path).unwrap();
             let digest = store.blob_store().put_bytes(&bytes).unwrap();
             PackageFile {
-                name: format!("addons/metrics-server/{rel}"),
+                name: format!("addons/wp45-demo/{rel}"),
                 kind: kurin::artifact::ArtifactKind::Manifest,
                 version: "1.0.0".to_string(),
                 arch: Arch::Amd64,
                 digest,
                 size: bytes.len() as u64,
-                title: format!("addons/metrics-server/{rel}"),
+                title: format!("addons/wp45-demo/{rel}"),
                 upstream: format!("dir {}", dir.display()),
             }
         })
@@ -241,7 +241,7 @@ fn build_base_with_addon(
     let store = ArtifactStore::new(dir.parent().unwrap().join("cache"));
     let extras = PackageExtras {
         component: Some(PackageComponent {
-            id: "addon/metrics-server".to_string(),
+            id: "addon/wp45-demo".to_string(),
             version: "1.0.0".to_string(),
         }),
         files: embedded_addon_files(&store, addon_dir),
@@ -338,7 +338,7 @@ async fn addon_package_round_trips_through_the_loader() {
 
     let uri = format!("oci-layout://{}", out_dir(&out).display());
     let addon = Addon::from_package(&uri).expect("package loads as an addon");
-    assert_eq!(addon.name(), "metrics-server");
+    assert_eq!(addon.name(), "wp45-demo");
     let files = addon.files().list();
     for expected in [
         "addon.yaml",
@@ -364,7 +364,7 @@ async fn image_closure_is_complete_and_resolves_by_reference() {
     let addon_dir = write_addon(tmp.path(), &[]);
     let reference = "registry.example/demo/controller:v1@sha256:0000000000000000000000000000000000000000000000000000000000000000";
     let store = ArtifactStore::new(tmp.path().join("cache"));
-    let image = synthetic_index_image(&store, reference, Arch::Amd64, "addon/metrics-server");
+    let image = synthetic_index_image(&store, reference, Arch::Amd64, "addon/wp45-demo");
     let (meta, uri) =
         build_base_with_addon(&tmp.path().join("base"), &addon_dir, vec![image.clone()]);
 
@@ -414,7 +414,7 @@ async fn single_platform_manifest_images_are_supported() {
     let addon_dir = write_addon(tmp.path(), &[]);
     let reference = "registry.example/demo/single:v2@sha256:1111111111111111111111111111111111111111111111111111111111111111";
     let store = ArtifactStore::new(tmp.path().join("cache"));
-    let image = synthetic_manifest_image(&store, reference, Arch::Amd64, "addon/metrics-server");
+    let image = synthetic_manifest_image(&store, reference, Arch::Amd64, "addon/wp45-demo");
     let (_, uri) = build_base_with_addon(&tmp.path().join("base"), &addon_dir, vec![image.clone()]);
 
     let payloads = PayloadSet::open(&ArtifactSources::embedded().with_base_package(uri.as_str()))
@@ -452,19 +452,19 @@ async fn addon_extras_namespaces_files_for_a_base_package() {
         &addon,
         &[Arch::Amd64],
         Zone::Global,
-        "addons/metrics-server/",
+        "addons/wp45-demo/",
     )
     .await
     .expect("payload builds");
     let titles: Vec<&str> = extras.files.iter().map(|f| f.title.as_str()).collect();
-    assert!(titles.contains(&"addons/metrics-server/addon.yaml"));
-    assert!(titles.contains(&"addons/metrics-server/charts/demo-1.0.0.tgz"));
+    assert!(titles.contains(&"addons/wp45-demo/addon.yaml"));
+    assert!(titles.contains(&"addons/wp45-demo/charts/demo-1.0.0.tgz"));
     assert_eq!(extras.charts.len(), 1);
     assert_eq!(extras.charts[0].name, "demo");
     assert_eq!(extras.charts[0].version, "1.0.0");
     assert_eq!(
         extras.component.as_ref().map(|c| c.id.as_str()),
-        Some("addon/metrics-server")
+        Some("addon/wp45-demo")
     );
 }
 
@@ -481,13 +481,13 @@ async fn base_with_addons_provides_the_addon_offline() {
     let reference = "registry.example/demo/controller:v1@sha256:2222222222222222222222222222222222222222222222222222222222222222";
     let addon_dir = write_addon(tmp.path(), &[reference]);
     let store = ArtifactStore::new(tmp.path().join("cache"));
-    let image = synthetic_index_image(&store, reference, Arch::Amd64, "addon/metrics-server");
+    let image = synthetic_index_image(&store, reference, Arch::Amd64, "addon/wp45-demo");
     let (meta, uri) = build_base_with_addon(&tmp.path().join("base"), &addon_dir, vec![image]);
 
     // The loader reads the embedded subtree.
-    let addon = Addon::from_base_package(&uri, "metrics-server")
-        .expect("addon loads from the base package");
-    assert_eq!(addon.name(), "metrics-server");
+    let addon =
+        Addon::from_base_package(&uri, "wp45-demo").expect("addon loads from the base package");
+    assert_eq!(addon.name(), "wp45-demo");
     assert!(addon.files().exists("charts/demo-1.0.0.tgz"));
 
     // The selection resolves it from `[packages] base`; the addon
@@ -496,14 +496,14 @@ async fn base_with_addons_provides_the_addon_offline() {
     let selected =
         kurin::addon::engine::resolve_selection(&cluster, None).expect("selection resolves");
     assert_eq!(selected.len(), 1);
-    assert_eq!(selected[0].addon.name(), "metrics-server");
+    assert_eq!(selected[0].addon.name(), "wp45-demo");
     assert!(selected[0].addon.files().exists("README.md"));
 
     let gaps = addon_gaps(
         &meta,
         &selected[0].addon,
         &[Arch::Amd64],
-        "addons/metrics-server/",
+        "addons/wp45-demo/",
     );
     assert!(gaps.is_empty(), "{gaps:?}");
 }
@@ -519,7 +519,7 @@ async fn offline_addon_plan_preloads_images_before_install() {
     let reference = "registry.example/demo/controller:v1@sha256:4444444444444444444444444444444444444444444444444444444444444444";
     let addon_dir = write_addon(tmp.path(), &[reference]);
     let store = ArtifactStore::new(tmp.path().join("cache"));
-    let image = synthetic_index_image(&store, reference, Arch::Amd64, "addon/metrics-server");
+    let image = synthetic_index_image(&store, reference, Arch::Amd64, "addon/wp45-demo");
     let (_, uri) = build_base_with_addon(&tmp.path().join("base"), &addon_dir, vec![image]);
     let cluster = cluster_config(&uri);
 
@@ -537,22 +537,18 @@ async fn offline_addon_plan_preloads_images_before_install() {
         kurin::addon::engine::build_addon_plan(kurin::plan::OpKind::AddonInstall, &cluster, &run)
             .expect("plan builds");
     let ids: Vec<String> = plan.tasks.iter().map(|t| t.task.id()).collect();
+    assert!(ids.iter().any(|id| id == "addons/wp45-demo@cp1"), "{ids:?}");
     assert!(
-        ids.iter().any(|id| id == "addons/metrics-server@cp1"),
-        "{ids:?}"
-    );
-    assert!(
-        ids.iter()
-            .any(|id| id == "addons/metrics-server/images@cp1"),
+        ids.iter().any(|id| id == "addons/wp45-demo/images@cp1"),
         "{ids:?}"
     );
     let install = ids
         .iter()
-        .position(|id| id == "addons/metrics-server@cp1")
+        .position(|id| id == "addons/wp45-demo@cp1")
         .unwrap();
     let images = ids
         .iter()
-        .position(|id| id == "addons/metrics-server/images@cp1")
+        .position(|id| id == "addons/wp45-demo/images@cp1")
         .unwrap();
     assert!(
         plan.edges
@@ -574,7 +570,7 @@ fn coverage_reports_missing_addon_payloads() {
     );
     let (meta, _) = build_base_with_addon(&tmp.path().join("base"), &addon_dir, Vec::new());
     let addon = Addon::from_dir(&addon_dir).unwrap();
-    let gaps = addon_gaps(&meta, &addon, &[Arch::Amd64], "addons/metrics-server/");
+    let gaps = addon_gaps(&meta, &addon, &[Arch::Amd64], "addons/wp45-demo/");
     assert!(
         gaps.iter()
             .any(|gap| gap.contains("registry.example/demo/controller")),
@@ -617,7 +613,7 @@ method = "password"
 password = "fake"
 [packages]
 base = "{base_uri}"
-[addons.metrics-server]
+[addons.wp45-demo]
 enabled = true
 [nodes.cp1]
 address = "10.99.0.11"

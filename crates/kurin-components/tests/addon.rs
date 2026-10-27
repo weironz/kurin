@@ -126,10 +126,35 @@ fn embedded_catalog_matches_the_directory_scan() {
 }
 
 #[test]
-fn real_builtin_catalog_is_empty_until_wp46() {
+fn real_builtin_catalog_loads_and_validates_all_first_batch_addons() {
     let catalog = Catalog::embedded().unwrap();
-    assert!(catalog.addons().is_empty(), "{:?}", catalog.names());
-    assert!(catalog.validate().is_empty());
+    assert_eq!(
+        catalog.names(),
+        [
+            "cert-manager",
+            "headlamp",
+            "ingress-nginx",
+            "kube-prometheus-stack",
+            "local-path",
+            "metallb",
+            "metrics-server",
+            "nfs-subdir"
+        ],
+        "the embedded catalog is exactly the first batch (WP-46)"
+    );
+    // Every static rule passes, and the embedded catalog agrees with a
+    // fresh scan of the repository's addons/ directory.
+    assert!(catalog.validate().is_empty(), "{:?}", catalog.validate());
+    let from_dir = Catalog::from_dir(&repo_root().join("addons")).unwrap();
+    assert_eq!(from_dir.names(), catalog.names());
+    for addon in catalog.addons() {
+        assert_eq!(
+            addon.origin(),
+            format!("builtin {}", addon.name()),
+            "the embedded catalog is file-identical to the directory"
+        );
+    }
+    assert!(from_dir.validate().is_empty(), "{:?}", from_dir.validate());
 }
 
 #[test]

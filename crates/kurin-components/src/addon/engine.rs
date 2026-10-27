@@ -1229,6 +1229,7 @@ impl AddonInstallTask {
             api,
             flavor: self.flavor,
             helm: helm.as_ref(),
+            zone: self.run.sources.zone,
             redactor,
         };
         let applied = apply_addon(&request)

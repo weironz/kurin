@@ -156,7 +156,7 @@ pub(crate) async fn validate_payload(
         let report = kurin_components::component::coverage::render_gaps(uri, &meta, &gaps);
         return Err(miette::miette!("{}", report.trim_end()));
     }
-// WP-38: an offline run must find a matching os package for every
+    // WP-38: an offline run must find a matching os package for every
     // node — validation time, not mid-install.
     if spec.packages.offline_dir.is_some() || spec.packages.base.is_some() {
         let sources = crate::sources_for(spec)?;

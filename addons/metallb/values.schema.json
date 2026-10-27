@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "metallb values",
+  "description": "metallb 常用参数 / common metallb parameters",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "addresses": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "description": "CIDR（192.168.10.0/24）或区间（192.168.10.100-192.168.10.120）/ a CIDR or a hyphen range"
+      },
+      "uniqueItems": true,
+      "description": "L2 地址池：安装后由 hook 应用为 IPAddressPool + L2Advertisement；留空则不创建 / L2 address pool applied as IPAddressPool + L2Advertisement after install; empty creates neither"
+    }
+  }
+}

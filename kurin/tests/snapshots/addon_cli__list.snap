@@ -2,6 +2,13 @@
 source: kurin/tests/addon_cli.rs
 expression: "addon::render_list(&rows)"
 ---
-NAME            VERSION  CATEGORY    STATUS     DESCRIPTION
-demo            1.2.3    other       disabled   A manifests addon for the WP-44 CLI fixtures
-metrics-server  0.7.2    monitoring  installed  Cluster-wide resource metrics (WP-44 CLI fixture)
+NAME                   VERSION  CATEGORY    STATUS     DESCRIPTION
+cert-manager           1.21.3   security    available  X.509 证书的签发与自动续期（ACME、自签、CA 等）
+demo                   1.2.3    other       disabled   A manifests addon for the WP-44 CLI fixtures
+headlamp               0.46.0   dashboard   available  Kubernetes Web 控制台（只读插件式 UI）
+ingress-nginx          1.15.1   ingress     available  NGINX Ingress 控制器，通过 Ingress 暴露集群服务
+kube-prometheus-stack  0.94.2   monitoring  available  Prometheus Operator 全家桶：Prometheus、Alertmanager、Grafana 与默认告警规则
+local-path             0.0.31   storage     available  用节点本地磁盘提供 StorageClass kurin-local-path 的轻量存储
+metallb                0.16.1   networking  available  裸金属 LoadBalancer（L2/BGP），给 LoadBalancer Service 分配 IP
+metrics-server         0.7.2    monitoring  installed  Cluster-wide resource metrics (WP-44 CLI fixture)
+nfs-subdir             4.0.2    storage     available  对接外部 NFS 服务器的动态存储（StorageClass kurin-nfs）

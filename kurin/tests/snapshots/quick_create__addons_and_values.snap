@@ -13,7 +13,7 @@ replicas = 2
 
 [addons.ingress-nginx]
 enabled = true
-version = "4.13.0"
+version = "1.15.1"
 
 [addons.ingress-nginx.values.controller]
 replicas = 3

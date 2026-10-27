@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "headlamp values",
+  "description": "headlamp 常用参数 / common headlamp parameters",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "replicaCount": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 4,
+      "default": 1,
+      "description": "副本数 / number of replicas"
+    },
+    "service": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["ClusterIP", "NodePort", "LoadBalancer"],
+          "default": "ClusterIP",
+          "description": "Service 类型：裸金属上通常用 NodePort / service type: NodePort on bare metal"
+        }
+      }
+    }
+  }
+}

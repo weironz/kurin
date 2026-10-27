@@ -99,6 +99,24 @@ All notable changes to kurin. Format follows Keep a Changelog; semver.
   probed by `scripts/check-mirrors.sh`.
 
 ### Added (WP-36)
+### Added (WP-46)
+- first built-in addon catalog (03 §4.7): `addons/{metrics-server,
+  local-path, nfs-subdir, ingress-nginx, cert-manager, metallb,
+  headlamp, kube-prometheus-stack}` — each with `addon.yaml`, a values
+  template, a `values.schema.json` (zh/en descriptions, common
+  parameters only) and a README. Chart versions and image digests are
+  fetched from upstream and verified; `scripts/check-mirrors.sh` now
+  digest-checks every catalog image (both the upstream and the CN
+  mirror form) and reads the mirror table from its new home in
+  `kurin-core` (the `kurin-artifact` path had drifted).
+- `spec.install.helm.chart` additionally accepts an `https://…tgz`
+  chart archive URL next to package-relative paths and `oci://`
+  references; in the `cn` zone helm pulls it through `gh-proxy.com`,
+  and `oci://` chart registries are mirrored like image registries.
+- `zone = "cn"` values templates swap every catalog image registry to
+  its `*.m.daocloud.io` twin (digest-identical, verified), and the
+  metallb addon turns its `addresses` value into an `IPAddressPool` +
+  `L2Advertisement` through the post-install `apply` hook.
 - registry-based distribution (04 §5.2): `[registry] kind = "external"`
   accepts `address`, `ca-file`, `username`, `password` and `namespace`
   (default `kurin`), and the new `registry/push@controller` task pushes

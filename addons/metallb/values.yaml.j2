@@ -1,0 +1,19 @@
+# Built-in recommended values (03 §4.3): the zone picks the image
+# registries for the controller, the speaker and the bundled frr-k8s
+# subchart. `addresses` is a kurin-level value (not a chart value):
+# it feeds the L2 pool the post-install hook applies.
+{% if zone == "cn" %}
+controller:
+  image:
+    repository: quay.m.daocloud.io/metallb/controller
+speaker:
+  image:
+    repository: quay.m.daocloud.io/metallb/speaker
+frr-k8s:
+  frrk8s:
+    image:
+      repository: quay.m.daocloud.io/metallb/frr-k8s
+    frr:
+      image:
+        repository: quay.m.daocloud.io/frrouting/frr
+{% endif %}
