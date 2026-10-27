@@ -107,7 +107,7 @@ worker 按 `--batch` 分批。`--dry-run` 输出计划树（保留“当前 → 
 ## 互斥与续跑
 
 变更操作（`create cluster`、`add nodes`、`delete node`、`delete cluster`、
-`upgrade`、`certs renew`）对同一集群互斥：锁文件位于
+`upgrade`、`certs renew`、`certs schedule`）对同一集群互斥：锁文件位于
 `$XDG_STATE_HOME/kurin/locks/<cluster>.lock`（回退 `~/.local/state`），
 第二个进程立即失败并显示持有者的 pid、操作 id、命令行与开始时间。
 只读命令（`status`、`precheck`、`certs check`、`logs`、`artifact`、
@@ -138,12 +138,18 @@ sha256）。计划变化时拒绝续跑并提示去掉 `--resume`；v1 状态文
 - `status`：显示期望版本（记录）与观测版本（`/version`）的差异。
 - `delete cluster` 不处理记录（集群已销毁）。
 
-## certs check / renew
+## certs check / renew / schedule
 
 | | k8s | k3s |
 |---|---|---|
-| check | ✅ | ✅ |
+| check | ✅（`/etc/kubernetes/pki` 逐证书表 + 下次续期时间，无 timer 时提示 `kurin certs schedule`）| ✅（`/var/lib/rancher/k3s/server/tls`，同左）|
 | renew | ✅（`kubeadm certs renew` → 静态 pod 重启 → `/readyz` 门控，逐节点 `rolling(1)`）| ✅（`k3s certificate rotate` → restart → `/readyz` 门控，逐节点 `rolling(1)`）|
+| schedule（WP-71）| ✅（每控制面装 `kurin-cert-renew.{service,timer}` + `/usr/local/bin/kurin-cert-renew.sh`：`kubeadm certs check-expiration` 最小剩余 < `--warn-days`（默认 30）才 `renew all` + 静态 pod 轮转 + `/readyz` 门控；`--every` 默认 24h；`logger -t kurin-cert-renew` 写 journald）| ✅（`k3s certificate check --output table` 门控 + `k3s certificate rotate` + `systemctl restart k3s`；旧版 k3s 无 rotate 时日志给升级指引）|
+
+- `schedule` 抢集群锁，幂等：重跑重写同内容 unit/脚本（`WARN_DAYS`/`OnUnitActiveSec` 随参数更新）并重启 timer。
+- 门控只看叶子证书表：kubeadm 的 CA 表不计入（`certs renew all` 续不了 CA，否则过期 CA 会让每个 tick 都重启控制面）；剩余时间解析同时兼容 kubeadm 的 `364d`/`9y` 与 k3s 的 `1 year`/`3 weeks` 写法，过期记 0 天。
+- `status` / `certs check` 的下次续期读首个控制面 `systemctl show kurin-cert-renew.timer --property=NextElapseUSecRealtime`（`NextElapseUSecMonotonic` 回退）；未装 timer 时 `cert_next_renewal` 为 `null` / `none`。
+- tier2 手动模拟（`--warn-days` 触发）：`kurin certs schedule -f cfg --every 1h --warn-days 3650` → 等 timer 到点（或 `systemctl start kurin-cert-renew.service`）→ `journalctl -t kurin-cert-renew` 依次出现 `minimum residual time …`、`renewing certificates`、`static control-plane pods cycled`、`apiserver /readyz ok after renewal` → `kurin status` 的 `cert_next_renewal` 前移。
 
 ## etcd backup / restore / schedule（WP-70）
 

@@ -561,3 +561,28 @@ async fn certs_opt_out_skips_the_cert_probe() {
     assert!(report.healthy);
     assert_eq!(report.cert_min_days, None);
 }
+
+#[tokio::test]
+async fn next_cert_renewal_comes_from_the_timer_probe() {
+    let pool = pool(vec![
+        ("get nodes -o json", NODES_ONE_CP_READY),
+        ("get pods -A -o json", PODS_OK),
+        ("get --raw /healthz", "ok"),
+        ("openssl x509 -in", cert_probe(365)),
+        (
+            "systemctl show kurin-cert-renew.timer",
+            "NextElapseUSecRealtime=Wed 2026-10-29 06:00:00 UTC\n",
+        ),
+    ]);
+    let r = status::collect(&cluster_one_cp(), &pool, Default::default())
+        .await
+        .unwrap();
+
+    assert_eq!(
+        r.cert_next_renewal.as_deref(),
+        Some("Wed 2026-10-29 06:00:00 UTC")
+    );
+    // Existing fields are unchanged by the new probe.
+    assert_eq!(r.cert_min_days, Some(365));
+    assert!(r.healthy);
+}

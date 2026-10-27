@@ -170,6 +170,7 @@ fn report(healthy: bool, cert_min_days: Option<i64>) -> StatusReport {
         },
         etcd_ok: true,
         cert_min_days,
+        cert_next_renewal: None,
         expected_version: None,
         observed_version: Some("v1.33.1".into()),
     }

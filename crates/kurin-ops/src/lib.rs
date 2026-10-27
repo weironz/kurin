@@ -577,6 +577,17 @@ pub async fn certs_check(
     certs::certs_check(spec, warn_days, out).await
 }
 
+/// `kurin certs schedule`: install the certificate renewal timer on
+/// every control plane (WP-71).
+pub async fn certs_schedule(
+    spec: &Cluster,
+    warn_days: i64,
+    every: &str,
+    out: OutputOpts,
+) -> Result<kurin_components::certs::ScheduleReport> {
+    certs::certs_schedule(spec, warn_days, every, out).await
+}
+
 /// `kurin etcd backup`: snapshot every control plane and pull a copy to
 /// the controller (WP-70).
 pub async fn etcd_backup(

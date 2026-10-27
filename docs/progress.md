@@ -1,5 +1,12 @@
 # 进度日志
 
+## WP-71：证书自动续期（2026-10-28）
+
+- **`kurin certs schedule -f <cfg> [--warn-days 30] [--every 24h]`**：每个控制面装 `kurin-cert-renew.{service,timer}`（oneshot + `OnBootSec`/`OnUnitActiveSec`，`WantedBy=timers.target`）与 `/usr/local/bin/kurin-cert-renew.sh`（0755）。脚本门控在 `kubeadm certs check-expiration`（k3s：`k3s certificate check --output table`）的最小剩余天数——小于 `WARN_DAYS` 才动手：kubeadm `certs renew all` → 静态 pod manifests 轮转（15s）→ `/readyz` 门控（120s，有 kubectl 时 best-effort）；k3s `certificate rotate`（旧版 k3s 无该子命令时日志给升级指引）→ `systemctl restart k3s` → `/readyz`（180s）。全程 `logger -t kurin-cert-renew` 写 journald；kubeadm 的 CA 表不计入门控（`renew all` 续不了 CA）。重跑幂等（重写同内容文件并重启 timer，参数变化随之生效）；`--every` 复用 WP-70 的解析器；`schedule` 抢集群锁。
+- **`status` / `certs check` 显示下次续期**：`StatusReport` 新增 `cert_next_renewal`——首个控制面 `systemctl show kurin-cert-renew.timer --property=NextElapseUSecRealtime`（`NextElapseUSecMonotonic` 回退），未装 timer 时 JSON 为 `null`、人读输出提示 `none`；`certs check` 表格后追加同一行。既有字段不变。
+- **测试**：`kurin-components` certs 单测 11 个（脚本/单元渲染 kubeadm+k3s、门控 awk 对 kubeadm/k3s 报告样例的解析——`364d`/`9y`/`1y57d`/`1 year`/`3 weeks`/`<invalid>` 全覆盖、timer/service 断言、next-renewal 解析）；`kurin/tests/certs_schedule.rs` 5 个集成测试（mock Session：安装文件内容、enable+restart 命令、幂等重装、k3s 流程、`systemctl show` 探测与缺失回退）；`kurin/tests/status.rs` 增 1 个（timer 探测进报告、既有字段不变）。
+- **e2e（tier2，待人工）**：`--warn-days` 模拟触发——`kurin certs schedule --every 1h --warn-days 3650` 后 `journalctl -t kurin-cert-renew` 应依次出现 `minimum residual time …`、`renewing certificates`、`static control-plane pods cycled`、`apiserver /readyz ok after renewal`，`kurin status` 的 `cert_next_renewal` 前移（完整步骤见 command-matrix「certs check / renew / schedule」）。节点本地脚本已用 stub 命令做过全流程验证（门控、续期、pod 轮转、readyz、journald 标签）。
+
 ## WP-70：etcd 备份/恢复/定时（2026-10-28）
 
 - **`kurin etcd backup [-o FILE]`**：每个控制面各拍一份快照（kubeadm 经 `crictl exec` 进 etcd 静态 pod、回退 `kubectl exec`；k3s 用 `k3s etcd-snapshot save`），`etcdctl snapshot status` 校验 revision/size 后在节点保留于 `/var/lib/kurin/etcd-backups`（k3s 在其 db/snapshots），首个控制面的字节经分块 `dd | base64 -w 4096`（6 MiB/块）拉回控制机，远端 sha256 全量校验后写入 `-o`（默认 `./etcd-<cluster>-<ts>.db`）。

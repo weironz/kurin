@@ -36,6 +36,10 @@ pub struct StatusReport {
     pub etcd_ok: bool,
     /// Smallest days-left across control-plane certificates (None if unknown).
     pub cert_min_days: Option<i64>,
+    /// Next `kurin-cert-renew.timer` elapse on the first control plane,
+    /// exactly as systemd printed it (`Wed 2026-10-29 06:00:00 UTC`);
+    /// `None` when the renewal timer is not installed.
+    pub cert_next_renewal: Option<String>,
     /// Version kurin recorded in `kube-system/kurin-state` at the last
     /// mutation (`v1.33.2`); `None` on clusters without a record.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -260,6 +264,17 @@ pub async fn collect(
         None
     };
 
+    // The renewal timer is one cheap `systemctl show` on the first
+    // control plane (not the certificate walk above), so it is always
+    // probed; an unreachable node degrades to `None`.
+    let cert_next_renewal = match crate::certs::next_renewal(cluster, pool).await {
+        Ok(next) => next,
+        Err(err) => {
+            log(&format!("status: renewal timer unreadable ({err})"));
+            None
+        }
+    };
+
     let healthy = nodes.iter().all(|n| n.ready)
         && pods_not_running.is_empty()
         && etcd_ok
@@ -271,6 +286,7 @@ pub async fn collect(
         pods_not_running,
         etcd_ok,
         cert_min_days,
+        cert_next_renewal,
         expected_version,
         observed_version,
     })
@@ -322,6 +338,16 @@ pub fn render(r: &StatusReport) {
     match r.cert_min_days {
         Some(d) => eprintln!("certificates: earliest expiry in {d} day(s)"),
         None => eprintln!("certificates: expiry unknown"),
+    }
+    match r.cert_next_renewal.as_deref() {
+        Some(ts) => eprintln!(
+            "certificates: next auto-renewal {ts} ({})",
+            crate::certs::SCHEDULE_TIMER_NAME
+        ),
+        None => eprintln!(
+            "certificates: auto-renewal not scheduled (no {})",
+            crate::certs::SCHEDULE_TIMER_NAME
+        ),
     }
     eprintln!(
         "overall: {}",

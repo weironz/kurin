@@ -186,6 +186,19 @@ enum CertsWhat {
         #[arg(long)]
         force: bool,
     },
+    /// Install a systemd timer on every control plane that renews the
+    /// certificates before they expire.
+    Schedule {
+        /// Config file (.toml or .yaml) of the running cluster.
+        #[arg(short, long)]
+        file: PathBuf,
+        /// Renew when a certificate has less than this many days left.
+        #[arg(long, default_value_t = 30)]
+        warn_days: i64,
+        /// Check interval, e.g. 1h, 12h, 1d.
+        #[arg(long, default_value = "24h")]
+        every: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -783,6 +796,15 @@ async fn run(cli: Cli) -> Result<()> {
                     out,
                 )
                 .await
+            }
+            CertsWhat::Schedule {
+                file,
+                warn_days,
+                every,
+            } => {
+                let spec = ops::load_config(&file)?;
+                ops::certs_schedule(&spec, warn_days, &every, out).await?;
+                Ok(())
             }
         },
         Commands::Etcd { what } => match what {
