@@ -113,6 +113,9 @@ pub struct Cmd {
     pub timeout: Option<Duration>,
     /// Secret values scrubbed from stdout/stderr after execution.
     pub redact: Vec<String>,
+    /// Bytes delivered on the command's stdin before EOF (e.g. a manifest
+    /// for `kubectl apply -f -`). `None` closes stdin immediately.
+    pub stdin: Option<Vec<u8>>,
 }
 
 impl Cmd {
@@ -125,6 +128,7 @@ impl Cmd {
             mutating: true,
             timeout: None,
             redact: Vec::new(),
+            stdin: None,
         }
     }
 
@@ -136,6 +140,7 @@ impl Cmd {
             mutating: false,
             timeout: None,
             redact: Vec::new(),
+            stdin: None,
         }
     }
 
@@ -160,6 +165,12 @@ impl Cmd {
     /// Register a secret that must be scrubbed from captured output.
     pub fn redact(mut self, secret: impl Into<String>) -> Self {
         self.redact.push(secret.into());
+        self
+    }
+
+    /// Deliver the given bytes on the command's stdin, then close it.
+    pub fn stdin(mut self, bytes: impl Into<Vec<u8>>) -> Self {
+        self.stdin = Some(bytes.into());
         self
     }
 }

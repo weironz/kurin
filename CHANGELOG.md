@@ -5,6 +5,14 @@ All notable changes to kurin. Format follows Keep a Changelog; semver.
 ## 0.4.0 - 2026-10-27 (unreleased)
 
 ### Added
+- `kurin-kube` ClusterApi (WP-17): one interface for `apply` (server-side,
+  field manager `kurin`), `delete`, `get`/`list`, raw apiserver paths and pod
+  logs, with two interchangeable backends — a kube-rs client over an SSH
+  local forward to the anchor's `127.0.0.1:6443` (admin kubeconfig rewritten
+  in memory, `tls-server-name: kubernetes`) and a `kubectl`-over-SSH
+  fallback for nodes that forbid TCP forwarding. `status`, node labels and
+  the storage provisioners now go through it; `Cmd`/`Session` gained stdin
+  so manifests no longer need a staging file.
 - `kurin precheck`: read-only host audit before create (swap, kernel
   modules, sysctls, role-dependent ports, disk, clock, SELinux...),
   ok/warn/FAIL rows + `--json` event stream, exit 2 on failures.

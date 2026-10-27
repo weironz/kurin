@@ -10,6 +10,7 @@ description = "Kurin built-in components: distro, runtime, CNI, registry, HA and
 kurin-config.workspace = true
 kurin-core.workspace = true
 kurin-artifact.workspace = true
+kurin-kube.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 serde_yml.workspace = true

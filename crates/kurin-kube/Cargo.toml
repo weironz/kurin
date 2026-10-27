@@ -7,3 +7,18 @@ repository.workspace = true
 description = "Kurin Kubernetes API access (ClusterApi)"
 
 [dependencies]
+kurin-config.workspace = true
+kurin-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_yml.workspace = true
+miette.workspace = true
+async-trait.workspace = true
+tokio.workspace = true
+futures = "0.3"
+http = "1"
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
+kube = { version = "4.2", default-features = false, features = ["client", "rustls-tls", "ring"] }
+# Exactly one k8s-openapi version feature. Bump it with the Kubernetes line
+# kurin supports (see src/lib.rs); the dynamic API paths need no changes.
+k8s-openapi = { version = "0.28", features = ["v1_33"] }

@@ -16,12 +16,13 @@
 
 use kurin_config::{Cluster, StorageKind};
 use miette::Result;
+use serde::Deserialize;
 
 use kurin_core::engine::{Drift, Outcome, Session, Stage, Task};
+use kurin_kube::{ApplyOpts, ClusterApi, DynamicObject, Flavor, ObjRef, SessionKubectl};
 
 const LOCAL_PATH_STORAGE_CLASS: &str = "kurin-local-path";
 const NFS_STORAGE_CLASS: &str = "kurin-nfs";
-const STAGING: &str = "/tmp/kurin-storage.yaml";
 
 pub struct StorageInstall {
     node_name: String,
@@ -29,6 +30,7 @@ pub struct StorageInstall {
     default_class: bool,
     server: Option<String>,
     path: Option<String>,
+    flavor: Flavor,
 }
 
 impl StorageInstall {
@@ -46,6 +48,7 @@ impl StorageInstall {
             default_class: cluster.storage_default,
             server: cluster.storage_server.clone(),
             path: cluster.storage_path.clone(),
+            flavor: cluster.distribution.into(),
         })
     }
 
@@ -127,14 +130,9 @@ impl Task for StorageInstall {
     }
 
     async fn check(&self, session: &dyn Session) -> Result<Drift> {
-        let out = session
-            .exec(&format!(
-                "kubectl --kubeconfig /etc/kubernetes/admin.conf get storageclass {} \
-                 -o jsonpath='{{.metadata.name}}' 2>/dev/null",
-                self.class_name()
-            ))
-            .await?;
-        Ok(if out.stdout.trim() == self.class_name() {
+        let api = SessionKubectl::new(session, self.flavor);
+        let class = ObjRef::new("storage.k8s.io/v1", "StorageClass", self.class_name());
+        Ok(if api.get_json(&class).await?.is_some() {
             Drift::InSync
         } else {
             Drift::Drifted(format!("StorageClass {} missing", self.class_name()))
@@ -142,36 +140,31 @@ impl Task for StorageInstall {
     }
 
     async fn apply(&self, session: &dyn Session) -> Result<Outcome> {
-        let manifest = self.manifest();
-        session.write_file(STAGING, manifest.as_bytes()).await?;
-        let out = session
-            .exec(&format!(
-                "kubectl --kubeconfig /etc/kubernetes/admin.conf apply -f {STAGING} && rm -f {STAGING}"
-            ))
-            .await?;
-        if !out.ok() {
-            return Err(miette::miette!(
-                "storage manifest apply failed: {}",
-                out.stderr.lines().last().unwrap_or("")
-            ));
-        }
+        let api = SessionKubectl::new(session, self.flavor);
+        let objects = manifest_objects(&self.manifest())?;
+        api.apply(&objects, ApplyOpts::default())
+            .await
+            .map_err(|err| miette::miette!("storage manifest apply failed: {err}"))?;
         // Converge on a ready provisioner deployment (bounded).
         let ns_dep = match self.kind {
             StorageKind::LocalPath => ("local-path-storage", "local-path-provisioner"),
             StorageKind::Nfs => ("default", "nfs-subdir-external-provisioner"),
         };
+        let deployment = ObjRef::namespaced("apps/v1", "Deployment", ns_dep.0, ns_dep.1);
         let mut last = String::new();
         for _ in 0..60 {
-            let out = session
-                .exec(&format!(
-                    "kubectl --kubeconfig /etc/kubernetes/admin.conf -n {ns} get deploy {dep} \
-                     -o jsonpath='{{.status.availableReplicas}}' 2>/dev/null || true",
-                    ns = ns_dep.0,
-                    dep = ns_dep.1
-                ))
-                .await?;
-            last = out.stdout.trim().to_string();
-            if last == "1" {
+            let available = api
+                .get_json(&deployment)
+                .await
+                .ok()
+                .flatten()
+                .and_then(|v| {
+                    v.pointer("/status/availableReplicas")
+                        .and_then(|n| n.as_u64())
+                })
+                .unwrap_or(0);
+            last = available.to_string();
+            if available == 1 {
                 break;
             }
             tokio::time::sleep(std::time::Duration::from_secs(3)).await;
@@ -185,6 +178,25 @@ impl Task for StorageInstall {
         }
         Ok(Outcome::Verified)
     }
+}
+
+/// Parse a multi-document YAML manifest into dynamic objects.
+fn manifest_objects(manifest: &str) -> Result<Vec<DynamicObject>> {
+    let mut out = Vec::new();
+    for doc in serde_yml::Deserializer::from_str(manifest) {
+        let value = serde_yml::Value::deserialize(doc)
+            .map_err(|e| miette::miette!("parse storage manifest: {e}"))?;
+        if value.is_null() {
+            continue;
+        }
+        let json: serde_json::Value = serde_json::to_value(value)
+            .map_err(|e| miette::miette!("convert storage manifest: {e}"))?;
+        out.push(
+            serde_json::from_value(json)
+                .map_err(|e| miette::miette!("decode storage object: {e}"))?,
+        );
+    }
+    Ok(out)
 }
 
 /// Rancher local-path-provisioner v0.0.31 (trimmed to the pieces kurin
@@ -458,6 +470,21 @@ role = "control-plane"
         );
         assert!(m.contains("rancher/local-path-provisioner:v0.0.31"));
         assert!(m.contains("busybox:1.36.1"));
+    }
+
+    #[test]
+    fn manifest_parses_into_dynamic_objects() {
+        let c = cluster_with("[storage]\nkind = \"local-path\"\n");
+        let t = StorageInstall::new(&c).unwrap();
+        let objs = manifest_objects(&t.manifest()).unwrap();
+        let kinds: Vec<&str> = objs
+            .iter()
+            .filter_map(|o| o.types.as_ref().map(|t| t.kind.as_str()))
+            .collect();
+        assert!(kinds.contains(&"Namespace"), "{kinds:?}");
+        assert!(kinds.contains(&"StorageClass"), "{kinds:?}");
+        assert!(kinds.contains(&"Deployment"), "{kinds:?}");
+        assert!(objs.iter().all(|o| o.metadata.name.is_some()));
     }
 
     #[test]

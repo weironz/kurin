@@ -24,7 +24,7 @@
 | WP-14 kurin-ops | todo | | | `just tier2-certs`、`just tier2-status`、`just tier1-k3s-ops` | |
 | WP-15 Component（一） | todo | | | | |
 | WP-16 Component（二）与能力表 | todo | | | `just tier1-offline`、`just tier3-external-lb` | |
-| WP-17 ClusterApi | todo | | | `just tier2-status`、tier1 标签 | |
+| WP-17 ClusterApi | done | 见提交 | 无 | `just tier2-status`、tier1 标签任务 | kube 4.2 + k8s-openapi 0.28（仅 v1_33）；二进制 +62%/+65%；Docker k3s 集成测试通过 |
 | WP-18 就绪跟踪器 | todo | | | tier1 错误镜像诊断 | |
 | WP-19 kurin-state | todo | | | tier2 后检查 ConfigMap | |
 | WP-20 ClusterSpec 与秘密引用 | todo | | | | |
@@ -80,6 +80,7 @@
 ## 偏离记录
 
 - WP-00：`ScriptedSession` 在 `(exit, stdout, stderr)` 之外增加了「命令已执行但传输中断」的应答与副作用文件，用于覆盖 `Outcome::Unknown → 重新探测` 路径；`cli_output` 快照对任务耗时与阶段内行序做归一化（并发完成顺序不在 v1 契约内）。
+- WP-17：`get_raw` 为 status 的 `/healthz*` 补充；`connect()` 接收 `Option<bool>`（tcp_forwarding）而非 FactsTable；musl 二进制 x86_64 9.6MB→15.7MB、aarch64 7.5MB→12.4MB。
 - WP-07：`RunContext.events` 为 `Arc<EventBus>`；`Plan::build*` 从 `run.facts` 取 facts（不再单独传 `&FactsTable`）；`upgrade::run*` 增加 `&Arc<RunContext>`；新增 `tokio-util`（纯 Rust）。
 - WP-06：`Body` 增加 `ClusterReady`；`Event::ClusterReady` 由 unit variant 变为 `{ ts }`（JSON 仅加 `ts`）；`-v` 实现为每条命令一条摘要，原始 stdout/stderr 在 `-vv`；新增 `time`/`tracing`/`tracing-subscriber`（纯 Rust）。
 - WP-08：`TransportLost` 定义在 `kurin-core::engine`（SSH 返回该错误，执行器 downcast 后按 `Outcome::Unknown` 重新探测）；`forward_remote` 的完整数据回传仅做了请求/端口与回调接线，端到端验证留给 WP-77。
@@ -95,6 +96,7 @@
 
 （随 WP 完成追加）
 
+- WP-17：`just tier2-status`、tier1 标签任务；`KURIN_IT_CLUSTER=<kubeconfig> cargo test -p kurin-kube --test cluster_it -- --ignored`。
 - WP-07：`just tier2`、`just tier1-zone`、`just tier1-k3s`（验证 zone/Blackboard/续跑）。
 - WP-06：`just tier1 && just tier1-test`，再执行 `target/tier1/debug/kurin logs --last -vv`，确认包含 kubeadm init 全量输出与时间戳。
 - WP-08：`just tier0 tier0-test`；转发集成 `cargo test -p kurin --test ssh_docker -- --ignored --nocapture`。

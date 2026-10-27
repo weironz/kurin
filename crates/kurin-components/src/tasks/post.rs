@@ -7,6 +7,7 @@ use kurin_config::Cluster;
 use miette::Result;
 
 use kurin_core::engine::{Drift, Outcome, Session, Stage, Task};
+use kurin_kube::{dynamic_object, ApplyOpts, ClusterApi, Flavor, Gvk, ObjRef, SessionKubectl};
 
 /// Fetches admin.conf and merges it into the operator's local kubeconfig
 /// under context `<cluster-name>`, switching current-context. Merge, never
@@ -212,14 +213,15 @@ fn marker_path(cluster: &str) -> Result<std::path::PathBuf> {
 pub struct NodeLabels {
     node_name: String,
     labels: std::collections::BTreeMap<String, String>,
+    flavor: Flavor,
 }
 
 impl NodeLabels {
     pub fn new(cluster: &Cluster, target: &kurin_config::Node) -> Self {
-        let _ = cluster;
         Self {
             node_name: target.name.clone(),
             labels: target.labels.clone(),
+            flavor: cluster.distribution.into(),
         }
     }
 }
@@ -243,21 +245,14 @@ impl Task for NodeLabels {
         if self.labels.is_empty() {
             return Ok(Drift::InSync);
         }
-        let out = session
-            .exec(&format!(
-                "kubectl --kubeconfig /etc/kubernetes/admin.conf get node {} -o json",
-                self.node_name
-            ))
-            .await?;
-        if !out.ok() {
+        let api = SessionKubectl::new(session, self.flavor);
+        let node = ObjRef::new("v1", "Node", &self.node_name);
+        let Some(v) = api.get_json(&node).await? else {
             return Ok(Drift::Drifted(format!(
-                "cannot read node {}: {}",
-                self.node_name,
-                out.stderr.lines().last().unwrap_or("")
+                "cannot read node {}: not found",
+                self.node_name
             )));
-        }
-        let v: serde_json::Value = serde_json::from_str(&out.stdout)
-            .map_err(|e| miette::miette!("parse node json: {e}"))?;
+        };
         let current = v
             .pointer("/metadata/labels")
             .and_then(|l| l.as_object())
@@ -284,27 +279,19 @@ impl Task for NodeLabels {
         if self.labels.is_empty() {
             return Ok(Outcome::Verified);
         }
-        let pairs: Vec<String> = self
-            .labels
-            .iter()
-            .map(|(k, v)| format!("{k}={v}"))
-            .collect();
-        let out = session
-            .exec(&format!(
-                "kubectl --kubeconfig /etc/kubernetes/admin.conf label node {} {} --overwrite",
-                self.node_name,
-                pairs.join(" ")
-            ))
-            .await?;
-        if out.ok() {
-            Ok(Outcome::Verified)
-        } else {
-            Err(miette::miette!(
-                "labeling {} failed: {}",
-                self.node_name,
-                out.stderr.lines().last().unwrap_or("")
-            ))
-        }
+        let api = SessionKubectl::new(session, self.flavor);
+        let mut node = dynamic_object(&Gvk::core("v1", "Node"), &self.node_name, None);
+        node.metadata.labels = Some(self.labels.clone());
+        api.apply(
+            &[node],
+            ApplyOpts {
+                force: true,
+                ..ApplyOpts::default()
+            },
+        )
+        .await
+        .map_err(|err| miette::miette!("labeling {} failed: {err}", self.node_name))?;
+        Ok(Outcome::Verified)
     }
 }
 // ---------------------------------------------------------------------------

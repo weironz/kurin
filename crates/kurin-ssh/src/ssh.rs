@@ -1129,18 +1129,29 @@ impl Default for SshSessionPoolBuilder {
 fn become_command(ssh: &ResolvedSsh, cmd: &Cmd) -> (String, Option<Vec<u8>>) {
     let wrap = cmd.privileged && ssh.user != "root" && !matches!(ssh.r#become, BecomeMode::None);
     if !wrap {
-        return (cmd.script.clone(), None);
+        return (cmd.script.clone(), cmd.stdin.clone());
     }
-    match &ssh.become_password {
-        None => (
-            format!("sudo -n -- sh -c {}", shell_quote(&cmd.script)),
-            None,
-        ),
-        Some(password) => (
-            format!("sudo -S -p '' -- sh -c {}", shell_quote(&cmd.script)),
-            Some(format!("{password}\n").into_bytes()),
-        ),
-    }
+    // `sudo -S` consumes exactly the password line; everything after it
+    // stays on stdin for the wrapped command (e.g. `kubectl apply -f -`).
+    let password = ssh
+        .become_password
+        .as_ref()
+        .map(|password| format!("{password}\n").into_bytes());
+    let stdin = match (password, &cmd.stdin) {
+        (Some(mut pw), Some(payload)) => {
+            pw.extend_from_slice(payload);
+            Some(pw)
+        }
+        (Some(pw), None) => Some(pw),
+        (None, Some(payload)) => Some(payload.clone()),
+        (None, None) => None,
+    };
+    let command = if ssh.become_password.is_some() {
+        format!("sudo -S -p '' -- sh -c {}", shell_quote(&cmd.script))
+    } else {
+        format!("sudo -n -- sh -c {}", shell_quote(&cmd.script))
+    };
+    (command, stdin)
 }
 
 /// R8: scrub the command's registered secrets from captured output before
@@ -1435,6 +1446,24 @@ mod tests {
         );
         // R8: the password must never appear on the command line.
         assert!(!line.contains(FAKE_SUDO_PASSWORD));
+    }
+
+    #[test]
+    fn command_stdin_rides_through_become() {
+        let cmd = Cmd::new("kubectl apply -f -").stdin(b"kind: Node\n".to_vec());
+
+        let (line, stdin) = become_command(&login("root", BecomeMode::Auto, None), &cmd);
+        assert_eq!(line, "kubectl apply -f -");
+        assert_eq!(stdin.as_deref(), Some(&b"kind: Node\n"[..]));
+
+        let (line, stdin) = become_command(
+            &login("ubuntu", BecomeMode::Auto, Some(FAKE_SUDO_PASSWORD)),
+            &cmd,
+        );
+        assert!(line.starts_with("sudo -S -p ''"));
+        let stdin = stdin.expect("password + payload on stdin");
+        assert!(stdin.starts_with(b"fake-sudo-password-not-real\n"));
+        assert!(stdin.ends_with(b"kind: Node\n"));
     }
 
     #[test]

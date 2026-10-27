@@ -13,6 +13,7 @@ kurin-config = { path = "crates/kurin-config" }
 kurin-core = { path = "crates/kurin-core" }
 kurin-ssh = { path = "crates/kurin-ssh" }
 kurin-artifact = { path = "crates/kurin-artifact" }
+kurin-kube = { path = "crates/kurin-kube" }
 kurin-components = { path = "crates/kurin-components" }
 
 serde = { version = "1", features = ["derive"] }

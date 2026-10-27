@@ -1,22 +1,20 @@
 //! Cluster health probe (`kurin status`): node readiness, non-running pods,
 //! etcd health and certificate freshness.
 //!
-//! Everything is collected through the first control-plane node's session.
-//! kubectl is distribution-dependent: kubeadm nodes use
-//! `/etc/kubernetes/admin.conf`, k3s nodes use `k3s kubectl` with
-//! `/etc/rancher/k3s/k3s.yaml`. On HA clusters `--server
-//! https://127.0.0.1:6443` pins the local apiserver so a broken VIP cannot
-//! blind the probe. etcd health: kubeadm counts ready etcd pods, k3s runs
-//! its etcd outside pods and is checked via `/healthz/etcd`.
+//! Everything is collected through [`kurin_kube::ClusterApi`], which prefers
+//! the SSH-tunneled kube-rs backend and falls back to kubectl over SSH. On
+//! HA clusters kubectl pins `--server https://127.0.0.1:6443` so a broken
+//! VIP cannot blind the probe. etcd health: kubeadm counts ready etcd pods,
+//! k3s runs its etcd outside pods and is checked via `/healthz/etcd`.
 
 use std::sync::Arc;
 
 use kurin_config::{Cluster, Distribution};
-use miette::{IntoDiagnostic, Result, WrapErr};
+use miette::Result;
 use serde_json::Value;
 
-use kurin_core::engine::Session;
 use kurin_core::executor::SessionPool;
+use kurin_kube::{connect, Gvk, ALL_NAMESPACES};
 
 /// One row of the node table.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -39,39 +37,9 @@ pub struct StatusReport {
     pub cert_min_days: Option<i64>,
 }
 
-/// Base kubectl invocation; HA clusters pin the local apiserver.
-fn kubectl_base(cluster: &Cluster) -> String {
-    let ha = cluster.control_plane().nth(1).is_some();
-    let mut cmd = if cluster.distribution == Distribution::K3s {
-        String::from("k3s kubectl --kubeconfig /etc/rancher/k3s/k3s.yaml")
-    } else {
-        String::from("kubectl --kubeconfig /etc/kubernetes/admin.conf")
-    };
-    if ha {
-        cmd.push_str(" --server https://127.0.0.1:6443");
-    }
-    cmd
-}
-
-async fn kubectl_json(s: &Arc<dyn Session>, base: &str, args: &str) -> Result<Value> {
-    let cmd = format!("{base} {args}");
-    let out = s
-        .exec(&cmd)
-        .await
-        .wrap_err_with(|| format!("cannot run `{cmd}`"))?;
-    if !out.ok() {
-        miette::bail!("`{cmd}` exited {}: {}", out.exit_code, out.stderr.trim());
-    }
-    serde_json::from_str(&out.stdout)
-        .into_diagnostic()
-        .wrap_err_with(|| format!("`{cmd}` returned invalid JSON"))
-}
-
-fn parse_nodes(v: &Value) -> Vec<NodeStatus> {
-    v.get("items")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
+fn parse_nodes(items: &[Value]) -> Vec<NodeStatus> {
+    items
+        .iter()
         .map(|item| {
             let name = item
                 .pointer("/metadata/name")
@@ -118,11 +86,9 @@ fn parse_nodes(v: &Value) -> Vec<NodeStatus> {
         .collect()
 }
 
-fn parse_pods_not_running(v: &Value) -> Vec<String> {
-    v.get("items")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
+fn parse_pods_not_running(items: &[Value]) -> Vec<String> {
+    items
+        .iter()
         .filter(|item| {
             !matches!(
                 item.pointer("/status/phase").and_then(Value::as_str),
@@ -144,11 +110,9 @@ fn parse_pods_not_running(v: &Value) -> Vec<String> {
 }
 
 /// Ready etcd pods (`component=etcd` in kube-system).
-fn parse_etcd_ready(v: &Value) -> usize {
-    v.get("items")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
+fn parse_etcd_ready(items: &[Value]) -> usize {
+    items
+        .iter()
         .filter(|item| {
             match item
                 .pointer("/status/containerStatuses")
@@ -179,43 +143,49 @@ pub(crate) async fn cert_min_days(
         .min())
 }
 
-/// Probe the cluster through the first control-plane session.
+/// Probe the cluster through the control-plane anchors.
 pub async fn collect(cluster: &Cluster, pool: &Arc<dyn SessionPool>) -> Result<StatusReport> {
     let cp: Vec<_> = cluster.control_plane().collect();
-    let first = cp
-        .first()
-        .ok_or_else(|| miette::miette!("cluster has no control-plane node"))?;
-    let s = pool.get(&first.name).await?;
-    let base = kubectl_base(cluster);
+    if cp.is_empty() {
+        return Err(miette::miette!("cluster has no control-plane node"));
+    }
+    let anchors: Vec<String> = cp.iter().map(|n| n.name.clone()).collect();
+    let mut log = |msg: &str| eprintln!("{msg}");
+    let connected = connect(
+        pool,
+        &anchors,
+        cluster.distribution.into(),
+        None,
+        cp.len() >= 2,
+        &mut log,
+    )
+    .await?;
+    let api = connected.api;
 
-    let nodes = parse_nodes(&kubectl_json(&s, &base, "get nodes -o json").await?);
-    let pods_not_running =
-        parse_pods_not_running(&kubectl_json(&s, &base, "get pods -A -o json").await?);
+    let nodes = parse_nodes(&api.list_json(&Gvk::core("v1", "Node"), None, None).await?);
+    let pods_not_running = parse_pods_not_running(
+        &api.list_json(&Gvk::core("v1", "Pod"), Some(ALL_NAMESPACES), None)
+            .await?,
+    );
 
     let etcd_ok = if cluster.distribution == Distribution::K3s {
         // k3s runs etcd as part of the server process, not in a pod: ask the
         // apiserver directly (any non-5xx answer means etcd is serving).
-        let cmd = format!("{base} get --raw /healthz/etcd");
-        let out = s
-            .exec(&cmd)
-            .await
-            .wrap_err_with(|| format!("cannot run `{cmd}`"))?;
-        out.ok()
+        api.get_raw("/healthz/etcd").await.is_ok()
     } else if cp.len() >= 2 {
-        let etcd = kubectl_json(
-            &s,
-            &base,
-            "-n kube-system get pods -l component=etcd -o json",
-        )
-        .await?;
+        let etcd = api
+            .list_json(
+                &Gvk::core("v1", "Pod"),
+                Some("kube-system"),
+                Some("component=etcd"),
+            )
+            .await?;
         parse_etcd_ready(&etcd) == cp.len()
     } else {
-        let cmd = format!("{base} get --raw /healthz");
-        let out = s
-            .exec(&cmd)
+        api.get_raw("/healthz")
             .await
-            .wrap_err_with(|| format!("cannot run `{cmd}`"))?;
-        out.ok() && out.stdout.trim() == "ok"
+            .map(|body| body.trim() == "ok")
+            .unwrap_or(false)
     };
 
     let cert_min_days = cert_min_days(cluster, pool).await?;
@@ -303,26 +273,29 @@ role = "control-plane"
     }
 
     #[test]
-    fn kubectl_base_kubeadm() {
+    fn distribution_maps_to_kubectl_flavor() {
         assert_eq!(
-            kubectl_base(&parse(kurin_config::Distribution::K8s, false)),
-            "kubectl --kubeconfig /etc/kubernetes/admin.conf"
+            kurin_kube::Flavor::from(parse(kurin_config::Distribution::K8s, false).distribution),
+            kurin_kube::Flavor::Kubeadm
         );
         assert_eq!(
-            kubectl_base(&parse(kurin_config::Distribution::K8s, true)),
-            "kubectl --kubeconfig /etc/kubernetes/admin.conf --server https://127.0.0.1:6443"
+            kurin_kube::Flavor::from(parse(kurin_config::Distribution::K3s, false).distribution),
+            kurin_kube::Flavor::K3s
         );
     }
 
     #[test]
-    fn kubectl_base_k3s() {
-        assert_eq!(
-            kubectl_base(&parse(kurin_config::Distribution::K3s, false)),
-            "k3s kubectl --kubeconfig /etc/rancher/k3s/k3s.yaml"
-        );
-        assert_eq!(
-            kubectl_base(&parse(kurin_config::Distribution::K3s, true)),
-            "k3s kubectl --kubeconfig /etc/rancher/k3s/k3s.yaml --server https://127.0.0.1:6443"
-        );
+    fn parses_node_rows_from_a_list() {
+        let items = vec![serde_json::json!({
+            "metadata": {"name": "cp1", "labels": {"node-role.kubernetes.io/control-plane": ""}},
+            "status": {
+                "conditions": [{"type": "Ready", "status": "True"}],
+                "nodeInfo": {"kubeletVersion": "v1.33.2"}
+            }
+        })];
+        let nodes = parse_nodes(&items);
+        assert_eq!(nodes.len(), 1);
+        assert!(nodes[0].ready);
+        assert_eq!(nodes[0].roles, "control-plane");
     }
 }
