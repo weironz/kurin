@@ -78,7 +78,9 @@ impl Task for KernelDeps {
             .iter()
             .map(|t| match *t {
                 "conntrack" => "conntrack-tools".to_string(),
-                "ebtables" => "iptables-ebtables".to_string(),
+                // RHEL9+ has no separate ebtables package: the binary is
+                // shipped by iptables-nft (nf_tables compat).
+                "ebtables" => "iptables-nft".to_string(),
                 other => other.to_string(),
             })
             .collect();

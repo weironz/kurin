@@ -6,7 +6,13 @@ set -euo pipefail
 
 NAME=kurin-rocky9
 KEYS=e2e/tier1/.keys
-IMG_URL="https://dl.rockylinux.org/pub/rocky/9/images/x86_64/Rocky-9-GenericCloud-Base.latest.x86_64.qcow2"
+LOCAL_IMG="$HOME/rocky-9-genericcloud.qcow2"
+if [ -f "$LOCAL_IMG" ]; then
+    IMG_URL="file://$LOCAL_IMG"
+else
+    # Official CDN is ~1MB/s from this host; the Singapore mirror is 20x.
+    IMG_URL="https://sg.mirrors.cicku.me/rocky/9/images/x86_64/Rocky-9-GenericCloud-Base.latest.x86_64.qcow2"
+fi
 CID="$HOME/kurin-rocky-cloud-init.yaml"
 EVENTS=$(mktemp)
 trap 'rm -f "$CID" "$EVENTS"; multipass delete -p "$NAME" >/dev/null 2>&1 || true' EXIT
