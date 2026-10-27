@@ -1229,8 +1229,7 @@ mod tests {
     fn cluster(distribution: Distribution, runtime: RuntimeKind) -> Cluster {
         Cluster {
             name: "t".into(),
-            offline_dir: None,
-            zone: None,
+            labels: Default::default(),
             distribution,
             ha_mode: HaMode::KubeVip,
             runtime,
@@ -1244,15 +1243,20 @@ mod tests {
                 node("cp1", NodeRole::ControlPlane),
                 node("w1", NodeRole::Worker),
             ],
-            registry_kind: None,
-            registry_port: 5000,
-            registry_username: None,
-            registry_password: None,
-            registry_data_dir: "/var/lib/kurin/registry".into(),
-            storage_kind: None,
-            storage_default: false,
-            storage_server: None,
-            storage_path: None,
+            ssh: kurin_config::SshDefaultsSpec {
+                user: "root".into(),
+                port: 22,
+                r#become: kurin_config::BecomeMode::Auto,
+                become_password: None,
+                known_hosts: Default::default(),
+                auth: None,
+            },
+            registry: kurin_config::RegistrySpec::default(),
+            storage: kurin_config::StorageSpec::default(),
+            packages: kurin_config::PackageSources {
+                offline_dir: None,
+                zone: None,
+            },
             source: String::new(),
         }
     }

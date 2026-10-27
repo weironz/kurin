@@ -11,7 +11,7 @@
 
 use std::sync::Arc;
 
-use kurin_config::Cluster;
+use kurin_config::{Cluster, ResolvedSecrets};
 use kurin_core::engine::Session;
 use kurin_core::executor::SessionPool;
 use kurin_core::lock::ClusterLockGuard;
@@ -48,13 +48,14 @@ pub(crate) async fn prepare(
     op_id: String,
     out: OutputOpts,
     lock: Option<ClusterLockGuard>,
+    secrets: Arc<ResolvedSecrets>,
 ) -> Result<Prepared> {
     if !matches!(params, Params::AddNodes { .. }) {
         return Err(miette::miette!(
             "add_nodes::prepare called for another operation"
         ));
     }
-    let zone = crate::resolve_zone(spec.zone.as_deref())?;
+    let zone = crate::resolve_zone(spec.zone())?;
 
     // The dynamic manifest (when the cluster runs a version newer than the
     // embedded table) must be known before the run context is built: the
@@ -129,7 +130,7 @@ pub(crate) async fn prepare(
     let sources = kurin_core::run::ArtifactSources {
         zone,
         manifest_json,
-        offline_dir: spec.offline_dir.clone(),
+        offline_dir: spec.packages.offline_dir.clone(),
     };
     let bb = match kurin_core::blackboard::Blackboard::default_path(&spec.name) {
         Some(path) => kurin_core::blackboard::Blackboard::open(path, false)
@@ -140,6 +141,7 @@ pub(crate) async fn prepare(
         Arc::new(kurin_core::run::RunContext::new(op_id, &spec.name, sources).with_blackboard(bb));
     let session = OpSession::start(&run, out)?;
     session.register_cluster(&spec);
+    crate::register_resolved_secrets(&run, &secrets);
 
     if let Some(s) = first_session {
         let first = spec

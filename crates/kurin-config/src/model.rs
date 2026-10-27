@@ -1,27 +1,50 @@
 //! Internal model: the only thing the executor ever sees.
-//! `Cluster::from_config` merges defaults; `validate` is the structural
+//! `ClusterSpec::from_config` merges defaults; `validate` is the structural
 //! gate. Every cross-field conflict is a hard error before any SSH
 //! happens. Component-owned rules (the distributions' constraints) live
 //! in the `Component` implementations in `kurin-components` (WP-15);
 //! the CLI runs them right after this crate's load pipeline.
+//!
+//! `ClusterSpec` replaces the old flat `Cluster`. Component-owned config
+//! sections (`registry`, `storage`, `cni`) and artifact sources
+//! (`packages`) are sub-structs, so a component can evolve its section
+//! without touching the core model (ADR-15). Secret-valued fields hold a
+//! [`SecretRef`] until `kurin-ops::prepare` resolves them once.
 
 use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use std::net::IpAddr;
+use std::path::{Path, PathBuf};
 
 use ipnet::Ipv4Net;
+use secrecy::SecretString;
 use semver::Version;
+use serde::Serialize;
 
 use crate::config::{
     BecomeMode, ClusterConfig, CniConfig, Distribution, HaMode, HostKeyMode, NodeRole,
     RegistryKind, RuntimeKind, SshAuth, StorageKind, CONFIG_VERSION,
 };
 use crate::error::{ConfigError, Result};
+use crate::secret::SecretRef;
 
 pub const DEFAULT_KUBERNETES_VERSION: &str = "1.33.1";
 
-/// Fully-resolved node: defaults already merged, auth resolved.
-#[derive(Debug, Clone)]
+/// Cluster-wide SSH defaults after default merging.
+#[derive(Debug, Clone, Serialize)]
+pub struct SshDefaultsSpec {
+    pub user: String,
+    pub port: u16,
+    pub r#become: BecomeMode,
+    pub become_password: Option<SecretRef>,
+    pub known_hosts: HostKeyMode,
+    pub auth: Option<SshAuth>,
+}
+
+/// Fully-resolved node: defaults already merged. Secret fields still hold
+/// their reference; resolution happens once in
+/// [`ClusterSpec::resolve_secrets`].
+#[derive(Debug, Clone, Serialize)]
 pub struct Node {
     pub name: String,
     pub role: NodeRole,
@@ -34,15 +57,15 @@ pub struct Node {
     pub arch: Option<String>,
 }
 
-/// Fully-resolved SSH access for one node (node override > [ssh] default).
-#[derive(Clone)]
+/// Fully-resolved SSH access for one node (node override > `[ssh]` default).
+#[derive(Clone, Serialize)]
 pub struct ResolvedSsh {
     pub user: String,
     pub port: u16,
     /// Privilege escalation policy (see `[ssh] become`).
     pub r#become: BecomeMode,
-    /// sudo password, when this login's sudo is not passwordless.
-    pub become_password: Option<String>,
+    /// sudo password reference, when this login's sudo is not passwordless.
+    pub become_password: Option<SecretRef>,
     /// Host-key verification policy (node override > `[ssh]` default).
     pub known_hosts: HostKeyMode,
     pub auth: SshAuth,
@@ -66,77 +89,106 @@ impl fmt::Debug for ResolvedSsh {
     }
 }
 
-#[derive(Clone)]
-pub struct Cluster {
-    pub name: String,
-    /// Offline artifact bundle directory (None = online install).
-    pub offline_dir: Option<std::path::PathBuf>,
-    /// Domestic mirror zone (env `KURIN_ZONE` overrides at CLI level).
+/// Private registry on `role = "registry"` nodes (component-owned section).
+#[derive(Debug, Clone, Serialize)]
+pub struct RegistrySpec {
+    pub kind: Option<RegistryKind>,
+    pub port: u16,
+    pub username: Option<String>,
+    pub password: Option<SecretRef>,
+    pub data_dir: PathBuf,
+}
+
+impl Default for RegistrySpec {
+    fn default() -> Self {
+        Self {
+            kind: None,
+            port: 5000,
+            username: None,
+            password: None,
+            data_dir: PathBuf::from("/var/lib/kurin/registry"),
+        }
+    }
+}
+
+/// Dynamic storage provisioning (component-owned section).
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct StorageSpec {
+    pub kind: Option<StorageKind>,
+    pub default: bool,
+    pub server: Option<String>,
+    pub path: Option<String>,
+}
+
+/// Where node payloads come from: online (download) or a prepared offline
+/// bundle directory.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct PackageSources {
+    pub offline_dir: Option<PathBuf>,
     pub zone: Option<String>,
-    /// Cluster distribution (kubeadm or k3s).
-    pub distribution: Distribution,
-    /// HA mode resolved from [ha] (kube-vip by default).
-    pub ha_mode: HaMode,
-    /// Container runtime (containerd by default; k3s embeds its own).
-    pub runtime: RuntimeKind,
+}
+
+/// The cluster model every operation sees (ADR-15).
+#[derive(Clone, Serialize)]
+pub struct ClusterSpec {
+    pub name: String,
+    pub labels: BTreeMap<String, String>,
     pub kubernetes_version: Version,
+    pub distribution: Distribution,
+    pub runtime: RuntimeKind,
     pub pod_cidr: Ipv4Net,
     pub service_cidr: Ipv4Net,
     pub dns_domain: String,
+    /// Exactly one CNI is active; the component owns its parameters.
     pub cni: CniConfig,
+    pub ha_mode: HaMode,
     pub vip: Option<IpAddr>,
     pub nodes: Vec<Node>,
-    /// Private registry implementation (None = no registry nodes).
-    pub registry_kind: Option<RegistryKind>,
-    pub registry_port: u16,
-    pub registry_username: Option<String>,
-    pub registry_password: Option<String>,
-    pub registry_data_dir: std::path::PathBuf,
-    /// Dynamic storage provisioning (None = nothing deployed).
-    pub storage_kind: Option<StorageKind>,
-    pub storage_default: bool,
-    pub storage_server: Option<String>,
-    pub storage_path: Option<String>,
+    pub ssh: SshDefaultsSpec,
+    /// Component-owned section: private registry.
+    pub registry: RegistrySpec,
+    /// Component-owned section: dynamic storage.
+    pub storage: StorageSpec,
+    /// Artifact sources: offline bundle directory and mirror zone.
+    pub packages: PackageSources,
     /// Original config text, retained so validation can render spans.
+    /// Never serialized or Debug-printed: it contains secrets.
+    #[serde(skip)]
     pub source: String,
 }
 
-/// R8: the derived Debug would print the registry password verbatim.
-impl fmt::Debug for Cluster {
+/// Compatibility alias for call sites that still spell the old name.
+pub type Cluster = ClusterSpec;
+/// Compatibility alias for call sites that spell the newer name.
+pub type NodeSpec = Node;
+
+/// R8: the derived Debug would print the raw source (which contains
+/// secrets); every secret field masks itself through `SecretRef`.
+impl fmt::Debug for ClusterSpec {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Cluster")
+        f.debug_struct("ClusterSpec")
             .field("name", &self.name)
-            .field("offline_dir", &self.offline_dir)
-            .field("zone", &self.zone)
-            .field("distribution", &self.distribution)
-            .field("ha_mode", &self.ha_mode)
-            .field("runtime", &self.runtime)
+            .field("labels", &self.labels)
             .field("kubernetes_version", &self.kubernetes_version)
+            .field("distribution", &self.distribution)
+            .field("runtime", &self.runtime)
             .field("pod_cidr", &self.pod_cidr)
             .field("service_cidr", &self.service_cidr)
             .field("dns_domain", &self.dns_domain)
             .field("cni", &self.cni)
+            .field("ha_mode", &self.ha_mode)
             .field("vip", &self.vip)
             .field("nodes", &self.nodes)
-            .field("registry_kind", &self.registry_kind)
-            .field("registry_port", &self.registry_port)
-            .field("registry_username", &self.registry_username)
-            .field(
-                "registry_password",
-                &self.registry_password.as_ref().map(|_| "******"),
-            )
-            .field("registry_data_dir", &self.registry_data_dir)
-            .field("storage_kind", &self.storage_kind)
-            .field("storage_default", &self.storage_default)
-            .field("storage_server", &self.storage_server)
-            .field("storage_path", &self.storage_path)
-            // `source` is the raw TOML, which contains secrets; never Debug it.
+            .field("ssh", &self.ssh)
+            .field("registry", &self.registry)
+            .field("storage", &self.storage)
+            .field("packages", &self.packages)
             .field("source", &"<redacted>")
             .finish()
     }
 }
 
-impl Cluster {
+impl ClusterSpec {
     pub fn control_plane(&self) -> impl Iterator<Item = &Node> {
         self.nodes
             .iter()
@@ -146,7 +198,52 @@ impl Cluster {
         self.nodes.iter().filter(|n| n.role == NodeRole::Worker)
     }
 
-    pub fn from_config(cfg: ClusterConfig) -> Result<Cluster> {
+    /// Offline artifact bundle directory, if any.
+    pub fn offline_dir(&self) -> Option<&Path> {
+        self.packages.offline_dir.as_deref()
+    }
+    /// Configured mirror zone, if any.
+    pub fn zone(&self) -> Option<&str> {
+        self.packages.zone.as_deref()
+    }
+    /// Registry implementation, when one is configured.
+    pub fn registry_kind(&self) -> Option<RegistryKind> {
+        self.registry.kind
+    }
+    /// Registry listen port.
+    pub fn registry_port(&self) -> u16 {
+        self.registry.port
+    }
+    /// Registry basic-auth user.
+    pub fn registry_username(&self) -> Option<&str> {
+        self.registry.username.as_deref()
+    }
+    /// Registry password reference.
+    pub fn registry_password(&self) -> Option<&SecretRef> {
+        self.registry.password.as_ref()
+    }
+    /// Registry data directory.
+    pub fn registry_data_dir(&self) -> &Path {
+        &self.registry.data_dir
+    }
+    /// Storage provisioner kind.
+    pub fn storage_kind(&self) -> Option<StorageKind> {
+        self.storage.kind
+    }
+    /// Whether kurin's StorageClass becomes the cluster default.
+    pub fn storage_default(&self) -> bool {
+        self.storage.default
+    }
+    /// NFS server.
+    pub fn storage_server(&self) -> Option<&str> {
+        self.storage.server.as_deref()
+    }
+    /// NFS export path.
+    pub fn storage_path(&self) -> Option<&str> {
+        self.storage.path.as_deref()
+    }
+
+    pub fn from_config(cfg: ClusterConfig) -> Result<ClusterSpec> {
         let kubernetes_version = cfg
             .kubernetes
             .version
@@ -163,12 +260,12 @@ impl Cluster {
             .network
             .dns_domain
             .ok_or_else(|| ConfigError::invalid(String::new(), "network.dns-domain missing"))?;
-        let default_user = cfg.ssh.user.unwrap_or_else(|| "root".into());
+        let default_user = cfg.ssh.user.clone().unwrap_or_else(|| "root".into());
         let default_port = cfg.ssh.port.unwrap_or(22);
-        let default_auth = cfg.ssh.auth;
+        let default_auth = cfg.ssh.auth.clone();
         // node override > [ssh] default > auto.
         let default_become = cfg.ssh.r#become.unwrap_or_default();
-        let default_become_password = cfg.ssh.become_password;
+        let default_become_password = cfg.ssh.become_password.clone();
         let default_known_hosts = cfg.ssh.known_hosts.unwrap_or_default();
 
         let mut nodes = Vec::with_capacity(cfg.nodes.len());
@@ -217,33 +314,92 @@ impl Cluster {
         let distribution = cfg.kubernetes.distribution;
         let ha_mode = cfg.ha.mode;
         let runtime = cfg.kubernetes.runtime;
-        Ok(Cluster {
+        Ok(ClusterSpec {
             name: cfg.name,
-            offline_dir,
-            zone,
-            distribution,
-            ha_mode,
-            runtime,
+            labels: BTreeMap::new(),
             kubernetes_version,
+            distribution,
+            runtime,
             pod_cidr,
             service_cidr,
             dns_domain,
             cni: cfg.network.cni,
+            ha_mode,
             vip: cfg.ha.vip,
             nodes,
-            registry_kind,
-            registry_port,
-            registry_username: cfg.registry.username,
-            registry_password: cfg.registry.password,
-            registry_data_dir: cfg
-                .registry
-                .data_dir
-                .unwrap_or_else(|| "/var/lib/kurin/registry".into()),
-            storage_kind: cfg.storage.kind,
-            storage_default: cfg.storage.default,
-            storage_server: cfg.storage.server,
-            storage_path: cfg.storage.path,
+            ssh: SshDefaultsSpec {
+                user: default_user,
+                port: default_port,
+                r#become: default_become,
+                become_password: default_become_password,
+                known_hosts: default_known_hosts,
+                auth: cfg.ssh.auth,
+            },
+            registry: RegistrySpec {
+                kind: registry_kind,
+                port: registry_port,
+                username: cfg.registry.username,
+                password: cfg.registry.password,
+                data_dir: cfg
+                    .registry
+                    .data_dir
+                    .unwrap_or_else(|| "/var/lib/kurin/registry".into()),
+            },
+            storage: StorageSpec {
+                kind: cfg.storage.kind,
+                default: cfg.storage.default,
+                server: cfg.storage.server,
+                path: cfg.storage.path,
+            },
+            packages: PackageSources { offline_dir, zone },
             source: String::new(),
+        })
+    }
+
+    /// Resolve every secret reference exactly once.
+    ///
+    /// The returned values are the only place resolved secrets live; the
+    /// caller registers them with the event bus redactor and hands them to
+    /// the SSH pool and registry tasks. Diagnostics name the config field
+    /// (`nodes.<name>.ssh.auth.password`, `registry.password`, …).
+    pub fn resolve_secrets(&self) -> Result<ResolvedSecrets> {
+        let mut nodes = BTreeMap::new();
+        for node in &self.nodes {
+            let field = format!("nodes.{}.ssh", node.name);
+            let auth = match &node.ssh.auth {
+                SshAuth::Password { password } => {
+                    ResolvedAuth::Password(password.resolve_for(&format!("{field}.auth.password"))?)
+                }
+                SshAuth::PrivateKey {
+                    key_path,
+                    passphrase,
+                } => ResolvedAuth::PrivateKey {
+                    key_path: key_path.clone(),
+                    passphrase: match passphrase {
+                        Some(p) => Some(p.resolve_for(&format!("{field}.auth.passphrase"))?),
+                        None => None,
+                    },
+                },
+            };
+            let become_password = match &node.ssh.become_password {
+                Some(p) => Some(p.resolve_for(&format!("{field}.become-password"))?),
+                None => None,
+            };
+            nodes.insert(
+                node.name.clone(),
+                ResolvedSshSecrets {
+                    auth,
+                    become_password,
+                },
+            );
+        }
+        let registry_password = match &self.registry.password {
+            Some(p) => Some(p.resolve_for("registry.password")?),
+            None => None,
+        };
+        Ok(ResolvedSecrets {
+            nodes,
+            registry_password,
         })
     }
 
@@ -255,7 +411,7 @@ impl Cluster {
         // in `kurin-components` (WP-15/16); the CLI runs them right
         // after this crate's load pipeline. kurin-config keeps the
         // structural checks below.
-        if let Some(d) = &self.offline_dir {
+        if let Some(d) = &self.packages.offline_dir {
             if !d.is_dir() {
                 return Err(invalid(format!(
                     "artifacts.offline-dir {:?} does not exist or is not a directory (build one with `kurin artifact build --help`)",
@@ -341,7 +497,7 @@ impl Cluster {
             .iter()
             .filter(|n| n.role == NodeRole::Registry)
             .count();
-        if reg_nodes > 0 && self.registry_kind.is_none() {
+        if reg_nodes > 0 && self.registry.kind.is_none() {
             return Err(invalid(format!(
                 "role = \"registry\" nodes need [registry] kind (docker-registry, zot or harbor); {reg_nodes} node(s) declared"
             )));
@@ -375,6 +531,126 @@ impl Cluster {
     }
 }
 
+/// Fallible lowering from the declarative schema: required fields and
+/// cross-field defaults are checked here, so `TryFrom` (not `From`) is the
+/// honest conversion.
+impl TryFrom<ClusterConfig> for ClusterSpec {
+    type Error = ConfigError;
+
+    fn try_from(cfg: ClusterConfig) -> Result<Self> {
+        Self::from_config(cfg)
+    }
+}
+
+/// One node's resolved SSH secrets.
+#[derive(Clone)]
+pub struct ResolvedSshSecrets {
+    pub auth: ResolvedAuth,
+    pub become_password: Option<SecretString>,
+}
+
+/// Resolved SSH authentication (secrets exposed only through
+/// [`secrecy::ExposeSecret`]).
+#[derive(Clone)]
+pub enum ResolvedAuth {
+    Password(SecretString),
+    PrivateKey {
+        key_path: PathBuf,
+        passphrase: Option<SecretString>,
+    },
+}
+
+impl fmt::Debug for ResolvedAuth {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ResolvedAuth::Password(_) => f
+                .debug_struct("Password")
+                .field("password", &"******")
+                .finish(),
+            ResolvedAuth::PrivateKey {
+                key_path,
+                passphrase,
+            } => f
+                .debug_struct("PrivateKey")
+                .field("key_path", key_path)
+                .field("passphrase", &passphrase.as_ref().map(|_| "******"))
+                .finish(),
+        }
+    }
+}
+
+impl fmt::Debug for ResolvedSshSecrets {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ResolvedSshSecrets")
+            .field("auth", &self.auth)
+            .field(
+                "become_password",
+                &self.become_password.as_ref().map(|_| "******"),
+            )
+            .finish()
+    }
+}
+
+/// Every secret value of one cluster, resolved once per operation.
+#[derive(Clone, Default)]
+pub struct ResolvedSecrets {
+    /// Keyed by node name.
+    pub nodes: BTreeMap<String, ResolvedSshSecrets>,
+    pub registry_password: Option<SecretString>,
+}
+
+impl ResolvedSecrets {
+    /// One node's resolved SSH secrets.
+    pub fn node(&self, name: &str) -> Option<&ResolvedSshSecrets> {
+        self.nodes.get(name)
+    }
+
+    /// Every resolved value, for registering with the redactor.
+    pub fn values(&self) -> Vec<&SecretString> {
+        let mut out = Vec::new();
+        for node in self.nodes.values() {
+            match &node.auth {
+                ResolvedAuth::Password(p) => out.push(p),
+                ResolvedAuth::PrivateKey { passphrase, .. } => {
+                    if let Some(p) = passphrase {
+                        out.push(p);
+                    }
+                }
+            }
+            if let Some(p) = &node.become_password {
+                out.push(p);
+            }
+        }
+        if let Some(p) = &self.registry_password {
+            out.push(p);
+        }
+        out
+    }
+
+    /// Every resolved value as a string slice, for registering with the
+    /// redactor (which lives in `kurin-core` and must not depend on
+    /// `secrecy`).
+    pub fn values_str(&self) -> Vec<&str> {
+        use secrecy::ExposeSecret;
+        self.values()
+            .into_iter()
+            .map(|s| s.expose_secret())
+            .collect()
+    }
+}
+
+impl fmt::Debug for ResolvedSecrets {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ResolvedSecrets")
+            .field("nodes", &self.nodes)
+            .field(
+                "registry_password",
+                &self.registry_password.as_ref().map(|_| "******"),
+            )
+            .finish()
+    }
+}
+
 /// Version gate executed before defaults (stricter than validation).
 pub fn check_version(cfg: &ClusterConfig) -> Result<()> {
     if cfg.version != CONFIG_VERSION {
@@ -393,6 +669,7 @@ pub fn check_version(cfg: &ClusterConfig) -> Result<()> {
 mod tests {
     use super::*;
     use crate::parse_str;
+    use secrecy::ExposeSecret;
     use std::path::Path;
 
     /// Obvious fake values (R8): these are test credentials, never real
@@ -401,11 +678,11 @@ mod tests {
     const FAKE_BECOME_PASSWORD: &str = "fake-become-password-not-real";
     const FAKE_PASSPHRASE: &str = "fake-passphrase-not-real";
 
-    fn cluster(ssh_extra: &str, node_extra: &str) -> Cluster {
+    fn cluster(ssh_extra: &str, node_extra: &str) -> ClusterSpec {
         try_cluster(ssh_extra, node_extra).expect("config parses")
     }
 
-    fn try_cluster(ssh_extra: &str, node_extra: &str) -> Result<Cluster> {
+    fn try_cluster(ssh_extra: &str, node_extra: &str) -> Result<ClusterSpec> {
         let toml = format!(
             r#"version = "v1alpha1"
 name = "become"
@@ -457,7 +734,11 @@ role = "control-plane"
     fn node_password_inherits_cluster_default() {
         let c = cluster("become-password = \"cluster-level-fake\"", "");
         assert_eq!(
-            c.nodes[0].ssh.become_password.as_deref(),
+            c.nodes[0]
+                .ssh
+                .become_password
+                .as_ref()
+                .and_then(|p| p.literal()),
             Some("cluster-level-fake")
         );
     }
@@ -501,7 +782,7 @@ role = "control-plane"
 
         let key = SshAuth::PrivateKey {
             key_path: "/tmp/k".into(),
-            passphrase: Some(FAKE_PASSPHRASE.into()),
+            passphrase: Some(SecretRef::Literal(FAKE_PASSPHRASE.into())),
         };
         let dbg = format!("{key:?}");
         assert!(!dbg.contains(FAKE_PASSPHRASE), "passphrase leaked: {dbg}");
@@ -511,6 +792,7 @@ role = "control-plane"
         );
         assert!(dbg.contains("key_path: \"/tmp/k\""));
     }
+
     #[test]
     fn debug_masks_secrets_in_config_and_cluster() {
         const FAKE_REGISTRY_PASSWORD: &str = "fake-registry-password-not-real";
@@ -556,8 +838,89 @@ role = "registry"
             FAKE_BECOME_PASSWORD,
             FAKE_REGISTRY_PASSWORD,
         ] {
-            assert!(!dbg.contains(secret), "secret leaked from Cluster: {dbg}");
+            assert!(
+                !dbg.contains(secret),
+                "secret leaked from ClusterSpec: {dbg}"
+            );
         }
-        assert!(dbg.contains("registry_password: Some(\"******\")"));
+        assert!(dbg.contains("password: Some(\"******\")"));
+        assert!(!dbg.contains(&toml), "source leaked into Debug");
+    }
+
+    #[test]
+    fn resolve_secrets_resolves_every_field_once() {
+        const VAR: &str = "KURIN_TEST_MODEL_SECRET_ENV";
+        std::env::set_var(VAR, "fake-env-value");
+        let dir = tempfile::tempdir().expect("tempdir");
+        let file = dir.path().join("become");
+        std::fs::write(&file, "fake-file-value\n").expect("write");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o600)).expect("chmod");
+        }
+        let toml = format!(
+            r#"version = "v1alpha1"
+name = "resolve"
+[ssh]
+user = "ubuntu"
+become-password = {{ env = "{VAR}" }}
+[ssh.auth]
+method = "password"
+password = {{ file = "{file}" }}
+[registry]
+kind = "zot"
+password = "fake-registry-value"
+[nodes.n1]
+address = "10.0.0.11"
+role = "control-plane"
+[nodes.r1]
+address = "10.0.0.12"
+role = "registry"
+"#,
+            file = file.display()
+        );
+        let cluster = parse_str(Path::new("resolve.toml"), &toml).expect("cluster loads");
+        let secrets = cluster.resolve_secrets().expect("secrets resolve");
+        let node = secrets.node("n1").expect("node secrets");
+        match &node.auth {
+            ResolvedAuth::Password(p) => assert_eq!(p.expose_secret(), "fake-file-value"),
+            other => panic!("unexpected auth: {other:?}"),
+        }
+        assert_eq!(
+            node.become_password.as_ref().map(|p| p.expose_secret()),
+            Some("fake-env-value")
+        );
+        assert_eq!(
+            secrets
+                .registry_password
+                .as_ref()
+                .map(|p| p.expose_secret()),
+            Some("fake-registry-value")
+        );
+        // Both nodes inherit the default password and become password, plus
+        // the registry password: 2 + 2 + 1.
+        assert_eq!(secrets.values().len(), 5);
+        let dbg = format!("{secrets:?}");
+        assert!(!dbg.contains("fake-env-value"), "resolved leaked: {dbg}");
+        assert!(!dbg.contains("fake-file-value"), "resolved leaked: {dbg}");
+        std::env::remove_var(VAR);
+    }
+
+    #[test]
+    fn serialization_keeps_secret_references() {
+        let toml = r#"version = "v1alpha1"
+name = "ser"
+[ssh.auth]
+method = "password"
+password = { env = "KURIN_TEST_SERIALIZE_SECRET" }
+[nodes.n1]
+address = "10.0.0.11"
+role = "control-plane"
+"#;
+        let cluster = parse_str(Path::new("ser.toml"), toml).expect("cluster loads");
+        let json = serde_json::to_string(&cluster).expect("serialize");
+        assert!(json.contains("KURIN_TEST_SERIALIZE_SECRET"), "json: {json}");
+        assert!(!json.contains("source"), "source must be skipped: {json}");
     }
 }

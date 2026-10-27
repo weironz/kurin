@@ -26,7 +26,7 @@ fn common_rules(spec: &Cluster, d: &mut Diagnostics) {
     if !spec.nodes.iter().any(|n| n.role == NodeRole::Registry) {
         d.error("[registry] is configured but no node has role = \"registry\"");
     }
-    if spec.registry_username.is_some() != spec.registry_password.is_some() {
+    if spec.registry_username().is_some() != spec.registry_password().is_some() {
         d.error("[registry] username and password must be set together");
     }
 }
@@ -46,7 +46,7 @@ fn plan_registry_track(b: &mut PlanBuilder<'_>) -> Result<()> {
                 b.add(phase, Arc::new(task));
             }
             NodeRole::ControlPlane | NodeRole::Worker => {
-                let task = tasks::registry::RegistryTrust::new(b.cluster(), node, &ca)?;
+                let task = tasks::registry::RegistryTrust::new(b.cluster(), node, &ca, b.run())?;
                 b.add(phase, Arc::new(task));
             }
             NodeRole::Lb => {}
@@ -74,7 +74,7 @@ impl Component for Zot {
     }
 
     fn enabled(&self, spec: &Cluster) -> bool {
-        spec.registry_kind == Some(RegistryKind::Zot)
+        spec.registry_kind() == Some(RegistryKind::Zot)
     }
 
     fn validate(&self, spec: &Cluster, d: &mut Diagnostics) {
@@ -117,7 +117,7 @@ impl Component for DockerRegistry {
     }
 
     fn enabled(&self, spec: &Cluster) -> bool {
-        spec.registry_kind == Some(RegistryKind::DockerRegistry)
+        spec.registry_kind() == Some(RegistryKind::DockerRegistry)
     }
 
     fn validate(&self, spec: &Cluster, d: &mut Diagnostics) {
@@ -160,7 +160,7 @@ impl Component for Harbor {
     }
 
     fn enabled(&self, spec: &Cluster) -> bool {
-        spec.registry_kind == Some(RegistryKind::Harbor)
+        spec.registry_kind() == Some(RegistryKind::Harbor)
     }
 
     fn validate(&self, spec: &Cluster, d: &mut Diagnostics) {
@@ -178,11 +178,7 @@ impl Component for Harbor {
                 "[registry] kind = \"harbor\" supports exactly one registry node (no shared storage)",
             );
         }
-        if spec
-            .registry_username
-            .as_deref()
-            .is_some_and(|u| u != "admin")
-        {
+        if spec.registry_username().is_some_and(|u| u != "admin") {
             d.error(
                 "[registry] kind = \"harbor\" can only authenticate as \"admin\" (its single admin account)",
             );

@@ -35,7 +35,7 @@ mod upgrade;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use kurin_config::Cluster;
+use kurin_config::{Cluster, ResolvedSecrets};
 use kurin_core::executor::SessionPool;
 use kurin_core::facts::FactsTable;
 use kurin_core::lock::{ClusterLock, ClusterLockGuard};
@@ -173,9 +173,9 @@ pub(crate) fn resolve_zone(config_zone: Option<&str>) -> Result<kurin_core::zone
 /// and the cluster's offline dir.
 pub(crate) fn sources_for(cluster: &Cluster) -> Result<ArtifactSources> {
     Ok(ArtifactSources {
-        zone: resolve_zone(cluster.zone.as_deref())?,
+        zone: resolve_zone(cluster.zone())?,
         manifest_json: None,
-        offline_dir: cluster.offline_dir.clone(),
+        offline_dir: cluster.offline_dir().map(|p| p.to_path_buf()),
     })
 }
 
@@ -227,6 +227,15 @@ pub(crate) fn warn(run: &RunContext, line: impl Into<String>) {
     });
 }
 
+/// Register every resolved secret value with the run's redactor and make
+/// the resolved map available to tasks (SSH pool, registry tasks).
+pub(crate) fn register_resolved_secrets(run: &RunContext, secrets: &ResolvedSecrets) {
+    for value in secrets.values_str() {
+        run.events.redactor().register(value);
+    }
+    run.set_secrets(secrets.clone());
+}
+
 /// Prepare an operation: acquire the lock, build the run context, start the
 /// event session, discover facts and run operation-specific preflight work.
 pub async fn prepare(req: OpRequest, out: OutputOpts) -> Result<Prepared> {
@@ -241,10 +250,20 @@ pub async fn prepare(req: OpRequest, out: OutputOpts) -> Result<Prepared> {
         Params::Create {
             offline: Some(dir), ..
         }
-        | Params::AddNodes { offline: Some(dir) } => spec.offline_dir = Some(dir.clone()),
+        | Params::AddNodes { offline: Some(dir) } => spec.packages.offline_dir = Some(dir.clone()),
         _ => {}
     }
     kurin_components::component::validate(&spec)?;
+
+    // Secrets are resolved exactly once, here. A pure `--dry-run` (no
+    // `--check`) never opens a session, so it does not read env/file
+    // secrets at all; `--check` and every mutating/read-only operation do.
+    let secrets = if params.dry_run() && !params.check() {
+        ResolvedSecrets::default()
+    } else {
+        spec.resolve_secrets()?
+    };
+    let secrets = Arc::new(secrets);
 
     let op_id = kurin_core::events::new_op_id();
     let lock = if params.dry_run() {
@@ -256,19 +275,19 @@ pub async fn prepare(req: OpRequest, out: OutputOpts) -> Result<Prepared> {
         // The teardown plan ends with a control-machine step; the wrapper
         // answers the `local` node without an SSH connection.
         OpKind::DeleteCluster => kurin_components::teardown::with_local_node(Arc::new(
-            kurin_ssh::SshSessionPool::from_cluster(&spec)?,
+            kurin_ssh::SshSessionPool::from_cluster(&spec, &secrets)?,
         )),
-        _ => Arc::new(kurin_ssh::SshSessionPool::from_cluster(&spec)?),
+        _ => Arc::new(kurin_ssh::SshSessionPool::from_cluster(&spec, &secrets)?),
     };
 
     match kind {
-        OpKind::Create => create::prepare(spec, params, pool, op_id, out, lock).await,
-        OpKind::AddNodes => add_nodes::prepare(spec, params, pool, op_id, out, lock).await,
+        OpKind::Create => create::prepare(spec, params, pool, op_id, out, lock, secrets).await,
+        OpKind::AddNodes => add_nodes::prepare(spec, params, pool, op_id, out, lock, secrets).await,
         OpKind::DeleteNode | OpKind::DeleteCluster => {
-            delete::prepare(spec, params, pool, op_id, out, lock).await
+            delete::prepare(spec, params, pool, op_id, out, lock, secrets).await
         }
-        OpKind::Upgrade => upgrade::prepare(spec, params, pool, op_id, out, lock).await,
-        OpKind::CertsRenew => certs::prepare(spec, params, pool, op_id, out, lock).await,
+        OpKind::Upgrade => upgrade::prepare(spec, params, pool, op_id, out, lock, secrets).await,
+        OpKind::CertsRenew => certs::prepare(spec, params, pool, op_id, out, lock, secrets).await,
         other => Err(miette::miette!(
             "operation {other:?} is not implemented by this build"
         )),

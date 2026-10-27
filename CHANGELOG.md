@@ -3,6 +3,18 @@
 All notable changes to kurin. Format follows Keep a Changelog; semver.
 
 ### Added
+- Secret references (WP-20): every secret config field (`ssh.auth.password`,
+  `ssh.auth.passphrase`, `ssh.become-password`, node overrides and
+  `registry.password`) now accepts `{ env = "VAR" }` and
+  `{ file = "/path" }` in addition to the literal v1alpha1 form. Secrets
+  are resolved exactly once in `kurin-ops::prepare` into `SecretString`s,
+  registered in the run's redaction table, and used by the SSH pool and
+  registry tasks; `Debug` masks literals and serialization keeps the
+  reference form. A secret file wider than `0600` warns. `--dry-run`
+  without `--check` does not read env/file secrets.
+- The internal model is now `ClusterSpec` (ADR-15): component-owned
+  sections (`registry`, `storage`, `cni`) and artifact sources
+  (`packages`) are sub-structs; `Cluster`/`Node` remain type aliases.
 - The cluster records what kurin installed in
   `kube-system/ConfigMap kurin-state` (WP-19, ADR-09): `kurin-version`,
   `op-id`, `op-kind`, `finished-at`, the canonical **redacted** `spec.toml`,

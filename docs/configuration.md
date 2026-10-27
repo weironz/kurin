@@ -155,6 +155,35 @@ join 时 CLI 显式警告）。
 - `nfs` 必须提供 `server` + `path`（用户自备 NFS 服务器）
 - 离线：local-path 的两个镜像（provisioner + busybox helper）入 bundle
 
+### 秘密引用（`SecretRef`）
+
+所有秘密字段（`ssh.auth.password`、`ssh.auth.passphrase`、`ssh.become-password`、
+节点级覆盖，以及 `registry.password`）都接受三种写法：
+
+```toml
+[ssh.auth]
+method = "password"
+# 1) 字面值（v1alpha1 兼容写法）
+password = "literal-value"
+
+# 2) 环境变量：prepare 阶段读取
+# password = { env = "KURIN_SSH_PASSWORD" }
+
+# 3) 文件：prepare 阶段读取，去掉一个结尾换行
+# password = { file = "/run/secrets/kurin-ssh" }
+```
+
+- 解析时机：`kurin-ops::prepare` 在构建 SSH 连接池之前**只解析一次**，把结果
+  放进 `ResolvedSecrets`；SSH 与 registry 任务只使用解析后的 `SecretString`。
+- 脱敏：解析出的每个值都注册进本次运行的脱敏表，日志、事件、错误文本与
+  `kurin-state` 的 `spec.toml` 都不含秘密值。`Debug` 对字面值输出 `"******"`，
+  对 env/file 只输出引用本身；序列化保留引用形式，绝不写入解析后的值。
+- 诊断：缺失的环境变量或文件会在报错中点名字段与来源，例如
+  `nodes.master01.ssh.auth.password: secret reference { env = "X" }: environment variable X is not set`。
+- 文件权限宽于 `0600`（group/other 有任何权限）时在 stderr 告警，但仍使用该值。
+- `--dry-run`（不带 `--check`）不读取任何 env/file 秘密；`--check` 与所有会建立
+  SSH 会话的操作都会解析。
+
 ### `[ssh.auth]` / 节点级 `[nodes.<n>.auth]`（含不同密码示例）
 
 password 与 private_key 互斥（同一对 `[ssh.auth]` 不可能同时写两个）。鉴权解析
@@ -256,7 +285,7 @@ kurin 的特权命令（写 `/etc`、`kubeadm init`、`systemctl` 等）默认�
   fail；非 root + `auto`/`sudo` 时探测 `sudo -n true`，可用 => ok
   （"passwordless sudo"），否则配置了 `become-password` => ok（"sudo with
   configured password"），否则 fail 并给出可操作提示。
-- 等待 WP-20（秘密引用）之前，`become-password` 只接受字面值。
+- `become-password` 同样支持 `{ env = "…" }` / `{ file = "…" }` 秘密引用（见上节）。
 
 示例（大多数节点用免密 sudo 的 `ubuntu`，个别节点覆盖）：
 

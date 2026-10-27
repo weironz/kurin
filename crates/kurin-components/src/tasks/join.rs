@@ -188,8 +188,7 @@ mod tests {
         use kurin_config::NodeRole::*;
         Cluster {
             name: "test".into(),
-            offline_dir: None,
-            zone: None,
+            labels: Default::default(),
             distribution: kurin_config::Distribution::K8s,
             ha_mode: kurin_config::HaMode::KubeVip,
             runtime: kurin_config::RuntimeKind::Containerd,
@@ -204,15 +203,20 @@ mod tests {
                 node("m2", "192.168.10.12", ControlPlane),
                 node("w1", "192.168.10.21", Worker),
             ],
-            registry_kind: None,
-            registry_port: 5000,
-            registry_username: None,
-            registry_password: None,
-            registry_data_dir: "/var/lib/kurin/registry".into(),
-            storage_kind: None,
-            storage_default: false,
-            storage_server: None,
-            storage_path: None,
+            ssh: kurin_config::SshDefaultsSpec {
+                user: "root".into(),
+                port: 22,
+                r#become: kurin_config::BecomeMode::Auto,
+                become_password: None,
+                known_hosts: Default::default(),
+                auth: None,
+            },
+            registry: kurin_config::RegistrySpec::default(),
+            storage: kurin_config::StorageSpec::default(),
+            packages: kurin_config::PackageSources {
+                offline_dir: None,
+                zone: None,
+            },
             source: String::new(),
         }
     }

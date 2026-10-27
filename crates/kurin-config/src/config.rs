@@ -9,6 +9,8 @@ use ipnet::Ipv4Net;
 use semver::Version;
 use serde::{Deserialize, Serialize};
 
+use crate::secret::SecretRef;
+
 /// Only this schema version is accepted by this build.
 pub const CONFIG_VERSION: &str = "v1alpha1";
 
@@ -88,7 +90,7 @@ pub struct RegistryConfig {
     /// Basic-auth user for the registry API (harbor: its admin user).
     pub username: Option<String>,
     /// Basic-auth password (docker-registry/zot: htpasswd; harbor: admin password).
-    pub password: Option<String>,
+    pub password: Option<SecretRef>,
     /// Storage directory for images (harbor uses its installer layout).
     pub data_dir: Option<PathBuf>,
 }
@@ -192,7 +194,7 @@ pub struct SshDefaults {
     pub r#become: Option<BecomeMode>,
     /// sudo password for logins whose sudo is not passwordless; fed over
     /// the SSH channel's stdin, never a command line.
-    pub become_password: Option<String>,
+    pub become_password: Option<SecretRef>,
     /// Host-key verification policy (default "tofu").
     pub known_hosts: Option<HostKeyMode>,
     pub auth: Option<SshAuth>,
@@ -234,7 +236,7 @@ pub struct NodeConfig {
     pub r#become: Option<BecomeMode>,
     /// Per-node sudo password override.
     #[serde(default)]
-    pub become_password: Option<String>,
+    pub become_password: Option<SecretRef>,
     /// Per-node host-key policy override.
     #[serde(default)]
     pub known_hosts: Option<HostKeyMode>,
@@ -269,13 +271,13 @@ pub enum BecomeMode {
 #[serde(tag = "method", rename_all = "snake_case", deny_unknown_fields)]
 pub enum SshAuth {
     Password {
-        password: String,
+        password: SecretRef,
     },
     #[serde(rename_all = "kebab-case")]
     PrivateKey {
         key_path: PathBuf,
         #[serde(default)]
-        passphrase: Option<String>,
+        passphrase: Option<SecretRef>,
     },
 }
 

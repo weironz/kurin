@@ -150,7 +150,7 @@ impl KubeadmInit {
                 // Harbor registries keep reshaped names (project/repo);
                 // kubeadm's imageRepository covers the control-plane pulls.
                 // distribution/zot (flat-mirror mode) leave this empty.
-                image_repository => match cluster.registry_kind {
+                image_repository => match cluster.registry_kind() {
                     Some(kurin_config::RegistryKind::Harbor) => {
                         let reg = cluster
                             .nodes
@@ -158,7 +158,7 @@ impl KubeadmInit {
                             .find(|n| n.role == kurin_config::NodeRole::Registry)
                             .map(|n| n.internal_address.to_string())
                             .unwrap_or_default();
-                        format!("{}:{}/library", reg, cluster.registry_port)
+                        format!("{}:{}/library", reg, cluster.registry_port())
                     }
                     _ => String::new(),
                 },
@@ -530,8 +530,7 @@ mod tests {
     fn cluster(vip: Option<&str>) -> Cluster {
         Cluster {
             name: "test".into(),
-            offline_dir: None,
-            zone: None,
+            labels: Default::default(),
             distribution: kurin_config::Distribution::K8s,
             ha_mode: kurin_config::HaMode::KubeVip,
             runtime: kurin_config::RuntimeKind::Containerd,
@@ -542,15 +541,20 @@ mod tests {
             cni: CniConfig::Calico,
             vip: vip.map(|v| v.parse().unwrap()),
             nodes: vec![node("m1", "192.168.10.11")],
-            registry_kind: None,
-            registry_port: 5000,
-            registry_username: None,
-            registry_password: None,
-            registry_data_dir: "/var/lib/kurin/registry".into(),
-            storage_kind: None,
-            storage_default: false,
-            storage_server: None,
-            storage_path: None,
+            ssh: kurin_config::SshDefaultsSpec {
+                user: "root".into(),
+                port: 22,
+                r#become: kurin_config::BecomeMode::Auto,
+                become_password: None,
+                known_hosts: Default::default(),
+                auth: None,
+            },
+            registry: kurin_config::RegistrySpec::default(),
+            storage: kurin_config::StorageSpec::default(),
+            packages: kurin_config::PackageSources {
+                offline_dir: None,
+                zone: None,
+            },
             source: String::new(),
         }
     }

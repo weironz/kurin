@@ -164,6 +164,6 @@ fn registry_role_requires_registry_kind() {
 #[test]
 fn registry_defaults_docker_registry_to_port_5000() {
     let cfg = parse_str(Path::new("x.toml"), GOOD_WITH_REGISTRY).unwrap();
-    assert_eq!(cfg.registry_port, 5000);
-    assert_eq!(cfg.registry_kind, Some(RegistryKind::Zot));
+    assert_eq!(cfg.registry_port(), 5000);
+    assert_eq!(cfg.registry_kind(), Some(RegistryKind::Zot));
 }

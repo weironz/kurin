@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use kurin_config::Cluster;
+use kurin_config::{Cluster, ResolvedSecrets};
 use kurin_core::executor::SessionPool;
 use kurin_core::lock::ClusterLockGuard;
 use miette::Result;
@@ -19,6 +19,7 @@ pub(crate) async fn prepare(
     op_id: String,
     out: OutputOpts,
     lock: Option<ClusterLockGuard>,
+    secrets: Arc<ResolvedSecrets>,
 ) -> Result<Prepared> {
     if !matches!(params, Params::CertsRenew { .. }) {
         return Err(miette::miette!(
@@ -28,6 +29,7 @@ pub(crate) async fn prepare(
     let run = crate::ephemeral_run_with_op_id(&spec, op_id)?;
     let session = OpSession::start(&run, out)?;
     session.register_cluster(&spec);
+    crate::register_resolved_secrets(&run, &secrets);
     Ok(Prepared {
         run,
         lock,
@@ -46,8 +48,11 @@ pub(crate) async fn certs_check(
     warn_days: i64,
     out: OutputOpts,
 ) -> Result<Vec<kurin_components::certs::NodeCerts>> {
-    let pool: Arc<dyn SessionPool> = Arc::new(kurin_ssh::SshSessionPool::from_cluster(spec)?);
     let run = crate::ephemeral_run(spec)?;
+    let secrets = spec.resolve_secrets()?;
+    crate::register_resolved_secrets(&run, &secrets);
+    let pool: Arc<dyn SessionPool> =
+        Arc::new(kurin_ssh::SshSessionPool::from_cluster(spec, &secrets)?);
     let session = OpSession::start(&run, out)?;
     session.register_cluster(spec);
     session.begin("certs-check", &spec.name, "");

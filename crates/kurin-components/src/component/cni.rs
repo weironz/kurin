@@ -211,7 +211,7 @@ impl Component for KubeOvn {
 
     fn validate(&self, spec: &Cluster, d: &mut Diagnostics) {
         // Moved from kurin-config's validate (WP-16); wording unchanged.
-        if spec.offline_dir.is_some() {
+        if spec.offline_dir().is_some() {
             d.error(
                 "network.cni = \"kube-ovn\" is not air-gap ready yet (its images are not part of the offline bundle); use calico, flannel or cilium for offline installs",
             );
@@ -356,7 +356,7 @@ role = "worker"
     fn kube_ovn_rejects_offline_installs_with_the_previous_error_text() {
         // The rule moved from kurin-config (WP-16); the text is frozen.
         let mut c = spec("kube-ovn");
-        c.offline_dir = Some(std::path::PathBuf::from("/tmp/does-not-matter"));
+        c.packages.offline_dir = Some(std::path::PathBuf::from("/tmp/does-not-matter"));
         let mut d = Diagnostics::new("");
         KubeOvn.validate(&c, &mut d);
         assert_eq!(

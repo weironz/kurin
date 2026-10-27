@@ -11,8 +11,11 @@ use crate::PrecheckReport;
 
 /// Run the audit and print the report (JSON lines or the human table).
 pub(crate) async fn precheck(spec: &Cluster, out: OutputOpts) -> Result<PrecheckReport> {
-    let pool: Arc<dyn SessionPool> = Arc::new(kurin_ssh::SshSessionPool::from_cluster(spec)?);
     let run = crate::ephemeral_run(spec)?;
+    let secrets = spec.resolve_secrets()?;
+    crate::register_resolved_secrets(&run, &secrets);
+    let pool: Arc<dyn SessionPool> =
+        Arc::new(kurin_ssh::SshSessionPool::from_cluster(spec, &secrets)?);
     let session = OpSession::start(&run, out)?;
     session.register_cluster(spec);
     session.begin("precheck", &spec.name, "");

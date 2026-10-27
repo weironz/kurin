@@ -6,14 +6,16 @@
 
 //!
 //! Pipeline (`load`): parse (toml/yaml by extension) -> version gate ->
-//! defaults -> lower to internal `Cluster` -> business validation.
-//! The executor only ever sees `Cluster`; raw config fields where defaults
-//! live never leak past `load`.
+//! defaults -> lower to internal `ClusterSpec` -> business validation.
+//! The executor only ever sees `ClusterSpec`; raw config fields where
+//! defaults live never leak past `load`. Secret fields keep their
+//! [`SecretRef`] until `kurin-ops::prepare` resolves them once.
 
 pub mod config;
 pub mod error;
 pub mod model;
 pub mod quick;
+pub mod secret;
 
 use std::path::Path;
 
@@ -23,10 +25,14 @@ pub use config::{
     RegistryKind, RuntimeKind, SshAuth, SshDefaults, StorageConfig, StorageKind, CONFIG_VERSION,
 };
 pub use error::{ConfigError, Result};
-pub use model::{Cluster, Node, ResolvedSsh};
+pub use model::{
+    Cluster, ClusterSpec, Node, NodeSpec, PackageSources, RegistrySpec, ResolvedAuth,
+    ResolvedSecrets, ResolvedSsh, ResolvedSshSecrets, SshDefaultsSpec, StorageSpec,
+};
+pub use secret::SecretRef;
 
 /// Load, validate, and lower a config file into the internal model.
-pub fn load(path: &Path) -> Result<Cluster> {
+pub fn load(path: &Path) -> Result<ClusterSpec> {
     let src = std::fs::read_to_string(path).map_err(|e| ConfigError::Io {
         path: path.display().to_string(),
         message: e.to_string(),
@@ -35,11 +41,11 @@ pub fn load(path: &Path) -> Result<Cluster> {
 }
 
 /// Same as [`load`] but from in-memory text (used by tests and planner).
-pub fn parse_str(path: &Path, src: &str) -> Result<Cluster> {
+pub fn parse_str(path: &Path, src: &str) -> Result<ClusterSpec> {
     let raw = parse(path, src)?;
     model::check_version(&raw)?;
     let cfg = config::with_defaults(raw);
-    let mut cluster = model::Cluster::from_config(cfg)?;
+    let mut cluster = model::ClusterSpec::from_config(cfg)?;
     cluster.source = src.to_string();
     cluster.validate()?;
     Ok(cluster)

@@ -188,7 +188,7 @@ impl Component for K3s {
         // The air-gap tarball only matters when the install runs from a
         // bundle; the env-zone override is resolved at run time and is
         // invisible to a static declaration.
-        if spec.offline_dir.is_some() || spec.zone.as_deref() == Some("cn") {
+        if spec.offline_dir().is_some() || spec.zone() == Some("cn") {
             refs.push(ArtifactRef::of("k3s-airgap", arch));
         }
         refs
@@ -374,11 +374,11 @@ role = "worker"
     #[test]
     fn k3s_declares_the_airgap_tarball_only_when_needed() {
         let online = k3s_toml("", "flannel");
-        assert_eq!(online.offline_dir, None);
+        assert_eq!(online.offline_dir(), None);
         assert_eq!(K3s.artifacts(&online, Arch::Arm64).len(), 1);
 
         let mut offline = online;
-        offline.offline_dir = Some(std::path::PathBuf::from("/tmp/does-not-matter"));
+        offline.packages.offline_dir = Some(std::path::PathBuf::from("/tmp/does-not-matter"));
         let names: Vec<String> = K3s
             .artifacts(&offline, Arch::Arm64)
             .iter()

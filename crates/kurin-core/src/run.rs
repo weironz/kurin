@@ -92,6 +92,9 @@ pub struct RunContext {
     pub facts: RwLock<FactsTable>,
     /// Concurrency/timeout/become knobs.
     pub settings: RunSettings,
+    /// Secrets resolved once by `kurin-ops::prepare` (empty for read-only
+    /// or `--dry-run` runs that never touch credentials).
+    secrets: RwLock<Arc<kurin_config::ResolvedSecrets>>,
 }
 
 impl RunContext {
@@ -113,6 +116,7 @@ impl RunContext {
             events,
             facts: RwLock::new(FactsTable::default()),
             settings: RunSettings::default(),
+            secrets: RwLock::new(Arc::new(kurin_config::ResolvedSecrets::default())),
         }
     }
 
@@ -150,6 +154,17 @@ impl RunContext {
     /// Snapshot of the discovered facts.
     pub fn facts_snapshot(&self) -> FactsTable {
         self.facts.read().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    /// Install the operation's resolved secrets (called once by
+    /// `kurin-ops::prepare`, before planning).
+    pub fn set_secrets(&self, secrets: kurin_config::ResolvedSecrets) {
+        *self.secrets.write().unwrap_or_else(|e| e.into_inner()) = Arc::new(secrets);
+    }
+
+    /// The operation's resolved secrets (empty when none were resolved).
+    pub fn secrets(&self) -> Arc<kurin_config::ResolvedSecrets> {
+        Arc::clone(&self.secrets.read().unwrap_or_else(|e| e.into_inner()))
     }
 }
 

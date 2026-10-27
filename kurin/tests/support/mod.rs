@@ -333,7 +333,8 @@ pub fn run(
         kurin::run::RunContext::new(
             "test-op",
             &cluster.name,
-            kurin::run::ArtifactSources::embedded().with_offline_dir(cluster.offline_dir.clone()),
+            kurin::run::ArtifactSources::embedded()
+                .with_offline_dir(cluster.offline_dir().map(|p| p.to_path_buf())),
         )
         .with_facts(facts),
     )

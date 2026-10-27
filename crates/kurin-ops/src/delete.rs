@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use kurin_config::Cluster;
+use kurin_config::{Cluster, ResolvedSecrets};
 use kurin_core::executor::SessionPool;
 use kurin_core::lock::ClusterLockGuard;
 use miette::Result;
@@ -18,6 +18,7 @@ pub(crate) async fn prepare(
     op_id: String,
     out: OutputOpts,
     lock: Option<ClusterLockGuard>,
+    secrets: Arc<ResolvedSecrets>,
 ) -> Result<Prepared> {
     if let Params::DeleteNode { node, .. } = &params {
         if !spec.nodes.iter().any(|n| &n.name == node) {
@@ -29,6 +30,7 @@ pub(crate) async fn prepare(
     let run = crate::ephemeral_run_with_op_id(&spec, op_id)?;
     let session = OpSession::start(&run, out)?;
     session.register_cluster(&spec);
+    crate::register_resolved_secrets(&run, &secrets);
     Ok(Prepared {
         run,
         lock,

@@ -15,6 +15,8 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use secrecy::{ExposeSecret, SecretString};
+
 use kurin_config::{Cluster, Node, RegistryKind};
 use miette::Result;
 
@@ -126,6 +128,16 @@ pub fn leaf_for(ca: &RegistryCa, cluster: &Cluster, node: &Node) -> Result<Regis
     })
 }
 
+/// The operation's resolved registry password, or the installer default
+/// when the config sets none. `--dry-run` never executes the task, so an
+/// unresolved empty secret map is harmless there.
+fn resolved_registry_password(run: &RunContext) -> SecretString {
+    run.secrets()
+        .registry_password
+        .clone()
+        .unwrap_or_else(|| SecretString::from("kurin-registry".to_string()))
+}
+
 /// Password hashing for htpasswd: distribution accepts bcrypt only.
 fn htpasswd_line(user: &str, password: &str) -> Result<String> {
     let hash = bcrypt::hash(password, bcrypt::DEFAULT_COST)
@@ -142,7 +154,7 @@ pub struct RegistryInstall {
     port: u16,
     data_dir: PathBuf,
     username: String,
-    password: String,
+    password: SecretString,
     pki: RegistryPki,
     arch: Arch,
     /// Run sources: offline dir, manifest override and mirror zone.
@@ -158,26 +170,23 @@ impl RegistryInstall {
         run: &Arc<RunContext>,
     ) -> Result<Self> {
         let kind = cluster
-            .registry_kind
+            .registry_kind()
             .ok_or_else(|| miette::miette!("registry kind missing"))?;
         let pki = leaf_for(ca, cluster, node)?;
         Ok(Self {
             node_name: node.name.clone(),
             addr: node.internal_address.to_string(),
             kind,
-            port: cluster.registry_port,
-            data_dir: cluster.registry_data_dir.clone(),
+            port: cluster.registry_port(),
+            data_dir: cluster.registry_data_dir().to_path_buf(),
             username: cluster
-                .registry_username
-                .clone()
+                .registry_username()
+                .map(str::to_string)
                 .unwrap_or_else(|| match kind {
                     RegistryKind::Harbor => "admin".into(),
                     _ => "kurin".into(),
                 }),
-            password: cluster
-                .registry_password
-                .clone()
-                .unwrap_or_else(|| "kurin-registry".into()),
+            password: resolved_registry_password(run),
             pki,
             arch,
             run: Arc::clone(run),
@@ -342,7 +351,7 @@ impl Task for RegistryInstall {
                 session
                     .write_file(
                         HTPASSWD,
-                        htpasswd_line(&self.username, &self.password)?.as_bytes(),
+                        htpasswd_line(&self.username, self.password.expose_secret())?.as_bytes(),
                     )
                     .await?;
                 for (path, body, mode) in self.config_files() {
@@ -381,7 +390,7 @@ impl Task for RegistryInstall {
                 session
                     .write_file(
                         HTPASSWD,
-                        htpasswd_line(&self.username, &self.password)?.as_bytes(),
+                        htpasswd_line(&self.username, self.password.expose_secret())?.as_bytes(),
                     )
                     .await?;
                 for (path, body, mode) in self.config_files() {
@@ -451,7 +460,7 @@ impl Task for RegistryInstall {
                         addr = self.addr,
                         port = self.port,
                         pki = PKI_DIR,
-                        pw = self.password,
+                        pw = self.password.expose_secret(),
                         data = self.data_dir.display(),
                     ))
                     .await?;
@@ -481,7 +490,7 @@ impl Task for RegistryInstall {
                 .exec(&format!(
                     "curl -fsS --cacert {PKI_DIR}/ca.crt -u '{u}:{p}' -o /dev/null -w '%{{http_code}}' https://{host}:{port}/v2/ || true",
                     u = self.username,
-                    p = self.password,
+                    p = self.password.expose_secret(),
                     host = host,
                     port = self.port,
                 ))
@@ -522,7 +531,12 @@ pub struct RegistryTrust {
 }
 
 impl RegistryTrust {
-    pub fn new(cluster: &Cluster, node: &Node, ca: &RegistryCa) -> Result<Self> {
+    pub fn new(
+        cluster: &Cluster,
+        node: &Node,
+        ca: &RegistryCa,
+        run: &Arc<RunContext>,
+    ) -> Result<Self> {
         let reg = cluster
             .nodes
             .iter()
@@ -530,25 +544,26 @@ impl RegistryTrust {
             .ok_or_else(|| miette::miette!("no registry node"))?;
         // Harbor's only admin account is "admin"; other kinds default to
         // the "kurin" user the installer creates.
-        let user =
-            cluster
-                .registry_username
-                .clone()
-                .unwrap_or_else(|| match cluster.registry_kind {
-                    Some(RegistryKind::Harbor) => "admin".into(),
-                    _ => "kurin".into(),
-                });
-        let auth_header = cluster
-            .registry_password
-            .as_deref()
-            .map(|p| format!("Basic {}", base64_encode(format!("{user}:{p}").as_bytes())));
+        let user = cluster
+            .registry_username()
+            .map(str::to_string)
+            .unwrap_or_else(|| match cluster.registry_kind() {
+                Some(RegistryKind::Harbor) => "admin".into(),
+                _ => "kurin".into(),
+            });
+        let auth_header = run.secrets().registry_password.as_ref().map(|p| {
+            format!(
+                "Basic {}",
+                base64_encode(format!("{user}:{}", p.expose_secret()).as_bytes())
+            )
+        });
         Ok(Self {
             node_name: node.name.clone(),
             kind: cluster
-                .registry_kind
+                .registry_kind()
                 .ok_or_else(|| miette::miette!("registry kind missing"))?,
             registry: reg.internal_address.to_string(),
-            port: cluster.registry_port,
+            port: cluster.registry_port(),
             ca_pem: ca.cert_pem.clone(),
             auth_header,
         })
@@ -702,7 +717,7 @@ pub struct RegistrySeed {
     registry: String,
     port: u16,
     username: String,
-    password: String,
+    password: SecretString,
     arch: Arch,
     /// Image artifact names to push — the bootstrap set the enabled
     /// runtime/distribution/CNI components declare (same selection as
@@ -728,21 +743,19 @@ impl RegistrySeed {
         Ok(Self {
             node_name: node.name.clone(),
             kind: cluster
-                .registry_kind
+                .registry_kind()
                 .ok_or_else(|| miette::miette!("registry kind missing"))?,
             ca_pem: ca.cert_pem.clone(),
             registry: reg.internal_address.to_string(),
-            port: cluster.registry_port,
-            username: cluster.registry_username.clone().unwrap_or_else(|| {
-                match cluster.registry_kind {
+            port: cluster.registry_port(),
+            username: cluster
+                .registry_username()
+                .map(str::to_string)
+                .unwrap_or_else(|| match cluster.registry_kind() {
                     Some(RegistryKind::Harbor) => "admin".into(),
                     _ => "kurin".into(),
-                }
-            }),
-            password: cluster
-                .registry_password
-                .clone()
-                .unwrap_or_else(|| "kurin-registry".into()),
+                }),
+            password: resolved_registry_password(run),
             arch,
             images: crate::component::bootstrap_images(cluster, arch)
                 .into_iter()
@@ -852,7 +865,7 @@ impl Task for RegistrySeed {
                      code=$(curl -fsS -k -u '{u}:{p}' -o /dev/null -w '%{{http_code}}' https://{host}:{port}/v2/ 2>/dev/null) || true; \
                      printf %s \"${{code:-000}}\"",
                     u = self.username,
-                    p = self.password,
+                    p = self.password.expose_secret(),
                     host = self.registry,
                     port = self.port,
                 ))
@@ -884,7 +897,7 @@ impl Task for RegistrySeed {
                          -d '{{\"project_name\":\"{ns}\",\"public\":true}}' \
                          https://{host}:{port}/api/v2.0/projects -o /dev/null -w '%{{http_code}}' || true",
                         u = self.username,
-                        p = self.password,
+                        p = self.password.expose_secret(),
                         host = self.registry,
                         port = self.port,
                     ))
@@ -937,7 +950,7 @@ impl Task for RegistrySeed {
                        --local {pushed} >/dev/null; \
                      ctr -n k8s.io images rm {pushed} >/dev/null 2>&1 || true",
                     u = self.username,
-                    p = self.password,
+                    p = self.password.expose_secret(),
                 ))
                 .await?;
             if !out.ok() {
@@ -1096,7 +1109,9 @@ role = "registry"
             .find(|n| n.role == kurin_config::NodeRole::ControlPlane)
             .unwrap();
         let ca = ca_for(&cluster).unwrap();
-        let trust = RegistryTrust::new(&cluster, cp, &ca).unwrap();
+        let run = crate::test_util::run();
+        run.set_secrets(cluster.resolve_secrets().unwrap());
+        let trust = RegistryTrust::new(&cluster, cp, &ca, &run).unwrap();
         let toml = trust.upstream_hosts_toml("registry.k8s.io");
         assert!(toml.contains("server = \"https://registry.k8s.io\""));
         assert!(toml.contains("[host.\"https://192.168.10.31:5000\"]"));

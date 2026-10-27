@@ -28,7 +28,7 @@ impl Component for LocalPath {
     }
 
     fn enabled(&self, spec: &Cluster) -> bool {
-        spec.storage_kind == Some(StorageKind::LocalPath)
+        spec.storage_kind() == Some(StorageKind::LocalPath)
     }
 
     fn validate(&self, _spec: &Cluster, _d: &mut Diagnostics) {
@@ -82,12 +82,12 @@ impl Component for Nfs {
     }
 
     fn enabled(&self, spec: &Cluster) -> bool {
-        spec.storage_kind == Some(StorageKind::Nfs)
+        spec.storage_kind() == Some(StorageKind::Nfs)
     }
 
     fn validate(&self, spec: &Cluster, d: &mut Diagnostics) {
         // Moved from kurin-config's validate (WP-16); wording unchanged.
-        if spec.storage_server.is_none() || spec.storage_path.is_none() {
+        if spec.storage_server().is_none() || spec.storage_path().is_none() {
             d.error("storage.kind = \"nfs\" requires storage.server and storage.path");
         }
     }

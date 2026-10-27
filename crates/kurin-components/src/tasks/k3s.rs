@@ -88,8 +88,8 @@ const HOST_ARCH: Arch = if cfg!(target_arch = "x86_64") {
 /// pulls (rancher-mirrored images) are too slow/unreliable to lean on, so
 /// the images are pre-seeded the same way.
 fn airgap_needed(cluster: &Cluster, run: &RunContext) -> bool {
-    cluster.offline_dir.is_some()
-        || cluster.zone.as_deref() == Some("cn")
+    cluster.offline_dir().is_some()
+        || cluster.zone() == Some("cn")
         // The effective zone (env beats config) lives in the run sources.
         || run.sources.zone == kurin_core::zone::Zone::Cn
 }
@@ -982,8 +982,7 @@ mod tests {
     fn cluster(name: &str, nodes: Vec<Node>, vip: Option<&str>, cni: CniConfig) -> Cluster {
         Cluster {
             name: name.into(),
-            offline_dir: None,
-            zone: None,
+            labels: Default::default(),
             distribution: kurin_config::Distribution::K3s,
             ha_mode: kurin_config::HaMode::KubeVip,
             runtime: kurin_config::RuntimeKind::Containerd,
@@ -994,15 +993,20 @@ mod tests {
             cni,
             vip: vip.map(|v| v.parse().unwrap()),
             nodes,
-            registry_kind: None,
-            registry_port: 5000,
-            registry_username: None,
-            registry_password: None,
-            registry_data_dir: "/var/lib/kurin/registry".into(),
-            storage_kind: None,
-            storage_default: false,
-            storage_server: None,
-            storage_path: None,
+            ssh: kurin_config::SshDefaultsSpec {
+                user: "root".into(),
+                port: 22,
+                r#become: kurin_config::BecomeMode::Auto,
+                become_password: None,
+                known_hosts: Default::default(),
+                auth: None,
+            },
+            registry: kurin_config::RegistrySpec::default(),
+            storage: kurin_config::StorageSpec::default(),
+            packages: kurin_config::PackageSources {
+                offline_dir: None,
+                zone: None,
+            },
             source: String::new(),
         }
     }
@@ -1244,12 +1248,12 @@ mod tests {
         for (label, c) in [
             ("cn", {
                 let mut c = single();
-                c.zone = Some("cn".into());
+                c.packages.zone = Some("cn".into());
                 c
             }),
             ("offline", {
                 let mut c = single();
-                c.offline_dir = Some("/tmp/kurin-bundle".into());
+                c.packages.offline_dir = Some("/tmp/kurin-bundle".into());
                 c
             }),
         ] {
@@ -1270,7 +1274,7 @@ mod tests {
     #[test]
     fn airgap_remote_path_is_manifest_payload() {
         let mut c = single();
-        c.zone = Some("cn".into());
+        c.packages.zone = Some("cn".into());
         let t = K3sAirgapImport::new(&c.nodes[0], &crate::test_util::run());
         let spec = kurin_artifact::artifact::install_manifest(&crate::test_util::run().sources)
             .unwrap()
@@ -1319,11 +1323,12 @@ mod tests {
     async fn airgap_offline_payload_fails_without_bundle() {
         let dir = tempfile::tempdir().unwrap();
         let mut c = single();
-        c.offline_dir = Some(dir.path().to_path_buf());
+        c.packages.offline_dir = Some(dir.path().to_path_buf());
         let run = std::sync::Arc::new(kurin_core::run::RunContext::new(
             "test-op",
             &c.name,
-            kurin_core::run::ArtifactSources::embedded().with_offline_dir(c.offline_dir.clone()),
+            kurin_core::run::ArtifactSources::embedded()
+                .with_offline_dir(c.packages.offline_dir.clone()),
         ));
         let t = K3sAirgapImport::new(&c.nodes[0], &run);
         assert!(t.payload().await.is_err(), "empty bundle must not resolve");

@@ -2032,6 +2032,7 @@ dependencies = [
  "minijinja",
  "rcgen",
  "rust-embed",
+ "secrecy",
  "semver",
  "serde",
  "serde_json",
@@ -2051,9 +2052,12 @@ dependencies = [
  "insta",
  "ipnet",
  "miette",
+ "secrecy",
  "semver",
  "serde",
+ "serde_json",
  "serde_yml",
+ "tempfile",
  "thiserror",
  "toml",
 ]
@@ -2129,6 +2133,7 @@ dependencies = [
  "kurin-core",
  "miette",
  "russh",
+ "secrecy",
  "sha2 0.10.9",
  "tokio",
 ]

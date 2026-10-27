@@ -111,7 +111,7 @@ fn plan_snapshots_for_the_config_fixture_matrix() {
                 "test-op",
                 &cluster.name,
                 kurin::run::ArtifactSources::embedded()
-                    .with_offline_dir(cluster.offline_dir.clone()),
+                    .with_offline_dir(cluster.offline_dir().map(|p| p.to_path_buf())),
             )
             .with_facts(facts),
         );

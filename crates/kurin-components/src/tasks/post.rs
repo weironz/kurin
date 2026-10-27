@@ -645,16 +645,9 @@ fn redact_tree(value: &mut toml::Value) {
 /// a secret under an unexpected key is still scrubbed.
 fn cluster_secrets(cluster: &Cluster) -> kurin_core::events::Redactor {
     let redactor = kurin_core::events::Redactor::new();
-    for node in &cluster.nodes {
-        match &node.ssh.auth {
-            kurin_config::SshAuth::Password { password } => redactor.register(password.clone()),
-            kurin_config::SshAuth::PrivateKey { passphrase, .. } => {
-                redactor.register_opt(passphrase.clone());
-            }
-        }
-        redactor.register_opt(node.ssh.become_password.clone());
+    for secret in kurin_core::events::cluster_secrets(cluster) {
+        redactor.register(secret);
     }
-    redactor.register_opt(cluster.registry_password.clone());
     redactor
 }
 
@@ -966,6 +959,7 @@ kind: Config
         };
         Cluster {
             name: "kfc".into(),
+            labels: Default::default(),
             kubernetes_version: "1.33.1".parse().unwrap(),
             pod_cidr: "10.233.64.0/18".parse().unwrap(),
             service_cidr: "10.233.0.0/18".parse().unwrap(),
@@ -973,20 +967,23 @@ kind: Config
             cni: kurin_config::CniConfig::Calico,
             vip: None,
             nodes: vec![node],
-            offline_dir: None,
-            zone: None,
             distribution: kurin_config::Distribution::K8s,
             ha_mode: kurin_config::HaMode::KubeVip,
             runtime: kurin_config::RuntimeKind::Containerd,
-            registry_kind: None,
-            registry_port: 5000,
-            registry_username: None,
-            registry_password: None,
-            registry_data_dir: "/var/lib/kurin/registry".into(),
-            storage_kind: None,
-            storage_default: false,
-            storage_server: None,
-            storage_path: None,
+            ssh: kurin_config::SshDefaultsSpec {
+                user: "root".into(),
+                port: 22,
+                r#become: kurin_config::BecomeMode::Auto,
+                become_password: None,
+                known_hosts: Default::default(),
+                auth: None,
+            },
+            registry: kurin_config::RegistrySpec::default(),
+            storage: kurin_config::StorageSpec::default(),
+            packages: kurin_config::PackageSources {
+                offline_dir: None,
+                zone: None,
+            },
             source: String::new(),
         }
     }
@@ -1080,6 +1077,7 @@ mod summary_tests {
         };
         Cluster {
             name: "kfc".into(),
+            labels: Default::default(),
             kubernetes_version: "1.33.1".parse().unwrap(),
             pod_cidr: "10.233.64.0/18".parse().unwrap(),
             service_cidr: "10.33.0.0/18".parse().unwrap(),
@@ -1091,20 +1089,23 @@ mod summary_tests {
                 mk("master02", NodeRole::ControlPlane),
                 mk("worker01", NodeRole::Worker),
             ],
-            offline_dir: None,
-            zone: None,
             distribution: kurin_config::Distribution::K8s,
             ha_mode: kurin_config::HaMode::KubeVip,
             runtime: kurin_config::RuntimeKind::Containerd,
-            registry_kind: None,
-            registry_port: 5000,
-            registry_username: None,
-            registry_password: None,
-            registry_data_dir: "/var/lib/kurin/registry".into(),
-            storage_kind: None,
-            storage_default: false,
-            storage_server: None,
-            storage_path: None,
+            ssh: kurin_config::SshDefaultsSpec {
+                user: "root".into(),
+                port: 22,
+                r#become: kurin_config::BecomeMode::Auto,
+                become_password: None,
+                known_hosts: Default::default(),
+                auth: None,
+            },
+            registry: kurin_config::RegistrySpec::default(),
+            storage: kurin_config::StorageSpec::default(),
+            packages: kurin_config::PackageSources {
+                offline_dir: None,
+                zone: None,
+            },
             source: String::new(),
         }
     }

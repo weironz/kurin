@@ -917,33 +917,39 @@ pub fn install_tracing(bus: Arc<EventBus>) -> bool {
         .is_ok()
 }
 
-/// Secret values found in a cluster's configuration, ready for
-/// [`Redactor::register`].
+/// Literal secret values found in a cluster's configuration, ready for
+/// [`Redactor::register`]. `{ env }` / `{ file }` references carry no
+/// value until `kurin-ops::prepare` resolves them; those resolved values
+/// are registered there.
 ///
 /// Kept here (not in the CLI) so the Web server registers the same set.
 pub fn cluster_secrets(cluster: &kurin_config::Cluster) -> Vec<String> {
     let mut secrets = Vec::new();
-    for node in &cluster.nodes {
-        if let kurin_config::SshAuth::Password { password } = &node.ssh.auth {
-            secrets.push(password.clone());
+    let mut push = |r: &kurin_config::SecretRef| {
+        if let Some(value) = r.literal() {
+            if !value.is_empty() {
+                secrets.push(value.to_string());
+            }
         }
-        if let kurin_config::SshAuth::PrivateKey {
-            passphrase: Some(passphrase),
-            ..
-        } = &node.ssh.auth
-        {
-            secrets.push(passphrase.clone());
+    };
+    for node in &cluster.nodes {
+        match &node.ssh.auth {
+            kurin_config::SshAuth::Password { password } => push(password),
+            kurin_config::SshAuth::PrivateKey { passphrase, .. } => {
+                if let Some(passphrase) = passphrase {
+                    push(passphrase);
+                }
+            }
         }
         if let Some(password) = &node.ssh.become_password {
-            secrets.push(password.clone());
+            push(password);
         }
     }
-    if let Some(password) = &cluster.registry_password {
-        secrets.push(password.clone());
+    if let Some(password) = &cluster.registry.password {
+        push(password);
     }
     secrets.sort();
     secrets.dedup();
-    secrets.retain(|s| !s.is_empty());
     secrets
 }
 

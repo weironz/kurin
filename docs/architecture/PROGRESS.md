@@ -27,7 +27,7 @@
 | WP-17 ClusterApi | done | 见提交 | 无 | `just tier2-status`、tier1 标签任务 | kube 4.2 + k8s-openapi 0.28（仅 v1_33）；二进制 +62%/+65%；Docker k3s 集成测试通过 |
 | WP-18 就绪跟踪器 | done | 见提交 | 无 | tier1 错误镜像诊断 | Deployment/STS/DS/Job/Pod/PVC/CRD/APIService/Node 规则；变更事件 + 30s 心跳；卡住自动抓事件/日志 |
 | WP-19 kurin-state | done | 见提交 | 计划新增 post/state-record（全部计划快照） | tier2 后 `kubectl -n kube-system get cm kurin-state -o yaml`；`add nodes` 走记录 | 8 个键；spec.toml 脱敏；history 最近 20 条 |
-| WP-20 ClusterSpec 与秘密引用 | todo | | | | |
+| WP-20 ClusterSpec 与秘密引用 | done | 见提交 | 无（WP-00/诊断快照不变） | tier1 用 env 变量与 0600 文件提供密码 | `SecretRef` 三形态；`ClusterSpec` + `Cluster` 别名；prepare 解析一次并注册脱敏 |
 | WP-21 v1alpha2 与迁移 | todo | | | | |
 | WP-22 JSON Schema | todo | | | | |
 | WP-25 节点参数解析器 | done | 见提交 | 无 | 无 | 提前实施（与 WP-21 无代码依赖）；69 条表驱动用例 |
@@ -82,6 +82,7 @@
 - WP-00：`ScriptedSession` 在 `(exit, stdout, stderr)` 之外增加了「命令已执行但传输中断」的应答与副作用文件，用于覆盖 `Outcome::Unknown → 重新探测` 路径；`cli_output` 快照对任务耗时与阶段内行序做归一化（并发完成顺序不在 v1 契约内）。
 - WP-15：为保持快照的 per-node 任务布局，`PlanBuilder` 增加 `add_track`（phase 内按 track/node/调用序重排）；k3s 校验规则移入 `distro/k3s`，错误文本逐字节一致。
 - WP-16：`storage/*` 标为 online-only（镜像在 bundle 但 bootstrap 不预载，WP-47 接管）；`ha/kube-vip` 镜像 pin 在版本表而非 manifest，标 online-only；`capabilities` 为隐藏命令且恒出 JSON。
+- WP-20：保留 `pub type Cluster = ClusterSpec` 别名以减少调用点改动；秘密在 `kurin-ops::prepare` 解析一次；`--dry-run` 不读秘密文件（文档已写明）。
 - WP-19：记录类型/实现放在 components（ops 只 re-export）；`upgrade` 暂不写记录（其 post 任务独立，留待后续）；`spec.toml` 由 `Cluster.source` 规范化重排。
 - WP-14：`prepare` 额外接收 `OutputOpts`（事件 sink 需在 discover 前挂上）；`plan` 为 async；`StatusReport`/`NodeStatus` 直接 Serialize。
 - WP-13：首个控制面现在也 cordon/drain/ready-gate/uncordon；`restart-kubelet` 失败严格中止；`preflight/artifacts/addons` 空阶段保留；`upgrade --resume` CLI 开关未加（执行器已带指纹）。
@@ -108,6 +109,7 @@
 
 - WP-15：纯重构，快照零变化；回归 `just tier1`/`tier2` 即可。
 - WP-16：`just tier1-offline`、`just tier3-external-lb`。
+- WP-20：tier1 用 `{ env = ... }` 与 `{ file = ... }`（0600）提供 SSH 密码；`--dry-run` 不读取秘密文件。
 - WP-19：tier2 安装后检查 `kube-system/kurin-state`（8 键、密码为 `******`、history 含本次 op）；改配置 `add nodes` 确认不再探测 `/version`；`status` 显示 expected vs observed。
 - WP-14：`just tier2-certs`、`just tier2-status`、`just tier1-k3s-ops`。
 - WP-13：`just tier2-upgrade-minor`、`e2e/tier2/upgrade-offline.sh`。

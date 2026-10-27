@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use kurin_config::Cluster;
+use kurin_config::{Cluster, ResolvedSecrets};
 use kurin_core::executor::SessionPool;
 use kurin_core::lock::ClusterLockGuard;
 use miette::Result;
@@ -20,6 +20,7 @@ pub(crate) async fn prepare(
     op_id: String,
     out: OutputOpts,
     lock: Option<ClusterLockGuard>,
+    secrets: Arc<ResolvedSecrets>,
 ) -> Result<Prepared> {
     let (dry_run, check, resume) = match &params {
         Params::Create {
@@ -37,6 +38,7 @@ pub(crate) async fn prepare(
     let run = crate::run_with_blackboard(&spec, resume, op_id)?;
     let session = OpSession::start(&run, out)?;
     session.register_cluster(&spec);
+    crate::register_resolved_secrets(&run, &secrets);
 
     // HA topology warnings: published as warn-level log events, so the
     // terminal text is unchanged and `--json`/JSONL consumers see them too.

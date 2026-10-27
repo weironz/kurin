@@ -33,7 +33,12 @@ use sha2::{Digest, Sha256};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::{RwLock, Semaphore};
 
-use kurin_config::{BecomeMode, Cluster, HostKeyMode, ResolvedSsh, SshAuth};
+use secrecy::ExposeSecret;
+
+use kurin_config::{
+    BecomeMode, ClusterSpec, HostKeyMode, ResolvedAuth, ResolvedSecrets, ResolvedSsh,
+    ResolvedSshSecrets,
+};
 
 use kurin_core::engine::{
     Cmd, ExecOutput, LocalForward, RemoteForward, Session, Stream, TransportLost, UploadReport,
@@ -68,15 +73,37 @@ const UPLOAD_CHUNK: usize = 64 * 1024;
 type LineSink<'s> = dyn for<'line> FnMut(Stream, &'line str) + Send + 's;
 
 /// One node's endpoint plus credentials.
+///
+/// `ssh` keeps the configured (reference) form; `secrets` holds the values
+/// resolved once by `kurin-ops::prepare`. A target built without secrets
+/// (tests, `--dry-run`) can never authenticate.
 #[derive(Debug, Clone)]
 pub struct SshTarget {
     pub address: IpAddr,
     pub ssh: ResolvedSsh,
+    pub secrets: ResolvedSshSecrets,
 }
 
 impl SshTarget {
+    /// Target without resolved secrets (never connects successfully).
     pub fn new(address: IpAddr, ssh: ResolvedSsh) -> Self {
-        Self { address, ssh }
+        Self {
+            address,
+            ssh,
+            secrets: ResolvedSshSecrets {
+                auth: ResolvedAuth::Password(secrecy::SecretString::from(String::new())),
+                become_password: None,
+            },
+        }
+    }
+
+    /// Target with the operation's resolved credentials.
+    pub fn with_secrets(address: IpAddr, ssh: ResolvedSsh, secrets: ResolvedSshSecrets) -> Self {
+        Self {
+            address,
+            ssh,
+            secrets,
+        }
     }
 }
 
@@ -298,11 +325,12 @@ impl NodeConn {
         };
 
         let user = &self.target.ssh.user;
-        match &self.target.ssh.auth {
-            SshAuth::Password { password } => {
+        match &self.target.secrets.auth {
+            ResolvedAuth::Password(password) => {
                 let auth = tokio::time::timeout(
                     CONNECT_TIMEOUT,
-                    handle.authenticate_password(user.clone(), password.clone()),
+                    handle
+                        .authenticate_password(user.clone(), password.expose_secret().to_string()),
                 )
                 .await
                 .map_err(|_| miette!("ssh {}: password authentication timed out", self.label()))?
@@ -316,18 +344,21 @@ impl NodeConn {
                     ));
                 }
             }
-            SshAuth::PrivateKey {
+            ResolvedAuth::PrivateKey {
                 key_path,
                 passphrase,
             } => {
-                let key =
-                    russh::keys::load_secret_key(key_path, passphrase.as_deref()).map_err(|e| {
-                        miette!(
-                            "ssh {}: cannot load private key {}: {e}",
-                            self.label(),
-                            key_path.display()
-                        )
-                    })?;
+                let key = russh::keys::load_secret_key(
+                    key_path,
+                    passphrase.as_ref().map(|p| p.expose_secret()),
+                )
+                .map_err(|e| {
+                    miette!(
+                        "ssh {}: cannot load private key {}: {e}",
+                        self.label(),
+                        key_path.display()
+                    )
+                })?;
                 let hash_alg = handle
                     .best_supported_rsa_hash()
                     .await
@@ -594,7 +625,8 @@ impl Session for SshSession {
     }
 
     async fn exec_cmd(&self, cmd: &Cmd) -> Result<ExecOutput> {
-        let (command, stdin) = become_command(&self.conn.target.ssh, cmd);
+        let (command, stdin) =
+            become_command(&self.conn.target.ssh, &self.conn.target.secrets, cmd);
         let timeout = cmd.timeout.unwrap_or(EXEC_TIMEOUT);
         let mut out = self
             .with_channel(timeout, !cmd.mutating, |handle| {
@@ -621,7 +653,8 @@ impl Session for SshSession {
         cmd: &Cmd,
         sink: &mut (dyn for<'a> FnMut(Stream, &'a str) + Send),
     ) -> Result<ExecOutput> {
-        let (command, stdin) = become_command(&self.conn.target.ssh, cmd);
+        let (command, stdin) =
+            become_command(&self.conn.target.ssh, &self.conn.target.secrets, cmd);
         let timeout = cmd.timeout.unwrap_or(EXEC_TIMEOUT);
         let result = self
             .with_channel_once(timeout, |handle| {
@@ -980,13 +1013,22 @@ pub struct SshSessionPool {
 }
 
 impl SshSessionPool {
-    /// Pool for every node in `cluster`, with default settings.
-    pub fn from_cluster(cluster: &Cluster) -> Result<Self> {
+    /// Pool for every node in `cluster`, using the operation's resolved
+    /// secrets (see [`ClusterSpec::resolve_secrets`]).
+    pub fn from_cluster(cluster: &ClusterSpec, secrets: &ResolvedSecrets) -> Result<Self> {
         let mut builder = SshSessionPoolBuilder::new();
         for node in &cluster.nodes {
+            let resolved =
+                secrets
+                    .node(&node.name)
+                    .cloned()
+                    .unwrap_or_else(|| ResolvedSshSecrets {
+                        auth: ResolvedAuth::Password(secrecy::SecretString::from(String::new())),
+                        become_password: None,
+                    });
             builder = builder.node(
                 node.name.clone(),
-                SshTarget::new(node.address, node.ssh.clone()),
+                SshTarget::with_secrets(node.address, node.ssh.clone(), resolved),
             );
         }
         builder.build()
@@ -1126,17 +1168,21 @@ impl Default for SshSessionPoolBuilder {
 /// Root never needs sudo; `become = "none"` never wraps; `auto`/`sudo`
 /// wrap every privileged command of a non-root login. The password rides
 /// the encrypted channel's stdin (`sudo -S`), never the command line.
-fn become_command(ssh: &ResolvedSsh, cmd: &Cmd) -> (String, Option<Vec<u8>>) {
+fn become_command(
+    ssh: &ResolvedSsh,
+    secrets: &ResolvedSshSecrets,
+    cmd: &Cmd,
+) -> (String, Option<Vec<u8>>) {
     let wrap = cmd.privileged && ssh.user != "root" && !matches!(ssh.r#become, BecomeMode::None);
     if !wrap {
         return (cmd.script.clone(), cmd.stdin.clone());
     }
     // `sudo -S` consumes exactly the password line; everything after it
     // stays on stdin for the wrapped command (e.g. `kubectl apply -f -`).
-    let password = ssh
+    let password = secrets
         .become_password
         .as_ref()
-        .map(|password| format!("{password}\n").into_bytes());
+        .map(|password| format!("{}\n", password.expose_secret()).into_bytes());
     let stdin = match (password, &cmd.stdin) {
         (Some(mut pw), Some(payload)) => {
             pw.extend_from_slice(payload);
@@ -1146,7 +1192,7 @@ fn become_command(ssh: &ResolvedSsh, cmd: &Cmd) -> (String, Option<Vec<u8>>) {
         (None, Some(payload)) => Some(payload.clone()),
         (None, None) => None,
     };
-    let command = if ssh.become_password.is_some() {
+    let command = if secrets.become_password.is_some() {
         format!("sudo -S -p '' -- sh -c {}", shell_quote(&cmd.script))
     } else {
         format!("sudo -n -- sh -c {}", shell_quote(&cmd.script))
@@ -1327,6 +1373,7 @@ fn truncate(s: &str, max: usize) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kurin_config::{SecretRef, SshAuth};
 
     #[test]
     fn quotes_plain_paths_verbatim() {
@@ -1379,18 +1426,37 @@ mod tests {
             user: user.into(),
             port: 22,
             r#become: mode,
-            become_password: password.map(Into::into),
+            become_password: password.map(|p| SecretRef::Literal(p.into())),
             known_hosts: Default::default(),
             auth: SshAuth::Password {
-                password: "fake-ssh-password".into(),
+                password: SecretRef::Literal("fake-ssh-password".into()),
             },
         }
+    }
+
+    fn secrets(password: Option<&str>) -> ResolvedSshSecrets {
+        ResolvedSshSecrets {
+            auth: ResolvedAuth::Password(secrecy::SecretString::from(
+                "fake-ssh-password".to_string(),
+            )),
+            become_password: password.map(|p| secrecy::SecretString::from(p.to_string())),
+        }
+    }
+
+    /// Build the become command for a synthetic login.
+    fn become_cmd(
+        user: &str,
+        mode: BecomeMode,
+        password: Option<&str>,
+        cmd: &Cmd,
+    ) -> (String, Option<Vec<u8>>) {
+        become_command(&login(user, mode, password), &secrets(password), cmd)
     }
 
     #[test]
     fn root_never_wraps() {
         for mode in [BecomeMode::Auto, BecomeMode::Sudo] {
-            let (line, stdin) = become_command(&login("root", mode, None), &Cmd::new("echo hi"));
+            let (line, stdin) = become_cmd("root", mode, None, &Cmd::new("echo hi"));
             assert_eq!(line, "echo hi");
             assert!(stdin.is_none());
         }
@@ -1398,29 +1464,20 @@ mod tests {
 
     #[test]
     fn non_root_auto_wraps_with_sudo_n() {
-        let (line, stdin) = become_command(
-            &login("ubuntu", BecomeMode::Auto, None),
-            &Cmd::new("echo hi"),
-        );
+        let (line, stdin) = become_cmd("ubuntu", BecomeMode::Auto, None, &Cmd::new("echo hi"));
         assert_eq!(line, "sudo -n -- sh -c 'echo hi'");
         assert!(stdin.is_none());
     }
 
     #[test]
     fn non_root_sudo_mode_wraps_identically() {
-        let (line, _) = become_command(
-            &login("ubuntu", BecomeMode::Sudo, None),
-            &Cmd::new("echo hi"),
-        );
+        let (line, _) = become_cmd("ubuntu", BecomeMode::Sudo, None, &Cmd::new("echo hi"));
         assert_eq!(line, "sudo -n -- sh -c 'echo hi'");
     }
 
     #[test]
     fn become_none_never_wraps() {
-        let (line, stdin) = become_command(
-            &login("ubuntu", BecomeMode::None, None),
-            &Cmd::new("echo hi"),
-        );
+        let (line, stdin) = become_cmd("ubuntu", BecomeMode::None, None, &Cmd::new("echo hi"));
         assert_eq!(line, "echo hi");
         assert!(stdin.is_none());
     }
@@ -1428,15 +1485,17 @@ mod tests {
     #[test]
     fn unprivileged_commands_are_not_wrapped() {
         let cmd = Cmd::probe("cat /etc/os-release").unprivileged();
-        let (line, stdin) = become_command(&login("ubuntu", BecomeMode::Auto, None), &cmd);
+        let (line, stdin) = become_cmd("ubuntu", BecomeMode::Auto, None, &cmd);
         assert_eq!(line, "cat /etc/os-release");
         assert!(stdin.is_none());
     }
 
     #[test]
     fn password_uses_sudo_s_and_travels_via_stdin() {
-        let (line, stdin) = become_command(
-            &login("ubuntu", BecomeMode::Auto, Some(FAKE_SUDO_PASSWORD)),
+        let (line, stdin) = become_cmd(
+            "ubuntu",
+            BecomeMode::Auto,
+            Some(FAKE_SUDO_PASSWORD),
             &Cmd::new("echo hi"),
         );
         assert_eq!(line, "sudo -S -p '' -- sh -c 'echo hi'");
@@ -1452,14 +1511,11 @@ mod tests {
     fn command_stdin_rides_through_become() {
         let cmd = Cmd::new("kubectl apply -f -").stdin(b"kind: Node\n".to_vec());
 
-        let (line, stdin) = become_command(&login("root", BecomeMode::Auto, None), &cmd);
+        let (line, stdin) = become_cmd("root", BecomeMode::Auto, None, &cmd);
         assert_eq!(line, "kubectl apply -f -");
         assert_eq!(stdin.as_deref(), Some(&b"kind: Node\n"[..]));
 
-        let (line, stdin) = become_command(
-            &login("ubuntu", BecomeMode::Auto, Some(FAKE_SUDO_PASSWORD)),
-            &cmd,
-        );
+        let (line, stdin) = become_cmd("ubuntu", BecomeMode::Auto, Some(FAKE_SUDO_PASSWORD), &cmd);
         assert!(line.starts_with("sudo -S -p ''"));
         let stdin = stdin.expect("password + payload on stdin");
         assert!(stdin.starts_with(b"fake-sudo-password-not-real\n"));
@@ -1468,17 +1524,16 @@ mod tests {
 
     #[test]
     fn embedded_single_quotes_are_escaped() {
-        let (line, _) = become_command(
-            &login("ubuntu", BecomeMode::Auto, None),
-            &Cmd::new("echo \"it's\""),
-        );
+        let (line, _) = become_cmd("ubuntu", BecomeMode::Auto, None, &Cmd::new("echo \"it's\""));
         assert_eq!(line, "sudo -n -- sh -c 'echo \"it'\\''s\"'");
     }
 
     #[test]
     fn multi_line_scripts_stay_intact_inside_the_wrap() {
-        let (line, _) = become_command(
-            &login("ubuntu", BecomeMode::Auto, None),
+        let (line, _) = become_cmd(
+            "ubuntu",
+            BecomeMode::Auto,
+            None,
             &Cmd::new("echo a\necho b"),
         );
         assert_eq!(line, "sudo -n -- sh -c 'echo a\necho b'");

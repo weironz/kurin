@@ -44,7 +44,7 @@ pub struct StorageInstall {
 impl StorageInstall {
     pub fn new(cluster: &Cluster, run: &Arc<RunContext>) -> Result<Self> {
         let kind = cluster
-            .storage_kind
+            .storage_kind()
             .ok_or_else(|| miette::miette!("storage kind missing"))?;
         Ok(Self {
             node_name: cluster
@@ -53,9 +53,9 @@ impl StorageInstall {
                 .map(|n| n.name.clone())
                 .unwrap_or_default(),
             kind,
-            default_class: cluster.storage_default,
-            server: cluster.storage_server.clone(),
-            path: cluster.storage_path.clone(),
+            default_class: cluster.storage_default(),
+            server: cluster.storage_server().map(str::to_string),
+            path: cluster.storage_path().map(str::to_string),
             flavor: cluster.distribution.into(),
             run: Arc::clone(run),
         })

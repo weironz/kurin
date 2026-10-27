@@ -707,7 +707,7 @@ role = "registry"
     fn run(cluster: &Cluster) -> Arc<RunContext> {
         Arc::new(RunContext::new(
             "test-op",
-            &cluster.name,
+            cluster.name.clone(),
             crate::run::ArtifactSources::embedded(),
         ))
     }
