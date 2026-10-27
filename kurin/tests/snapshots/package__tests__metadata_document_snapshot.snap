@@ -1,0 +1,57 @@
+---
+source: kurin/tests/package.rs
+expression: json
+---
+{
+  "schema": 1,
+  "name": "base",
+  "kind": "base",
+  "version": "1.33.1",
+  "kurin": ">=0.4.0, <0.6.0",
+  "created": "2026-10-28T00:00:00Z",
+  "distribution": "kubeadm",
+  "arch": [
+    "amd64",
+    "arm64"
+  ],
+  "components": [
+    {
+      "id": "distro/kubeadm",
+      "version": "1.33.1"
+    }
+  ],
+  "artifacts": [
+    {
+      "name": "kubeadm",
+      "kind": "binary",
+      "version": "1.33.1",
+      "arch": "amd64",
+      "digest": "sha256:8254c329a92850f6d539dd376f4816ee2764517da5e0235514af433164480d7a",
+      "size": 1,
+      "upstream": "https://dl.k8s.io/kubeadm"
+    },
+    {
+      "name": "calico-operator",
+      "kind": "manifest",
+      "version": "3.30.2",
+      "arch": "arm64",
+      "digest": "sha256:a1fce4363854ff888cff4b8e7875d600c2682390412a8cf79b37d0b11148b0fa",
+      "size": 21,
+      "upstream": "https://example/tigera-operator.yaml"
+    }
+  ],
+  "images": [
+    {
+      "ref": "registry.k8s.io/pause:3.10",
+      "digest": "sha256:c66a8eb7e6a7e395bf000e8884c7de131a5cf32a9f42de44a1b9ceaf47c8900e",
+      "arch": [
+        "amd64"
+      ],
+      "used-by": [
+        "runtime/containerd"
+      ]
+    }
+  ],
+  "charts": [],
+  "os": []
+}

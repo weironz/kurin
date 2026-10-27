@@ -2,6 +2,20 @@
 
 All notable changes to kurin. Format follows Keep a Changelog; semver.
 
+### Changed
+- `kurin artifact --out DIR` now builds the OCI package via
+  `kurin package create base -o oci-layout://DIR` and prints a
+  deprecation warning; the layout it writes (oci-layout +
+  kurin-package.json) is not the legacy directory tree, so
+  `--offline` consumers should keep using kurin ≥ this release or
+  rebuild old-style bundles with a previous version. `artifact` will be
+  removed two minors after this release (04 §4 compat note).
+- Fixed a pre-existing pin bug exposed by the package e2e: the embedded
+  manifest addressed busybox as `docker.io/library/busybox:v1.36.1`,
+  but Docker Hub tags busybox without the `v` prefix, so the fetch
+  404'd. The template now uses `{version}`; the pinned index digest
+  (`sha256:73aaf090…`) was verified to match tag `1.36.1` upstream.
+
 ### Added
 - Schema `v1alpha2` (WP-21): new configs may use `version = "v1alpha2"`
   with `[runtime] kind` (replacing `kubernetes.runtime`),
@@ -41,6 +55,19 @@ All notable changes to kurin. Format follows Keep a Changelog; semver.
   the running version from the record instead of probing `/version` (old
   clusters without a record keep the probe), and `status` prints the
   expected (record) vs observed (`/version`) version.
+- `kurin package create base` / `kurin package inspect` (WP-32): the
+  OCI package format of 04 §3 — one OCI image index
+  (`artifactType: application/vnd.kurin.package.v1`) carrying the
+  metadata manifest (`kurin-package.json`, schema
+  `docs/schema/package.v1.json`), one platform-tagged file-set manifest
+  per architecture, and every pinned image at its **upstream digest**
+  (annotation `dev.kurin.image.ref`). Outputs: `oci-layout://DIR`,
+  `file://X.tar`, `file://X.tar.zst`. `--kubernetes` re-pins via the
+  dynamic manifest, `--cni all|none|calico,flannel,cilium,kube-ovn`
+  and `--arch amd64,arm64` filter the component aggregation. An SPDX
+  2.3 JSON SBOM is written next to the output as `<out>.spdx.json`
+  (WP-39 will attach it as a referrer). `oci://` push/pull and
+  `verify` land in WP-33.
 - `kurin capabilities --json` (hidden subcommand): the aggregated
   component capability table (id, kind, distributions, archs, offline,
   zones, ops) — the single source of truth behind `just docs-matrix` and

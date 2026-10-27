@@ -15,6 +15,8 @@ miette.workspace = true
 semver.workspace = true
 sha2.workspace = true
 tokio.workspace = true
+time = { workspace = true, features = ["formatting"] }
+tempfile.workspace = true
 oci-spec = { version = "0.9", default-features = false, features = ["image"] }
 tar = "0.4"
 zstd = "0.13"

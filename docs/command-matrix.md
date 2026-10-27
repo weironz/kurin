@@ -90,15 +90,23 @@ sha256）。计划变化时拒绝续跑并提示去掉 `--resume`；v1 状态文
 | check | ✅ | ✅ |
 | renew | ✅（`kubeadm certs renew` → 静态 pod 重启 → `/readyz` 门控，逐节点 `rolling(1)`）| ✅（`k3s certificate rotate` → restart → `/readyz` 门控，逐节点 `rolling(1)`）|
 
-## artifact / curl | sh
+## package / artifact（弃用别名）
+
+`kurin package create base` 生成 04 §3 的 OCI 包（一个 image index：
+`kurin-package.json` 元数据、每个架构一个文件集 manifest、全部镜像按上游
+原 digest 保存）；`inspect` 打印包内容。输出支持 `oci-layout://DIR`、
+`file://X.tar`、`file://X.tar.zst` 三种形态（`oci://` 推送在 WP-33）。
 
 `--arch` 接受逗号分隔列表（如 `--arch amd64,arm64`）：混合架构集群的
-离线包需要覆盖全部涉及架构；缺省为控制机架构。
+离线包需要覆盖全部涉及架构；缺省为控制机架构。`--cni all|none|calico,cilium`
+裁剪 CNI 载荷；`--kubernetes vX.Y.Z` 走动态清单固定非内嵌版本；
+`--distribution kubeadm|k3s` 选择发行版。
 
 | | amd64 | arm64 |
 |---|---|---|
-| `artifact --out <dir>` | ✅ | `--arch arm64` |
-| `install.sh` | ✅ | ✅ |
+| `package create base -o …` | ✅ | `--arch arm64` |
+| `package inspect <src>` | ✅ | ✅ |
+| `artifact --out <dir>`（弃用别名）| ✅ | `--arch arm64` |
 
 ## logs
 

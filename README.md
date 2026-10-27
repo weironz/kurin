@@ -22,7 +22,8 @@ real end-to-end tests ([`docs/progress.md`](docs/progress.md)).
 - **Operations**: install / HA / multi-node / add-remove nodes / offline / mirror
   zone (`KURIN_ZONE=cn`) / upgrade / certs renewal / health status
 - `create cluster` · `create config` · `add nodes` · `delete node` · `delete cluster`
-  · `artifact` · `upgrade` · `certs check|renew` · `status`
+  · `package create base|inspect` · `artifact` (deprecated alias) · `upgrade`
+  · `certs check|renew` · `status`
 - `--dry-run` plan preview (fully offline); `--dry-run --check` live drift annotation
 
 ## Design
@@ -142,8 +143,10 @@ role = "lb"                  # excluded from every k8s task; gets haproxy+keepal
 ## Air-gapped installs
 
 ```bash
-# online machine: build the bundle (binaries + all pinned control-plane/CNI images)
-kurin artifact --out /srv/kurin-bundle
+# online machine: build the OCI package (binaries + all pinned control-plane/CNI
+# images); `kurin artifact --out DIR` is the deprecated oci-layout:// alias
+kurin package create base --arch amd64,arm64 -o file:///srv/kurin-base.tar.zst
+kurin package inspect file:///srv/kurin-base.tar.zst
 
 # offline targets: bundle path in config or via flag
 # [artifacts]

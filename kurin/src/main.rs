@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{ArgAction, Parser, Subcommand, ValueEnum};
-use miette::Result;
+use miette::{IntoDiagnostic, Result};
 
 use kurin::ops::{self, JsonMode, OpRequest, OutputOpts, Params, StatusOpts};
 
@@ -105,7 +105,14 @@ enum Commands {
         #[arg(long)]
         force_drain_failure: bool,
     },
-    /// Build an offline artifact bundle for air-gapped installs.
+    /// Build and inspect OCI packages for air-gapped installs (WP-32).
+    Package {
+        #[command(subcommand)]
+        what: PackageWhat,
+    },
+    /// Deprecated alias of `kurin package create base -o oci-layout://<dir>`.
+    ///
+    /// Builds an offline artifact bundle for air-gapped installs.
     Artifact {
         /// Output directory (created if missing).
         #[arg(short, long)]
@@ -116,7 +123,7 @@ enum Commands {
         #[arg(long)]
         arch: Option<String>,
         /// Kubernetes version to pin binaries and control-plane images for
-        /// (writes kurin-manifest.json; default: the compiled-in table).
+        /// (default: the compiled-in table).
         #[arg(long)]
         with_kubernetes: Option<String>,
     },
@@ -151,6 +158,52 @@ enum CertsWhat {
         /// Renew even when certificates look fresh.
         #[arg(long)]
         force: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum PackageWhat {
+    /// Build a package.
+    Create {
+        #[command(subcommand)]
+        what: PackageCreateWhat,
+    },
+    /// Print a package's metadata (name, version, components, artifacts,
+    /// images).
+    Inspect {
+        /// Package source: `oci-layout://DIR`, `file://X.tar` or
+        /// `file://X.tar.zst`.
+        source: String,
+        /// Print the full `kurin-package.json` instead of the summary.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum PackageCreateWhat {
+    /// One Kubernetes version + distribution's full binary and image set
+    /// (04 §3.4).
+    Base {
+        /// Kubernetes version to pin (default: the compiled-in table).
+        #[arg(long)]
+        kubernetes: Option<String>,
+        /// Kubernetes distribution: `kubeadm` (default) or `k3s`.
+        #[arg(long)]
+        distribution: Option<String>,
+        /// Architecture(s) to build for, comma-separated (default: this
+        /// machine's). A mixed-architecture cluster needs every arch its
+        /// nodes use, e.g. `--arch amd64,arm64`.
+        #[arg(long)]
+        arch: Option<String>,
+        /// CNI payloads to include: `all` (default), `none`, or a
+        /// comma-separated list (`calico,flannel,cilium,kube-ovn`).
+        #[arg(long)]
+        cni: Option<String>,
+        /// Output target: `oci-layout://DIR`, `file://X.tar` or
+        /// `file://X.tar.zst`.
+        #[arg(short, long)]
+        output: String,
     },
 }
 
@@ -360,7 +413,42 @@ async fn run(cli: Cli) -> Result<()> {
             out: dir,
             arch,
             with_kubernetes,
-        } => ops::build_artifacts(dir, arch, with_kubernetes).await,
+        } => {
+            eprintln!(
+                "warn: `kurin artifact` is deprecated: it now builds the same OCI package as \
+                 `kurin package create base -o oci-layout://<dir>`; the alias will be removed \
+                 in a future release"
+            );
+            package_create_base(
+                with_kubernetes,
+                None,
+                arch,
+                None,
+                format!("oci-layout://{}", dir.display()),
+            )
+            .await
+        }
+        Commands::Package { what } => match what {
+            PackageWhat::Create { what } => match what {
+                PackageCreateWhat::Base {
+                    kubernetes,
+                    distribution,
+                    arch,
+                    cni,
+                    output,
+                } => package_create_base(kubernetes, distribution, arch, cni, output).await,
+            },
+            PackageWhat::Inspect { source, json } => {
+                let handle = kurin::package::PackageSource::open(&source)?;
+                if json {
+                    let meta = handle.manifest()?;
+                    println!("{}", serde_json::to_string_pretty(&meta).into_diagnostic()?);
+                } else {
+                    print!("{}", kurin::package::inspect_summary(&handle)?);
+                }
+                Ok(())
+            }
+        },
         Commands::Capabilities => {
             println!("{}", ops::capabilities()?);
             Ok(())
@@ -527,6 +615,99 @@ async fn run_op(req: OpRequest, out: OutputOpts) -> Result<()> {
     let prepared = ops::prepare(req, out).await?;
     let plan = ops::plan(&prepared).await?;
     ops::execute(prepared, plan).await?;
+    Ok(())
+}
+
+fn resolve_zone(config_zone: Option<&str>) -> Result<kurin::zone::Zone> {
+    let zone_str = std::env::var("KURIN_ZONE")
+        .ok()
+        .filter(|z| !z.is_empty())
+        .or_else(|| config_zone.map(str::to_string))
+        .unwrap_or_else(|| "global".to_string());
+    let zone = kurin::zone::Zone::parse(&zone_str)
+        .ok_or_else(|| miette::miette!(r#"invalid zone {zone_str:?} (expected "cn")"#))?;
+    if zone == kurin::zone::Zone::Cn {
+        eprintln!("[zone] artifact downloads via domestic mirrors");
+    }
+    Ok(zone)
+}
+
+async fn package_create_base(
+    kubernetes: Option<String>,
+    distribution: Option<String>,
+    arch: Option<String>,
+    cni: Option<String>,
+    output: String,
+) -> Result<()> {
+    let zone = resolve_zone(None)?;
+    let distribution = match distribution.as_deref() {
+        None | Some("kubeadm") => "kubeadm",
+        Some("k3s") => "k3s",
+        Some(other) => {
+            return Err(miette::miette!(
+                "unknown distribution {other:?} (kubeadm|k3s)"
+            ))
+        }
+    };
+    let config_distribution = match distribution {
+        "k3s" => kurin_config::Distribution::K3s,
+        _ => kurin_config::Distribution::K8s,
+    };
+    let cni_selection = match cni.as_deref() {
+        None => kurin::components::CniSelection::All,
+        Some(value) => kurin::components::CniSelection::parse(value).ok_or_else(|| {
+            miette::miette!("invalid --cni {value:?} (all | none | calico,flannel,cilium,kube-ovn)")
+        })?,
+    };
+    // `--arch amd64,arm64` builds every listed arch (mixed-architecture
+    // clusters need one package covering all of them); the default is
+    // the control machine's arch.
+    let mut arches: Vec<kurin::arch::Arch> = match arch.as_deref() {
+        Some(list) => list
+            .split(',')
+            .map(|a| a.trim())
+            .filter(|a| !a.is_empty())
+            .map(|a| match a {
+                "amd64" | "x86_64" => Ok(kurin::arch::Arch::Amd64),
+                "arm64" | "aarch64" => Ok(kurin::arch::Arch::Arm64),
+                other => Err(miette::miette!("unknown arch {other:?} (amd64|arm64)")),
+            })
+            .collect::<miette::Result<Vec<_>>>()?,
+        None => vec![kurin::arch::Arch::host()?],
+    };
+    arches.dedup();
+
+    let out = kurin::package::PackageOutput::parse(&output)?;
+    let store = kurin::artifact::ArtifactStore::open_default()?;
+    let opts = kurin::package::BasePackage {
+        kubernetes: kubernetes.clone(),
+        distribution: distribution.to_string(),
+        arches,
+        components: kurin::components::base_components(config_distribution, &cni_selection)
+            .into_iter()
+            .map(|c| kurin::package::ComponentSpec {
+                id: c.id,
+                artifacts: c.artifacts,
+            })
+            .collect(),
+    };
+    let report = kurin::package::create_base(&store, &opts, zone, &out)
+        .await
+        .map_err(|e| miette::miette!("{e:?}"))?;
+    eprintln!(
+        "package base {} [{}] written to {} ({} file(s), {} image(s))",
+        report.tag,
+        opts.arches
+            .iter()
+            .map(|a| a.as_str())
+            .collect::<Vec<_>>()
+            .join(","),
+        report.output.display(),
+        report.files,
+        report.images
+    );
+    eprintln!("index: {}", report.index);
+    eprintln!("sbom:  {}", report.sbom.display());
     Ok(())
 }
 

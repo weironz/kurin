@@ -1991,6 +1991,7 @@ dependencies = [
  "kurin-ops",
  "kurin-ssh",
  "miette",
+ "oci-spec",
  "regex",
  "semver",
  "serde_json",
@@ -2014,6 +2015,7 @@ dependencies = [
  "tar",
  "tempfile",
  "thiserror",
+ "time",
  "tokio",
  "zstd",
 ]

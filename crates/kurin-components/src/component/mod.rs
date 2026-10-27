@@ -454,6 +454,111 @@ pub fn bootstrap_images(cluster: &Cluster, arch: Arch) -> Vec<ArtifactRef> {
     out
 }
 
+// ---------------------------------------------------------------------------
+// package create base (WP-32, 04 §3.4/§4)
+// ---------------------------------------------------------------------------
+
+/// CNI selection of `kurin package create base --cni`: every CNI, none,
+/// or an explicit list.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CniSelection {
+    /// `--cni all` (the default): the package covers every CNI a cluster
+    /// of the chosen distribution may run.
+    All,
+    /// `--cni none`: no CNI payloads.
+    None,
+    /// `--cni calico,cilium`: only the listed CNIs.
+    List(Vec<kurin_config::CniConfig>),
+}
+
+impl CniSelection {
+    /// Parse a `--cni` value: `all`, `none`, or a comma-separated list of
+    /// `calico` / `flannel` / `cilium` / `kube-ovn`. Returns `None` for
+    /// an unknown name or an empty list.
+    pub fn parse(value: &str) -> Option<CniSelection> {
+        let value = value.trim();
+        match value {
+            "all" => return Some(CniSelection::All),
+            "none" => return Some(CniSelection::None),
+            _ => {}
+        }
+        let mut out = Vec::new();
+        for name in value.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+            let cni = match name {
+                "calico" => kurin_config::CniConfig::Calico,
+                "flannel" => kurin_config::CniConfig::Flannel,
+                "cilium" => kurin_config::CniConfig::Cilium,
+                "kube-ovn" => kurin_config::CniConfig::KubeOvn,
+                _ => return None,
+            };
+            if !out.contains(&cni) {
+                out.push(cni);
+            }
+        }
+        if out.is_empty() {
+            return None;
+        }
+        Some(CniSelection::List(out))
+    }
+}
+
+/// One component's contribution to a package: its id plus the artifact
+/// manifest entry names it requires (plain data, so `kurin-artifact`'s
+/// package builder stays independent of this crate; versions are
+/// resolved against the run's manifest there).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PackageComponentSpec {
+    /// Component id (`runtime/containerd`).
+    pub id: String,
+    /// Artifact manifest entry names, in the component's declaration
+    /// order.
+    pub artifacts: Vec<String>,
+}
+
+/// The components a `base` package carries for one distribution and CNI
+/// selection (04 §3.4): every registered component except the *other*
+/// distributions and the unselected CNIs. Components with no artifacts
+/// contribute nothing and are left out.
+///
+/// The runtime, os, ha, registry and storage layers are included
+/// unconditionally: a base package must cover any cluster config of its
+/// distribution (both runtimes, every registry kind, the storage
+/// provisioners), like the legacy cluster-agnostic bundle did.
+pub fn base_components(
+    distribution: kurin_config::Distribution,
+    cni: &CniSelection,
+) -> Vec<PackageComponentSpec> {
+    let mut spec = bundle_spec();
+    spec.distribution = distribution;
+    let mut out = Vec::new();
+    for component in registry().iter() {
+        let include = match component.kind() {
+            ComponentKind::Distribution => component.enabled(&spec),
+            ComponentKind::Cni => match cni {
+                CniSelection::All => true,
+                CniSelection::None => false,
+                CniSelection::List(list) => list.iter().any(|candidate| {
+                    spec.cni = candidate.clone();
+                    component.enabled(&spec)
+                }),
+            },
+            _ => true,
+        };
+        if !include {
+            continue;
+        }
+        let artifacts = component.artifacts(&spec, Arch::Amd64);
+        if artifacts.is_empty() {
+            continue;
+        }
+        out.push(PackageComponentSpec {
+            id: component.id().to_string(),
+            artifacts: artifacts.into_iter().map(|r| r.name).collect(),
+        });
+    }
+    out
+}
+
 /// Run every enabled component's validation rules over `cluster`;
 /// returns the first finding as the loader-style config error.
 pub fn validate(cluster: &Cluster) -> kurin_config::Result<()> {
@@ -599,6 +704,108 @@ mod tests {
                 let r = ArtifactRef::of(name, arch);
                 assert_eq!(r.name, name);
                 assert!(!r.version.is_empty(), "{name} has a version");
+            }
+        }
+    }
+
+    #[test]
+    fn cni_selection_parses_the_cli_spellings() {
+        assert_eq!(CniSelection::parse("all"), Some(CniSelection::All));
+        assert_eq!(CniSelection::parse("none"), Some(CniSelection::None));
+        assert_eq!(
+            CniSelection::parse("calico,cilium"),
+            Some(CniSelection::List(vec![
+                kurin_config::CniConfig::Calico,
+                kurin_config::CniConfig::Cilium
+            ]))
+        );
+        // Duplicates collapse; order is preserved.
+        assert_eq!(
+            CniSelection::parse("cilium, calico,cilium"),
+            Some(CniSelection::List(vec![
+                kurin_config::CniConfig::Cilium,
+                kurin_config::CniConfig::Calico
+            ]))
+        );
+        assert_eq!(CniSelection::parse("weave"), None);
+        assert_eq!(CniSelection::parse(""), None);
+        assert_eq!(CniSelection::parse(","), None);
+    }
+
+    #[test]
+    fn kubeadm_base_covers_all_cnis_and_both_runtimes() {
+        let components = base_components(kurin_config::Distribution::K8s, &CniSelection::All);
+        let names: Vec<&str> = components.iter().map(|c| c.id.as_str()).collect();
+        // The kubeadm distribution is in, k3s is not.
+        assert!(names.contains(&"distro/kubeadm"));
+        assert!(!names.contains(&"distro/k3s"));
+        // Both runtimes and every registry kind stay: a base package
+        // covers any cluster config of its distribution.
+        assert!(names.contains(&"runtime/containerd"));
+        assert!(names.contains(&"runtime/crio"));
+        assert!(names.contains(&"registry/zot"));
+        assert!(names.contains(&"registry/harbor"));
+        // Every CNI contributes (kube-ovn's list is empty and is left
+        // out — its images are chart-rendered, not manifest-pinned).
+        assert!(names.contains(&"cni/calico"));
+        assert!(names.contains(&"cni/flannel"));
+        assert!(names.contains(&"cni/cilium"));
+        assert!(!names.contains(&"cni/kube-ovn"));
+        assert!(!names.contains(&"cni/none"));
+        // The artifact list matches the component's declaration.
+        let distro = components
+            .iter()
+            .find(|c| c.id == "distro/kubeadm")
+            .unwrap();
+        assert_eq!(
+            distro.artifacts.first().map(String::as_str),
+            Some("kubeadm")
+        );
+        assert!(distro.artifacts.contains(&"etcd".to_string()));
+    }
+
+    #[test]
+    fn k3s_base_swaps_the_distribution_and_keeps_the_airgap_tarball() {
+        let components = base_components(kurin_config::Distribution::K3s, &CniSelection::All);
+        let names: Vec<&str> = components.iter().map(|c| c.id.as_str()).collect();
+        assert!(names.contains(&"distro/k3s"));
+        assert!(!names.contains(&"distro/kubeadm"));
+        // The synthetic spec carries offline_dir so the air-gap tarball
+        // is included, matching the legacy bundle aggregation.
+        let k3s = components.iter().find(|c| c.id == "distro/k3s").unwrap();
+        assert!(k3s.artifacts.contains(&"k3s-airgap".to_string()));
+    }
+
+    #[test]
+    fn cni_selection_filters_the_cni_layer() {
+        let selection = CniSelection::parse("flannel").unwrap();
+        let components = base_components(kurin_config::Distribution::K8s, &selection);
+        let names: Vec<&str> = components.iter().map(|c| c.id.as_str()).collect();
+        assert!(names.contains(&"cni/flannel"));
+        assert!(!names.contains(&"cni/calico"));
+        assert!(!names.contains(&"cni/cilium"));
+
+        let none = base_components(kurin_config::Distribution::K8s, &CniSelection::None);
+        assert!(none.iter().all(|c| !c.id.starts_with("cni/")));
+    }
+
+    #[test]
+    fn base_components_resolve_in_the_embedded_manifest() {
+        // The package builder resolves these names against the run's
+        // manifest; every one of them must exist there.
+        let manifest = ArtifactManifest::embedded().expect("the embedded manifest parses");
+        for distribution in [
+            kurin_config::Distribution::K8s,
+            kurin_config::Distribution::K3s,
+        ] {
+            for component in base_components(distribution, &CniSelection::All) {
+                for name in &component.artifacts {
+                    assert!(
+                        manifest.get(name).is_some(),
+                        "{name} (from {}) is not in the embedded manifest",
+                        component.id
+                    );
+                }
             }
         }
     }

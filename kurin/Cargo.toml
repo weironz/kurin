@@ -23,6 +23,7 @@ tokio.workspace = true
 clap.workspace = true
 semver.workspace = true
 tracing.workspace = true
+oci-spec = { version = "0.9", default-features = false, features = ["image"] }
 
 [dev-dependencies]
 async-trait.workspace = true

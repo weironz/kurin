@@ -687,20 +687,44 @@ async fn registry_auth_headers(registry: &str, repo: &str) -> Result<RegistryAut
     })
 }
 
-/// Verify one image cache dir against the pinned index digest, walking
-/// the full digest chain (index → manifest → blobs).
-fn verify_image_dir(dir: &Path, arch: Arch, expected_index: &str) -> Result<(), ArtifactError> {
+/// The verified digest chain of one cached image artifact: what a kurin
+/// package keeps of an image (04 §3.1 — the upstream index at its
+/// original digest, plus the selected platform's sub-manifest and blobs).
+#[derive(Debug, Clone)]
+pub struct ImageChain {
+    /// sha256 (hex, no prefix) of the multi-arch index — equals the pin.
+    pub index: String,
+    /// Byte size of the index document.
+    pub index_size: u64,
+    /// The index's own `mediaType` (OCI index or Docker manifest list).
+    pub media_type: String,
+    /// sha256 (hex) of the selected platform's manifest.
+    pub manifest: String,
+    /// Config and layer digests (hex) of the selected platform's manifest.
+    pub blobs: Vec<String>,
+}
+
+/// Walk one cached image directory, verifying the index against the pin
+/// and every digest below it, and return the chain (see
+/// [`ImageChain`]). Shared by the offline verifier and the package
+/// builder, which re-hosts the same digests inside an OCI layout.
+pub fn image_chain(
+    dir: &Path,
+    arch: Arch,
+    expected_index: &str,
+) -> Result<ImageChain, ArtifactError> {
     let index_path = dir.join("index.json");
-    let index_tmp = std::fs::read(&index_path)?;
-    if sha256_hex(&index_tmp) != expected_index {
+    let index_raw = std::fs::read(&index_path)?;
+    let actual = sha256_hex(&index_raw);
+    if actual != expected_index {
         return Err(ArtifactError::ChecksumMismatch {
             name: "image".to_string(),
             path: index_path,
             expected: expected_index.to_string(),
-            actual: sha256_hex(&index_tmp),
+            actual,
         });
     }
-    let index: OciIndex = serde_json::from_slice(&index_tmp)?;
+    let index: OciIndex = serde_json::from_slice(&index_raw)?;
     let entry = index
         .manifests
         .iter()
@@ -727,6 +751,7 @@ fn verify_image_dir(dir: &Path, arch: Arch, expected_index: &str) -> Result<(), 
         });
     }
     let manifest: OciManifest = serde_json::from_slice(&manifest_raw)?;
+    let mut blobs = Vec::new();
     for digest in
         std::iter::once(&manifest.config.digest).chain(manifest.layers.iter().map(|l| &l.digest))
     {
@@ -741,8 +766,23 @@ fn verify_image_dir(dir: &Path, arch: Arch, expected_index: &str) -> Result<(), 
                 actual,
             });
         }
+        blobs.push(hex);
     }
-    Ok(())
+    Ok(ImageChain {
+        index: expected_index.to_string(),
+        index_size: index_raw.len() as u64,
+        media_type: index
+            .media_type
+            .unwrap_or_else(|| "application/vnd.oci.image.index.v1+json".to_string()),
+        manifest: manifest_digest,
+        blobs,
+    })
+}
+
+/// Verify one image cache dir against the pinned index digest, walking
+/// the full digest chain (index → manifest → blobs).
+fn verify_image_dir(dir: &Path, arch: Arch, expected_index: &str) -> Result<(), ArtifactError> {
+    image_chain(dir, arch, expected_index).map(|_| ())
 }
 
 /// Read one `<name>-<version>-<arch>` directory: require a `.sha256`
@@ -1117,6 +1157,8 @@ fn parse_image_ref(reference: &str) -> Result<(String, String, String), Artifact
 
 #[derive(Debug, Deserialize)]
 struct OciIndex {
+    #[serde(default, rename = "mediaType")]
+    media_type: Option<String>,
     #[serde(default)]
     manifests: Vec<OciIndexEntry>,
 }

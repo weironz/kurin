@@ -415,7 +415,7 @@
       "kind": "image",
       "version": "1.36.1",
       "file": "index.json",
-      "url_template": "docker.io/library/busybox:v{version}",
+      "url_template": "docker.io/library/busybox:{version}",
       "sha256": {
         "linux-amd64": "73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662",
         "linux-arm64": "73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662"

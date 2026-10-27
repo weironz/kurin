@@ -36,7 +36,7 @@
 | WP-28 --setup-ssh-key | todo | | | tier1 密码 + setup-key | |
 | WP-30 OCI spike | done | 见提交 | 无 | 无 | 结论见 docs/architecture/spikes/30-oci.md；04 §8/§9 已按实测修正 |
 | WP-31 BlobStore 与 OCI layout | done | 见提交 | 无 | 无 | `oci-spec 0.9`；26 单测 + 12 集成测试通过；oras/skopeo 未安装，未做外部 CLI 读取验证 |
-| WP-32 包格式与 package create base | todo | | | | |
+| WP-32 包格式与 package create base | done | 见提交 | 新增包元数据快照 | `kurin package create base --arch amd64,arm64 -o file:///tmp/base.tar.zst && kurin package inspect file:///tmp/base.tar.zst` | OCI index 布局；SPDX 边车；确定性构建；`artifact` 转发并弃用提示 |
 | WP-33 package inspect/verify/push/pull | todo | | | | |
 | WP-34 部署侧接入包 | todo | | | | |
 | WP-35 preload 分发基于包 | todo | | | `just tier1-offline` × 三种来源 | |
@@ -82,6 +82,7 @@
 - WP-00：`ScriptedSession` 在 `(exit, stdout, stderr)` 之外增加了「命令已执行但传输中断」的应答与副作用文件，用于覆盖 `Outcome::Unknown → 重新探测` 路径；`cli_output` 快照对任务耗时与阶段内行序做归一化（并发完成顺序不在 v1 契约内）。
 - WP-15：为保持快照的 per-node 任务布局，`PlanBuilder` 增加 `add_track`（phase 内按 track/node/调用序重排）；k3s 校验规则移入 `distro/k3s`，错误文本逐字节一致。
 - WP-16：`storage/*` 标为 online-only（镜像在 bundle 但 bootstrap 不预载，WP-47 接管）；`ha/kube-vip` 镜像 pin 在版本表而非 manifest，标 online-only；`capabilities` 为隐藏命令且恒出 JSON。
+- WP-32：`kurin artifact` 现在产出 OCI layout（旧目录树由 WP-34 兼容读取）；镜像按所选架构携带子 manifest，上游 index 原样保留；修复 busybox URL 模板（Docker Hub tag 无 `v` 前缀）。
 - WP-21：未知 addon 名默认拒绝，带 `source` 的外部 addon 名放行；v1alpha2 保留 `[artifacts]` 并新增 `[packages]`；新增 `toml_edit`（纯 Rust）。
 - WP-20：保留 `pub type Cluster = ClusterSpec` 别名以减少调用点改动；秘密在 `kurin-ops::prepare` 解析一次；`--dry-run` 不读秘密文件（文档已写明）。
 - WP-19：记录类型/实现放在 components（ops 只 re-export）；`upgrade` 暂不写记录（其 post 任务独立，留待后续）；`spec.toml` 由 `Cluster.source` 规范化重排。
@@ -110,6 +111,7 @@
 
 - WP-15：纯重构，快照零变化；回归 `just tier1`/`tier2` 即可。
 - WP-16：`just tier1-offline`、`just tier3-external-lb`。
+- WP-32：`kurin package create base --arch amd64,arm64 -o file:///tmp/base.tar.zst`，再 `kurin package inspect file:///tmp/base.tar.zst`（真实网络下载约 10 分钟；本地假上游测试已覆盖校验路径）。
 - WP-21：`kurin config migrate` 后 `create cluster --dry-run`；全部 v1alpha1 样例迁移快照与等价断言已自动覆盖。
 - WP-20：tier1 用 `{ env = ... }` 与 `{ file = ... }`（0600）提供 SSH 密码；`--dry-run` 不读取秘密文件。
 - WP-19：tier2 安装后检查 `kube-system/kurin-state`（8 键、密码为 `******`、history 含本次 op）；改配置 `add nodes` 确认不再探测 `/version`；`status` 显示 expected vs observed。

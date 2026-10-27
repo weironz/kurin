@@ -1,0 +1,176 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kurin.dev/schema/package.v1.json",
+  "title": "kurin-package.json (schema 1)",
+  "description": "The package metadata document of a kurin OCI package: the single layer of the metadata manifest (artifactType application/vnd.kurin.package.meta.v1+json). See docs/architecture/04-oci-packages.md §3.2.",
+  "type": "object",
+  "required": [
+    "schema",
+    "name",
+    "kind",
+    "version",
+    "kurin",
+    "created",
+    "distribution",
+    "arch",
+    "components",
+    "artifacts",
+    "images",
+    "charts",
+    "os"
+  ],
+  "properties": {
+    "schema": {
+      "const": 1,
+      "description": "Format schema version; this document defines 1."
+    },
+    "name": {
+      "type": "string",
+      "description": "Package name (`base` for the built-in base package)."
+    },
+    "kind": {
+      "enum": ["base", "addon", "os", "bundle", "custom"],
+      "description": "What the package contains (04 §3.4)."
+    },
+    "version": {
+      "type": "string",
+      "description": "The Kubernetes version a `base` package pins (e.g. 1.33.1)."
+    },
+    "kurin": {
+      "type": "string",
+      "description": "kurin versions able to consume this package (semver range, e.g. `>=0.4.0, <0.6.0`)."
+    },
+    "created": {
+      "type": "string",
+      "description": "Creation time, RFC 3339 UTC."
+    },
+    "distribution": {
+      "enum": ["kubeadm", "k3s"],
+      "description": "The distribution a `base` package was built for."
+    },
+    "arch": {
+      "type": "array",
+      "items": { "enum": ["amd64", "arm64"] },
+      "uniqueItems": true,
+      "description": "Architectures covered."
+    },
+    "components": {
+      "type": "array",
+      "description": "The components whose artifacts were aggregated.",
+      "items": { "$ref": "#/$defs/component" }
+    },
+    "artifacts": {
+      "type": "array",
+      "description": "File artifacts (binaries and plain manifests), one entry per artifact per architecture.",
+      "items": { "$ref": "#/$defs/artifact" }
+    },
+    "images": {
+      "type": "array",
+      "description": "Container images, kept at upstream digests.",
+      "items": { "$ref": "#/$defs/image" }
+    },
+    "charts": {
+      "type": "array",
+      "description": "Helm charts (reserved for WP-40).",
+      "items": { "$ref": "#/$defs/chart" }
+    },
+    "os": {
+      "type": "array",
+      "description": "OS dependency repositories (reserved for WP-36).",
+      "items": { "$ref": "#/$defs/os" }
+    }
+  },
+  "$defs": {
+    "component": {
+      "type": "object",
+      "required": ["id", "version"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Component id (`distro/kubeadm`)."
+        },
+        "version": {
+          "type": "string",
+          "description": "The version the component's artifacts resolved to."
+        }
+      }
+    },
+    "artifact": {
+      "type": "object",
+      "required": ["name", "kind", "version", "arch", "digest", "size", "upstream"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Artifact manifest entry name (`kubeadm`)."
+        },
+        "kind": {
+          "enum": ["binary", "manifest"],
+          "description": "Payload kind."
+        },
+        "version": { "type": "string" },
+        "arch": { "enum": ["amd64", "arm64"] },
+        "digest": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "description": "sha256 of the payload blob."
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Payload size in bytes."
+        },
+        "upstream": {
+          "type": "string",
+          "description": "Upstream URL the payload was downloaded from."
+        }
+      }
+    },
+    "image": {
+      "type": "object",
+      "required": ["ref", "digest", "arch", "used-by"],
+      "properties": {
+        "ref": {
+          "type": "string",
+          "description": "Upstream full reference (`registry.k8s.io/kube-apiserver:v1.33.1`)."
+        },
+        "digest": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "description": "Digest of the upstream multi-arch index."
+        },
+        "arch": {
+          "type": "array",
+          "items": { "enum": ["amd64", "arm64"] },
+          "uniqueItems": true,
+          "description": "Architectures whose sub-manifests the package carries."
+        },
+        "used-by": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Component ids that reference the image."
+        }
+      }
+    },
+    "chart": {
+      "type": "object",
+      "required": ["name", "version", "digest"],
+      "properties": {
+        "name": { "type": "string" },
+        "version": { "type": "string" },
+        "digest": { "type": "string" }
+      }
+    },
+    "os": {
+      "type": "object",
+      "required": ["os", "arch", "digest"],
+      "properties": {
+        "os": {
+          "type": "string",
+          "description": "e.g. `ubuntu-24.04`."
+        },
+        "arch": { "enum": ["amd64", "arm64"] },
+        "digest": { "type": "string" }
+      }
+    }
+  }
+}

@@ -62,6 +62,9 @@ pub mod plan {
 pub mod precheck {
     pub use kurin_components::precheck::*;
 }
+pub mod package {
+    pub use kurin_artifact::package::*;
+}
 pub mod render {
     pub use kurin_core::render::*;
 }
