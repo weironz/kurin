@@ -144,7 +144,9 @@ release ver *title:
     #!/usr/bin/env bash
     set -euo pipefail
     ver="{{ver}}"
-    [ -n "$(ls release-dist 2>/dev/null)" ] || just release-musl
+    # Always rebuild: a stale release-dist would silently publish the
+    # previous version's binaries under the new tag (done once, never again).
+    just release-musl
     git rev-parse "v$ver" >/dev/null 2>&1 || git tag "v$ver"
     notes=$(mktemp)
     awk -v ver="$ver" '
