@@ -4,3 +4,5 @@
 //! also exercise live here so both see the same surface.
 
 pub mod quick;
+
+pub mod ssh_key;

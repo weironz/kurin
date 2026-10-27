@@ -1,0 +1,18 @@
+---
+source: kurin/tests/ssh_key.rs
+expression: "document.replace(dir.path().to_str().expect(\"utf-8\"), \"/KEYDIR\")"
+---
+version = "v1alpha2"
+name = "demo"
+
+[ssh.auth]
+method = "private_key"
+key-path = "/KEYDIR/id_ed25519"
+
+[nodes.cp-1]
+address = "10.0.0.1"
+role = "control-plane"
+
+[nodes.worker-1]
+address = "10.0.0.2"
+role = "worker"

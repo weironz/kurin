@@ -1,0 +1,18 @@
+---
+source: kurin/tests/ssh_key.rs
+expression: config.document
+---
+version = "v1alpha2"
+name = "lab"
+
+[ssh]
+user = "ubuntu"
+become-password = { env = "KURIN_BECOME_PASSWORD" }
+
+[ssh.auth]
+method = "password"
+password = { env = "KURIN_SSH_PASSWORD" }
+
+[nodes.cp-1]
+address = "10.0.0.5"
+role = "control-plane"

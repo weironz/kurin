@@ -102,8 +102,9 @@ pub enum ZoneArg {
 /// Every quick-create parameter from `05-cli-quick-create.md` §3, flattened
 /// into `create cluster` and `create config`.
 ///
-/// `--setup-ssh-key` is not here: it belongs to WP-28, which pushes the key
-/// over a password session and rewrites the saved config to key auth.
+/// `--setup-ssh-key` only takes effect on `create cluster`: it pushes the
+/// public key over the password session before discover and rewrites the
+/// saved config to key auth (`cli::ssh_key`).
 #[derive(clap::Args, Debug, Default)]
 pub struct QuickArgs {
     // ── nodes ────────────────────────────────────────────────────────
@@ -143,9 +144,21 @@ pub struct QuickArgs {
         conflicts_with_all = ["ssh_password_env", "ssh_password_file", "ssh_password", "ask_pass"]
     )]
     pub ssh_key: Option<PathBuf>,
-    /// Environment variable holding the private key passphrase.
-    #[arg(long, value_name = "VAR", requires = "ssh_key")]
+    /// Environment variable holding the private key passphrase
+    /// (`--ssh-key`, or the existing key named by `--setup-ssh-key`).
+    #[arg(long, value_name = "VAR")]
     pub ssh_key_passphrase_env: Option<String>,
+    /// Push the control machine's public key to every node over the
+    /// password session, then switch the config to private-key auth
+    /// (WP-28). The value names the public key file; without one,
+    /// `~/.ssh/id_ed25519.pub` is used and generated when missing.
+    #[arg(
+        long,
+        value_name = "PUB",
+        num_args = 0..=1,
+        conflicts_with = "ssh_key"
+    )]
+    pub setup_ssh_key: Option<Option<PathBuf>>,
     /// Prompt for the SSH password (never echoed, never saved).
     #[arg(
         long,
@@ -269,6 +282,7 @@ impl QuickArgs {
             && self.ssh_port.is_none()
             && self.ssh_key.is_none()
             && self.ssh_key_passphrase_env.is_none()
+            && self.setup_ssh_key.is_none()
             && !self.ask_pass
             && self.ssh_password_env.is_none()
             && self.ssh_password_file.is_none()
@@ -321,8 +335,18 @@ impl QuickArgs {
     /// Returns a diagnostic for a malformed IP list, `--node` spec,
     /// `--addon`, `--addon-set` or `--set` argument.
     pub fn patch(&self) -> Result<(ConfigPatch, Vec<String>)> {
-        let mut patch = ConfigPatch::default();
         let mut warnings = Vec::new();
+        let mut patch = ConfigPatch::default();
+        // clap cannot express "requires one of two arguments"; without a
+        // key to decrypt the passphrase would dangle silently.
+        if self.ssh_key_passphrase_env.is_some()
+            && self.ssh_key.is_none()
+            && self.setup_ssh_key.is_none()
+        {
+            return Err(miette::miette!(
+                "--ssh-key-passphrase-env needs --ssh-key or --setup-ssh-key"
+            ));
+        }
 
         patch.name = self.name.clone();
         patch.kubernetes_version = self
@@ -631,6 +655,12 @@ pub struct QuickConfig {
     pub yes: bool,
     /// Naming strategy (hostname renames happen after discover).
     pub node_name: NodeNameStrategy,
+    /// `--setup-ssh-key [PUB]`: the public key to push before discover
+    /// (the default path is already resolved here); the push and the
+    /// switch to key auth happen in `run_quick` (`cli::ssh_key`).
+    pub setup_ssh_key: Option<PathBuf>,
+    /// `--ssh-key-passphrase-env` alongside `--setup-ssh-key`.
+    pub setup_passphrase_env: Option<String>,
     /// Warnings to print before the summary (`-p`, ...).
     pub warnings: Vec<String>,
 }
@@ -639,8 +669,10 @@ pub struct QuickConfig {
 ///
 /// # Errors
 ///
-/// Returns the loader/validator diagnostic, titled "来自命令行参数", or a
-/// prompt error when an interactive secret is requested without a terminal.
+/// Returns the loader/validator diagnostic, titled "来自命令行参数", a
+/// prompt error when an interactive secret is requested without a
+/// terminal, or an error when `--setup-ssh-key` is used where no session
+/// can run (`--dry-run`, `create config`).
 pub fn build(
     file: Option<&Path>,
     args: &QuickArgs,
@@ -650,6 +682,12 @@ pub fn build(
     if file.is_none() && args.name.is_none() {
         return Err(miette::miette!(
             "--name is required when no -f config file is given"
+        ));
+    }
+    if args.setup_ssh_key.is_some() && !need_secret {
+        return Err(miette::miette!(
+            "--setup-ssh-key pushes the key over the SSH password session; it cannot run \
+             with --dry-run or `create config`"
         ));
     }
     let (patch, mut warnings) = args.patch()?;
@@ -701,6 +739,16 @@ pub fn build(
         yes: args.yes,
         node_name: patch.node_name,
         warnings,
+        setup_ssh_key: args.setup_ssh_key.as_ref().map(|value| {
+            value
+                .clone()
+                .unwrap_or_else(crate::cli::ssh_key::default_public_key_path)
+        }),
+        setup_passphrase_env: if args.setup_ssh_key.is_some() {
+            args.ssh_key_passphrase_env.clone()
+        } else {
+            None
+        },
     })
 }
 

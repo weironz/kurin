@@ -72,8 +72,7 @@ kurin create cluster -f prod.kurin.toml --set network.pod-cidr=10.244.0.0/16 --c
 | `--ssh-password-env <VAR>` | `password = { env = "VAR" }` |
 | `--ssh-password-file <PATH>` | `password = { file = "PATH" }`（文件权限宽于 `0600` 时告警） |
 | `-p, --ssh-password <PW>` | **会打印告警**（密码进入 shell 历史与 `ps`）；落盘只写 `{ env = "KURIN_SSH_PASSWORD" }`，并提示后续操作前导出该变量 |
-| `--become` / `--become-password-env <VAR>` / `--ask-become-pass` | `ssh.become` / `ssh.become-password`（交互输入同样只落盘 `{ env = "KURIN_BECOME_PASSWORD" }`） |
-| `--known-hosts <MODE>` | `ssh.known-hosts`：`tofu`（默认）\| `strict` \| `accept-new` |
+| `--setup-ssh-key [PUB]` | 先用密码会话把控制机公钥（默认 `~/.ssh/id_ed25519.pub`；不存在时生成 ed25519 密钥对，私钥 `0600`；只有私钥时反推 `.pub`）幂等追加到每个节点登录用户的 `~/.ssh/authorized_keys`（已存在则跳过；`~/.ssh` `0700`、文件 `0600`），验证私钥可登录后，落盘改为 `ssh.auth.method = "private_key"` + `key-path`（含每节点的密码覆盖）。仅 `create cluster`；`--dry-run` 拒绝 |
 
 明文密码（`-p`、`--ask-pass`、`--ask-become-pass`）**永远不会写进配置文件**：
 文件里只有秘密引用，值只在本进程内存中，并在 `kurin-ops::prepare` 解析一次后

@@ -122,6 +122,11 @@ tier1-quick:
     CARGO_TARGET_DIR=target/tier1 cargo build -q -p kurin
     e2e/tier1/quick.sh target/tier1/debug/kurin
 
+# password create + --setup-ssh-key, then passwordless status (WP-28)
+tier1-ssh-key:
+    CARGO_TARGET_DIR=target/tier1 cargo build -q -p kurin
+    e2e/tier1/ssh-key.sh target/tier1/debug/kurin
+
 tier3-quick-ha:
     CARGO_TARGET_DIR=target/tier3 cargo build -q -p kurin
     e2e/tier3/quick-ha.sh target/tier3/debug/kurin

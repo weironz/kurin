@@ -8,6 +8,7 @@ use std::process::ExitCode;
 use clap::{ArgAction, Parser, Subcommand, ValueEnum};
 use miette::{IntoDiagnostic, Result};
 
+use kurin::cli;
 use kurin::cli::quick::{self, NodeNameStrategy, QuickArgs, QuickConfig, SaveDefault, SaveOutcome};
 use kurin::ops::{self, JsonMode, OpRequest, OutputOpts, Params, StatusOpts};
 
@@ -878,6 +879,46 @@ async fn serve(args: ServeArgs) -> Result<()> {
 /// The plan and execution are exactly `create cluster -f`'s; only the
 /// summary, the confirmation and the config write are added.
 async fn run_quick(req: OpRequest, out: OutputOpts, mut config: QuickConfig) -> Result<()> {
+    let mut req = req;
+
+    // `--setup-ssh-key` (05 §4) runs before discover: the password session
+    // pushes the key, the spec and the saved document switch to key auth,
+    // and the private key's login is verified before anything else
+    // connects.
+    if let Some(public) = config.setup_ssh_key.clone() {
+        let passphrase = config
+            .setup_passphrase_env
+            .as_deref()
+            .and_then(|var| std::env::var(var).ok());
+        let key = cli::ssh_key::resolve_control_key(Some(&public), passphrase.as_deref())?;
+        let report = cli::ssh_key::setup(
+            &mut req.spec,
+            &mut config.document,
+            &key,
+            config.setup_passphrase_env.as_deref(),
+            setup_pool,
+        )
+        .await?;
+        for node in &report {
+            eprintln!(
+                "[ssh-key] {}: {}",
+                node.node,
+                match node.outcome {
+                    cli::ssh_key::PushOutcome::Appended => "authorized key appended",
+                    cli::ssh_key::PushOutcome::AlreadyPresent => {
+                        "authorized key already present"
+                    }
+                }
+            );
+        }
+        eprintln!(
+            "[ssh-key] private key {} verified on {} node(s); the saved config uses \
+             private-key auth",
+            key.key_path.display(),
+            report.len()
+        );
+    }
+
     let mut prepared = ops::prepare(req, out).await?;
 
     // `--node-name hostname` can only be honoured once discover reported
@@ -946,6 +987,17 @@ async fn run_quick(req: OpRequest, out: OutputOpts, mut config: QuickConfig) -> 
     let plan = ops::plan(&prepared).await?;
     ops::execute(prepared, plan).await?;
     Ok(())
+}
+
+/// Session pool for the `--setup-ssh-key` phases: resolve the spec's
+/// secrets and connect per node, exactly like `ops::prepare` does.
+fn setup_pool(
+    spec: &kurin_config::Cluster,
+) -> Result<std::sync::Arc<dyn kurin::executor::SessionPool>> {
+    let secrets = spec.resolve_secrets()?;
+    Ok(std::sync::Arc::new(
+        kurin::ssh::SshSessionPool::from_cluster(spec, &secrets)?,
+    ))
 }
 
 /// Prepare -> plan -> execute, the whole operation pipeline.

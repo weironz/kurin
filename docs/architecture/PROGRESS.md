@@ -33,11 +33,11 @@
 | WP-25 节点参数解析器 | done | 见提交 | 无 | 无 | 提前实施（与 WP-21 无代码依赖）；69 条表驱动用例 |
 | WP-26 快速创建参数 | done | 见提交 | 新增 12 个参数→配置快照 + 摘要快照 | `just tier1-quick`、`just tier3-quick-ha` | QuickArgs → v1alpha2 合并；秘密只落引用；确认/落盘规则 |
 | WP-27 --set 与 add nodes 快速参数 | done | 见提交 | 新增 add-nodes 改写快照 | `e2e/tier2/add-worker.sh` | `--set` 路径/类型推断；add nodes 追加节点并保留注释；`--no-save` |
-| WP-28 --setup-ssh-key | todo | | | tier1 密码 + setup-key | |
+| WP-28 --setup-ssh-key | done | 见提交 | 新增 setup 后落盘配置快照 + ask-become-pass 落盘快照 | `just tier1-ssh-key` | ed25519 生成（私钥 0600，只有私钥时反推 .pub）；幂等追加（grep 守卫）；验证私钥登录；`--ask-become-pass` 只落 env 引用；`--ssh-key-passphrase-env` 兼配 setup |
 | WP-30 OCI spike | done | 见提交 | 无 | 无 | 结论见 docs/architecture/spikes/30-oci.md；04 §8/§9 已按实测修正 |
 | WP-31 BlobStore 与 OCI layout | done | 见提交 | 无 | 无 | `oci-spec 0.9`；26 单测 + 12 集成测试通过；oras/skopeo 未安装，未做外部 CLI 读取验证 |
 | WP-32 包格式与 package create base | done | 见提交 | 新增包元数据快照 | `kurin package create base --arch amd64,arm64 -o file:///tmp/base.tar.zst && kurin package inspect file:///tmp/base.tar.zst` | OCI index 布局；SPDX 边车；确定性构建；`artifact` 转发并弃用提示 |
-| WP-33 package inspect/verify/push/pull | todo | | | | |
+| WP-33 package 子命令 | done | 见提交 | 无 | zot 容器三形态互转（已本地实跑） | push/pull/verify/inspect/list/prune；`inspect --manifest`（避开全局 --json）；修复 WP-32 镜像 index 未传输 bug |
 | WP-34 部署侧接入包 | todo | | | | |
 | WP-35 preload 分发基于包 | todo | | | `just tier1-offline` × 三种来源 | |
 | WP-36 registry 分发与 mirror | todo | | | `e2e/tier3/registry.sh` | |
@@ -89,7 +89,7 @@
 - WP-41：「内置推荐值」实现为 `values.yaml.j2` 按集群上下文渲染；`kubernetes.distribution` 暴露 kubeadm/k3s；`registry.mirror` 未配置为 null。
 - WP-40：`BUILTIN_ADDONS` 与内嵌目录接线留给 WP-43/46（目录暂空）；`oci://` 源明确报错，依赖 WP-33 的 pull。
 - WP-27：`add nodes` 复用 `merge()`，v1alpha1 配置会先迁移为 v1alpha2 再写回；`--set` 写在 WP-26 已实现，本 WP 补测试/文档。顺带修复 `package inspect --json` 与全局 `--json` 的 clap 冲突（改用全局开关）。
-- WP-26：`--setup-ssh-key` 留给 WP-28；无凭据时落盘 `{ env = "KURIN_SSH_PASSWORD" }` 并告警；k3s 未给 CNI 默认 flannel；`--registry` 未给 kind 默认 docker-registry；快速参数 + YAML 文件拒绝；`--set` 提前在本 WP 实现。
+- WP-26：`--setup-ssh-key` 留给 WP-28；无凭据时落盘 `{ env = "KURIN_SSH_PASSWORD" }` 并告警；k3s 未给 CNI 默认 flannel；`--registry` 未给 kind 默认 docker-registry；快速参数 + YAML 文件拒绝；`--set` 提前在本 WP 实现；`--setup-ssh-key` 已由 WP-28 实现。
 - WP-22：`Ipv4Net`/`toml::Value` 无 schemars 原生实现，分别导出为 string/任意 JSON（语义仍由加载器校验）；只入库 v1alpha2 schema。
 - WP-21：未知 addon 名默认拒绝，带 `source` 的外部 addon 名放行；v1alpha2 保留 `[artifacts]` 并新增 `[packages]`；新增 `toml_edit`（纯 Rust）。
 - WP-20：保留 `pub type Cluster = ClusterSpec` 别名以减少调用点改动；秘密在 `kurin-ops::prepare` 解析一次；`--dry-run` 不读秘密文件（文档已写明）。

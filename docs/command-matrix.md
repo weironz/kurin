@@ -40,7 +40,7 @@
 | `--package` / `--offline` | ✅ | `/os/` 路径归入 `packages.os`，其余为 `packages.base` |
 | 摘要 + 确认 | ✅ | discover 后打印；非 TTY 且无 `--yes` 报错 |
 | `--save` / `--no-save` / `--force-save` | ✅ | 默认 `./<name>.kurin.toml`；内容不同默认拒绝覆盖 |
-| `--setup-ssh-key` | ❌ 未实现 | 由后续工作包提供（推送公钥并改写为私钥认证） |
+| `--setup-ssh-key` | ✅ | 密码会话幂等推送公钥（已存在跳过、重放不重复）；验证私钥登录；落盘改私钥认证；`e2e/tier1/ssh-key.sh` |
 
 ## add nodes / delete node / delete cluster
 

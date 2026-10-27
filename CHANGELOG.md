@@ -84,6 +84,23 @@ All notable changes to kurin. Format follows Keep a Changelog; semver.
   values are parsed as TOML literals with a string fallback, and an
   unknown path is rejected at validation time as `unknown field`,
   pointing at the merged document titled “来自命令行参数”.
+- `--setup-ssh-key [PUB]` and `--ask-become-pass` (WP-28):
+  `create cluster` can bootstrap key authentication from a password —
+  the control machine's public key (default `~/.ssh/id_ed25519.pub`; an
+  ed25519 pair is generated with a 0600 private key when missing, or the
+  `.pub` derived from an existing private key) is appended to every
+  node's `~/.ssh/authorized_keys` over the password session before
+  discover. The push is idempotent: nodes that already carry the key are
+  skipped, and the append command repeats the same `grep` guard so a
+  replay can never duplicate the line. The private key's login is then
+  verified on every node and the saved config switches to
+  `ssh.auth.method = "private_key"` (per-node password overrides
+  included); later operations such as `status` need no password. `--dry-run`
+  and `create config` reject the flag (no session to push over).
+  `--ask-become-pass` prompts for the sudo password without echoing and
+  never writes it down — the saved config keeps only
+  `{ env = "KURIN_BECOME_PASSWORD" }`. `--ssh-key-passphrase-env` now
+  also pairs with `--setup-ssh-key` (for an existing encrypted key).
 - Quick-create parameters (WP-26): `kurin create cluster` and
   `kurin create config` can build a cluster from command-line arguments
   only — `--control-plane/--worker/--lb/--registry` (with IP ranges),
