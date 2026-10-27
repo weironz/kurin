@@ -1,5 +1,5 @@
 ---
-source: kurin-config/tests/snapshots.rs
+source: crates/kurin-config/tests/snapshots.rs
 expression: serialized
 ---
 version: v1alpha1
@@ -17,6 +17,8 @@ network:
 ssh:
   user: root
   port: 22
+  become: null
+  become-password: null
   auth:
     method: private_key
     key-path: /root/.ssh/id_ed25519
@@ -31,6 +33,8 @@ nodes:
     role: control-plane
     user: null
     port: null
+    become: null
+    become-password: null
     auth: null
     labels: {}
   master02:
@@ -39,6 +43,8 @@ nodes:
     role: control-plane
     user: null
     port: null
+    become: null
+    become-password: null
     auth: null
     labels: {}
   master03:
@@ -47,6 +53,8 @@ nodes:
     role: control-plane
     user: null
     port: null
+    become: null
+    become-password: null
     auth: null
     labels: {}
   worker01:
@@ -55,6 +63,8 @@ nodes:
     role: worker
     user: null
     port: null
+    become: null
+    become-password: null
     auth: null
     labels:
       node-role.kurin.io/pool: general

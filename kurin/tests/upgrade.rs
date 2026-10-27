@@ -117,6 +117,8 @@ fn worker(name: &str) -> Node {
         ssh: ResolvedSsh {
             user: "root".into(),
             port: 22,
+            r#become: kurin_config::BecomeMode::Auto,
+            become_password: None,
             auth: SshAuth::Password {
                 password: "not-a-real-password".into(),
             },

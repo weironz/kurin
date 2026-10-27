@@ -14,8 +14,10 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use backon::{ExponentialBuilder, Retryable};
 use miette::{miette, Context, Result};
@@ -25,9 +27,9 @@ use russh::keys::{ssh_key, PrivateKeyWithHashAlg, PublicKeyOrCertificate};
 use russh::{ChannelMsg, Disconnect};
 use tokio::sync::{RwLock, Semaphore};
 
-use kurin_config::{Cluster, ResolvedSsh, SshAuth};
+use kurin_config::{BecomeMode, Cluster, ResolvedSsh, SshAuth};
 
-use kurin_core::engine::{ExecOutput, Session};
+use kurin_core::engine::{Cmd, ExecOutput, Session};
 
 /// Upper bound for one `exec` round trip, including data transfer.
 pub const EXEC_TIMEOUT: Duration = Duration::from_secs(900);
@@ -308,7 +310,13 @@ pub struct SshSession {
 
 impl SshSession {
     /// Run a command on a freshly opened channel and collect its output.
-    async fn exec_on(handle: &Handle<HostKeyPolicy>, command: &str) -> Result<ExecOutput> {
+    /// `stdin`, when given, is written to the channel and closed with EOF
+    /// before the output is collected (how `sudo -S` passwords travel).
+    async fn exec_on(
+        handle: &Handle<HostKeyPolicy>,
+        command: &str,
+        stdin: Option<&[u8]>,
+    ) -> Result<ExecOutput> {
         let mut channel = handle
             .channel_open_session()
             .await
@@ -317,6 +325,16 @@ impl SshSession {
             .exec(true, command)
             .await
             .map_err(|e| miette!("ssh: cannot start command: {e}"))?;
+        if let Some(data) = stdin {
+            channel
+                .data_bytes(data.to_vec())
+                .await
+                .map_err(|e| miette!("ssh: cannot send stdin: {e}"))?;
+            channel
+                .eof()
+                .await
+                .map_err(|e| miette!("ssh: cannot close stdin: {e}"))?;
+        }
         let mut stdout = Vec::new();
         let mut stderr = Vec::new();
         let mut exit_code = None;
@@ -396,100 +414,65 @@ impl SshSession {
 
 #[async_trait::async_trait]
 impl Session for SshSession {
+    /// Privileged convenience wrapper (see the trait docs): identical to
+    /// `exec_cmd(&Cmd::new(command))`.
     async fn exec(&self, command: &str) -> Result<ExecOutput> {
-        self.with_channel(EXEC_TIMEOUT, |handle| async move {
-            let command = command.to_owned();
-            Self::exec_on(&handle, &command).await
-        })
-        .await
+        self.exec_cmd(&Cmd::new(command)).await
     }
 
-    /// Overwrites `path` via `cat > path`.
-    ///
-    /// Callers that replace an executable **must** stage to a temp name and
-    /// rename: opening a running binary for write fails with ETXTBSY on the
-    /// remote side, the remote `cat` exits immediately, and (observed with
-    /// russh 0.64) the still-open channel then deadlocks the remaining
-    /// upload against a closed window instead of surfacing the error.
-    async fn write_file(&self, path: &str, contents: &[u8]) -> Result<()> {
-        let contents = contents.to_vec();
-        let path = path.to_owned();
-        self.with_channel(WRITE_TIMEOUT, |handle| async move {
-            let dir = Path::new(&path)
-                .parent()
-                .map(|p| p.to_string_lossy().into_owned())
-                .filter(|p| !p.is_empty())
-                .unwrap_or_else(|| ".".into());
-            // Bytes go over the channel's stdin, not the command line: safe
-            // for arbitrary (binary) payloads and free of shell quoting risk.
-            let command = format!(
-                "mkdir -p -- {} && cat > {}",
-                shell_quote(&dir),
-                shell_quote(&path)
-            );
-            let mut channel = handle
-                .channel_open_session()
-                .await
-                .map_err(|e| miette!("ssh: cannot open channel: {e}"))?;
-            channel
-                .exec(true, command)
-                .await
-                .map_err(|e| miette!("ssh: cannot start write command: {e}"))?;
-            let trace = std::env::var_os("KURIN_SSH_TRACE").is_some();
-            // Chunk the payload with a live deadline watchdog per chunk:
-            // an early russh window-negotiation edge case lets a >64MB
-            // writeBytes stall when the remote's receive window refills
-            // slowly. Chunking + progress lets a stall surface as data.
-            let chunks = contents.chunks(1 << 20).collect::<Vec<_>>();
-            let total = chunks.len();
-            for (i, chunk) in chunks.into_iter().enumerate() {
-                channel.data_bytes(chunk.to_vec()).await.map_err(|e| {
-                    miette!(
-                        "ssh: cannot send file contents (chunk {}/{total}): {e}",
-                        i + 1
-                    )
-                })?;
-                if trace && i % 4 == 0 {
-                    eprintln!("[ssh-trace] {path}: {}/{} MiB", i + 1, total);
-                }
-            }
-            if trace {
-                eprintln!("[ssh-trace] {path}: all chunks sent; eof");
-            }
+    async fn exec_cmd(&self, cmd: &Cmd) -> Result<ExecOutput> {
+        let (command, stdin) = become_command(&self.conn.target.ssh, cmd);
+        let timeout = cmd.timeout.unwrap_or(EXEC_TIMEOUT);
+        let mut out = self
+            .with_channel(timeout, |handle| {
+                let command = command.clone();
+                let stdin = stdin.clone();
+                async move { Self::exec_on(&handle, &command, stdin.as_deref()).await }
+            })
+            .await?;
+        redact_output(&mut out, cmd);
+        Ok(out)
+    }
 
-            channel
-                .eof()
-                .await
-                .map_err(|e| miette!("ssh: cannot close stdin: {e}"))?;
-            let mut stderr = Vec::new();
-            let mut exit_code = None;
-            while let Some(msg) = channel.wait().await {
-                match msg {
-                    ChannelMsg::ExtendedData { data, .. } => stderr.extend_from_slice(&data),
-                    ChannelMsg::ExitStatus { exit_status } => exit_code = Some(exit_status as i32),
-                    _ => {}
-                }
-            }
-            if trace {
-                eprintln!("[ssh-trace] {path}: channel closed, exit={exit_code:?}");
-            }
-            // Same MaxSessions leak guard as exec_on.
-            let _ = channel.close().await;
-            match exit_code {
-                Some(0) => Ok(()),
-                Some(code) => Err(miette!(
-                    "ssh: writing {} failed (exit {}): {}",
-                    path,
-                    code,
-                    String::from_utf8_lossy(&stderr).trim()
-                )),
-                None => Err(miette!(
-                    "ssh: writing {} failed: channel closed without an exit status",
-                    path
-                )),
-            }
-        })
-        .await
+    /// Overwrites `path` with mode 0644 (mkdir -p the parents).
+    async fn write_file(&self, path: &str, contents: &[u8]) -> Result<()> {
+        self.write_file_mode(path, contents, 0o644).await
+    }
+
+    /// Overwrites `path` with `contents`, giving the file `mode` (octal).
+    ///
+    /// The payload never travels through the privileged command: it is
+    /// staged to `/tmp/kurin-<rand>` as the login user, then moved into
+    /// place with `install -D -m <mode>` (wrapped in sudo exactly when the
+    /// node's become policy demands it), and the staging file is removed.
+    ///
+    /// Callers that replace an executable **must** keep staging to a temp
+    /// name and renaming: opening a running binary for write fails with
+    /// ETXTBSY on the remote side, the remote `cat` exits immediately, and
+    /// (observed with russh 0.64) the still-open channel then deadlocks the
+    /// remaining upload against a closed window instead of surfacing the
+    /// error. `install` inherits that same contract.
+    async fn write_file_mode(&self, path: &str, contents: &[u8], mode: u32) -> Result<()> {
+        let tmp = stage_path();
+        self.stage_bytes(&tmp, contents).await?;
+        let install = Cmd::new(format!(
+            "install -D -m {:o} -- {} {} && rm -f -- {}",
+            mode,
+            shell_quote(&tmp),
+            shell_quote(path),
+            shell_quote(&tmp),
+        ));
+        let out = self.exec_cmd(&install).await?;
+        if !out.ok() {
+            return Err(miette!(
+                "ssh: installing {} (mode {:o}) failed (exit {}): {}",
+                path,
+                mode,
+                out.exit_code,
+                out.stderr.trim()
+            ));
+        }
+        Ok(())
     }
 
     async fn file_sha256(&self, path: &str) -> Result<Option<String>> {
@@ -533,6 +516,83 @@ impl Session for SshSession {
             return Err(miette!("ssh: systemctl not found on node"));
         }
         Ok(out.stdout.trim() == "active")
+    }
+}
+
+impl SshSession {
+    /// Write `contents` to `tmp` via `cat`, as the login user — never
+    /// through sudo: stdin carries the payload, and `sudo -S` would eat its
+    /// first line as the password.
+    async fn stage_bytes(&self, tmp: &str, contents: &[u8]) -> Result<()> {
+        let contents = contents.to_vec();
+        let tmp = tmp.to_owned();
+        self.with_channel(WRITE_TIMEOUT, |handle| async move {
+            // Bytes go over the channel's stdin, not the command line: safe
+            // for arbitrary (binary) payloads and free of shell quoting risk.
+            let command = format!("cat > {}", shell_quote(&tmp));
+            let mut channel = handle
+                .channel_open_session()
+                .await
+                .map_err(|e| miette!("ssh: cannot open channel: {e}"))?;
+            channel
+                .exec(true, command)
+                .await
+                .map_err(|e| miette!("ssh: cannot start write command: {e}"))?;
+            let trace = std::env::var_os("KURIN_SSH_TRACE").is_some();
+            // Chunk the payload with a live deadline watchdog per chunk:
+            // an early russh window-negotiation edge case lets a >64MB
+            // writeBytes stall when the remote's receive window refills
+            // slowly. Chunking + progress lets a stall surface as data.
+            let chunks = contents.chunks(1 << 20).collect::<Vec<_>>();
+            let total = chunks.len();
+            for (i, chunk) in chunks.into_iter().enumerate() {
+                channel.data_bytes(chunk.to_vec()).await.map_err(|e| {
+                    miette!(
+                        "ssh: cannot send file contents (chunk {}/{total}): {e}",
+                        i + 1
+                    )
+                })?;
+                if trace && i % 4 == 0 {
+                    eprintln!("[ssh-trace] {tmp}: {}/{} MiB", i + 1, total);
+                }
+            }
+            if trace {
+                eprintln!("[ssh-trace] {tmp}: all chunks sent; eof");
+            }
+
+            channel
+                .eof()
+                .await
+                .map_err(|e| miette!("ssh: cannot close stdin: {e}"))?;
+            let mut stderr = Vec::new();
+            let mut exit_code = None;
+            while let Some(msg) = channel.wait().await {
+                match msg {
+                    ChannelMsg::ExtendedData { data, .. } => stderr.extend_from_slice(&data),
+                    ChannelMsg::ExitStatus { exit_status } => exit_code = Some(exit_status as i32),
+                    _ => {}
+                }
+            }
+            if trace {
+                eprintln!("[ssh-trace] {tmp}: channel closed, exit={exit_code:?}");
+            }
+            // Same MaxSessions leak guard as exec_on.
+            let _ = channel.close().await;
+            match exit_code {
+                Some(0) => Ok(()),
+                Some(code) => Err(miette!(
+                    "ssh: writing {} failed (exit {}): {}",
+                    tmp,
+                    code,
+                    String::from_utf8_lossy(&stderr).trim()
+                )),
+                None => Err(miette!(
+                    "ssh: writing {} failed: channel closed without an exit status",
+                    tmp
+                )),
+            }
+        })
+        .await
     }
 }
 
@@ -684,6 +744,51 @@ impl Default for SshSessionPoolBuilder {
     }
 }
 
+/// Build the wire command for `cmd` under this login's become policy,
+/// plus the stdin payload (the sudo password) when one must be fed.
+///
+/// Root never needs sudo; `become = "none"` never wraps; `auto`/`sudo`
+/// wrap every privileged command of a non-root login. The password rides
+/// the encrypted channel's stdin (`sudo -S`), never the command line.
+fn become_command(ssh: &ResolvedSsh, cmd: &Cmd) -> (String, Option<Vec<u8>>) {
+    let wrap = cmd.privileged && ssh.user != "root" && !matches!(ssh.r#become, BecomeMode::None);
+    if !wrap {
+        return (cmd.script.clone(), None);
+    }
+    match &ssh.become_password {
+        None => (
+            format!("sudo -n -- sh -c {}", shell_quote(&cmd.script)),
+            None,
+        ),
+        Some(password) => (
+            format!("sudo -S -p '' -- sh -c {}", shell_quote(&cmd.script)),
+            Some(format!("{password}\n").into_bytes()),
+        ),
+    }
+}
+
+/// R8: scrub the command's registered secrets from captured output before
+/// it can reach events, logs or error text.
+fn redact_output(out: &mut ExecOutput, cmd: &Cmd) {
+    for secret in cmd.redact.iter().filter(|s| !s.is_empty()) {
+        out.stdout = out.stdout.replace(secret.as_str(), "******");
+        out.stderr = out.stderr.replace(secret.as_str(), "******");
+    }
+}
+
+/// Collision-free staging name under /tmp. Deliberately dependency-free:
+/// pid + nanoseconds + a monotonic counter is unique per process, and the
+/// login user always owns /tmp write access.
+fn stage_path() -> String {
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let seq = SEQ.fetch_add(1, Ordering::Relaxed);
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    format!("/tmp/kurin-{:x}-{:x}-{:x}", std::process::id(), nanos, seq)
+}
+
 /// POSIX shell single-quote quoting.
 fn shell_quote(value: &str) -> String {
     let plain = !value.is_empty()
@@ -747,5 +852,133 @@ mod tests {
         assert_eq!(truncate("abcdef", 3), "abc");
         assert_eq!(truncate("abc", 10), "abc");
         assert_eq!(truncate("日本語", 2), "日本");
+    }
+
+    // -- become command building -----------------------------------------
+
+    /// Obvious fake values (R8): never real credentials.
+    const FAKE_SUDO_PASSWORD: &str = "fake-sudo-password-not-real";
+
+    fn login(user: &str, mode: BecomeMode, password: Option<&str>) -> ResolvedSsh {
+        ResolvedSsh {
+            user: user.into(),
+            port: 22,
+            r#become: mode,
+            become_password: password.map(Into::into),
+            auth: SshAuth::Password {
+                password: "fake-ssh-password".into(),
+            },
+        }
+    }
+
+    #[test]
+    fn root_never_wraps() {
+        for mode in [BecomeMode::Auto, BecomeMode::Sudo] {
+            let (line, stdin) = become_command(&login("root", mode, None), &Cmd::new("echo hi"));
+            assert_eq!(line, "echo hi");
+            assert!(stdin.is_none());
+        }
+    }
+
+    #[test]
+    fn non_root_auto_wraps_with_sudo_n() {
+        let (line, stdin) = become_command(
+            &login("ubuntu", BecomeMode::Auto, None),
+            &Cmd::new("echo hi"),
+        );
+        assert_eq!(line, "sudo -n -- sh -c 'echo hi'");
+        assert!(stdin.is_none());
+    }
+
+    #[test]
+    fn non_root_sudo_mode_wraps_identically() {
+        let (line, _) = become_command(
+            &login("ubuntu", BecomeMode::Sudo, None),
+            &Cmd::new("echo hi"),
+        );
+        assert_eq!(line, "sudo -n -- sh -c 'echo hi'");
+    }
+
+    #[test]
+    fn become_none_never_wraps() {
+        let (line, stdin) = become_command(
+            &login("ubuntu", BecomeMode::None, None),
+            &Cmd::new("echo hi"),
+        );
+        assert_eq!(line, "echo hi");
+        assert!(stdin.is_none());
+    }
+
+    #[test]
+    fn unprivileged_commands_are_not_wrapped() {
+        let cmd = Cmd::probe("cat /etc/os-release").unprivileged();
+        let (line, stdin) = become_command(&login("ubuntu", BecomeMode::Auto, None), &cmd);
+        assert_eq!(line, "cat /etc/os-release");
+        assert!(stdin.is_none());
+    }
+
+    #[test]
+    fn password_uses_sudo_s_and_travels_via_stdin() {
+        let (line, stdin) = become_command(
+            &login("ubuntu", BecomeMode::Auto, Some(FAKE_SUDO_PASSWORD)),
+            &Cmd::new("echo hi"),
+        );
+        assert_eq!(line, "sudo -S -p '' -- sh -c 'echo hi'");
+        assert_eq!(
+            stdin.as_deref(),
+            Some(&b"fake-sudo-password-not-real\n"[..])
+        );
+        // R8: the password must never appear on the command line.
+        assert!(!line.contains(FAKE_SUDO_PASSWORD));
+    }
+
+    #[test]
+    fn embedded_single_quotes_are_escaped() {
+        let (line, _) = become_command(
+            &login("ubuntu", BecomeMode::Auto, None),
+            &Cmd::new("echo \"it's\""),
+        );
+        assert_eq!(line, "sudo -n -- sh -c 'echo \"it'\\''s\"'");
+    }
+
+    #[test]
+    fn multi_line_scripts_stay_intact_inside_the_wrap() {
+        let (line, _) = become_command(
+            &login("ubuntu", BecomeMode::Auto, None),
+            &Cmd::new("echo a\necho b"),
+        );
+        assert_eq!(line, "sudo -n -- sh -c 'echo a\necho b'");
+    }
+
+    #[test]
+    fn stage_paths_are_unique_and_predictably_shaped() {
+        let a = stage_path();
+        let b = stage_path();
+        assert_ne!(a, b);
+        for p in [a, b] {
+            assert!(p.starts_with("/tmp/kurin-"), "bad staging path: {p}");
+        }
+    }
+
+    #[test]
+    fn redact_scrubs_registered_secrets_from_both_streams() {
+        let cmd = Cmd::new("kubeadm token create").redact("fake-secret-token");
+        let mut out = ExecOutput {
+            exit_code: 0,
+            stdout: "token is fake-secret-token\n".into(),
+            stderr: "failed for fake-secret-token\n".into(),
+        };
+        redact_output(&mut out, &cmd);
+        assert_eq!(out.stdout, "token is ******\n");
+        assert_eq!(out.stderr, "failed for ******\n");
+        // An empty "secret" must not shred the output.
+        let cmd = Cmd::new("x").redact("");
+        let mut out = ExecOutput {
+            exit_code: 0,
+            stdout: "keep\n".into(),
+            stderr: String::new(),
+        };
+        redact_output(&mut out, &cmd);
+        assert_eq!(out.stdout, "keep\n");
     }
 }

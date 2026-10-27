@@ -78,7 +78,7 @@ pub struct StorageConfig {
     pub path: Option<String>,
 }
 
-#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[derive(Clone, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
 pub struct RegistryConfig {
     /// Implementation; required when any node has role = "registry".
@@ -183,15 +183,20 @@ pub enum HaMode {
     KurinLb,
 }
 
-#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[derive(Clone, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
 pub struct SshDefaults {
     pub user: Option<String>,
     pub port: Option<u16>,
+    /// Privilege escalation for non-root logins (default "auto").
+    pub r#become: Option<BecomeMode>,
+    /// sudo password for logins whose sudo is not passwordless; fed over
+    /// the SSH channel's stdin, never a command line.
+    pub become_password: Option<String>,
     pub auth: Option<SshAuth>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
 pub struct NodeConfig {
     /// Reachable address used for SSH and cluster bootstrap.
@@ -205,11 +210,116 @@ pub struct NodeConfig {
     pub user: Option<String>,
     #[serde(default)]
     pub port: Option<u16>,
+    /// Per-node become overrides cluster-level defaults.
+    #[serde(default)]
+    pub r#become: Option<BecomeMode>,
+    /// Per-node sudo password override.
+    #[serde(default)]
+    pub become_password: Option<String>,
     /// Per-node auth overrides cluster-level defaults.
     #[serde(default)]
     pub auth: Option<SshAuth>,
     #[serde(default)]
     pub labels: BTreeMap<String, String>,
+}
+
+/// How a non-root SSH login gains root for the commands that need it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum BecomeMode {
+    /// Use sudo whenever the login user is not root (default).
+    #[default]
+    Auto,
+    /// Same as auto: root itself never needs sudo, everyone else gets it.
+    Sudo,
+    /// Never escalate; non-root users fail precheck instead.
+    None,
+}
+
+/// Mutually exclusive authentication forms; a password and a key are not
+/// both representable, and `method` picks the variant at parse time.
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(tag = "method", rename_all = "snake_case", deny_unknown_fields)]
+pub enum SshAuth {
+    Password {
+        password: String,
+    },
+    #[serde(rename_all = "kebab-case")]
+    PrivateKey {
+        key_path: PathBuf,
+        #[serde(default)]
+        passphrase: Option<String>,
+    },
+}
+
+/// R8: the derived Debug would print the sudo password verbatim.
+impl std::fmt::Debug for SshDefaults {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SshDefaults")
+            .field("user", &self.user)
+            .field("port", &self.port)
+            .field("become", &self.r#become)
+            .field(
+                "become_password",
+                &self.become_password.as_ref().map(|_| "******"),
+            )
+            .field("auth", &self.auth)
+            .finish()
+    }
+}
+
+/// R8: the derived Debug would print the sudo password verbatim.
+impl std::fmt::Debug for NodeConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("NodeConfig")
+            .field("address", &self.address)
+            .field("internal_address", &self.internal_address)
+            .field("role", &self.role)
+            .field("user", &self.user)
+            .field("port", &self.port)
+            .field("become", &self.r#become)
+            .field(
+                "become_password",
+                &self.become_password.as_ref().map(|_| "******"),
+            )
+            .field("auth", &self.auth)
+            .field("labels", &self.labels)
+            .finish()
+    }
+}
+
+/// R8: the derived Debug would print the registry password verbatim.
+impl std::fmt::Debug for RegistryConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RegistryConfig")
+            .field("kind", &self.kind)
+            .field("port", &self.port)
+            .field("username", &self.username)
+            .field("password", &self.password.as_ref().map(|_| "******"))
+            .field("data_dir", &self.data_dir)
+            .finish()
+    }
+}
+
+/// R8: the derived Debug would print credentials verbatim into logs,
+/// panics and snapshots; every secret is masked as `******` instead.
+impl std::fmt::Debug for SshAuth {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SshAuth::Password { .. } => f
+                .debug_struct("Password")
+                .field("password", &"******")
+                .finish(),
+            SshAuth::PrivateKey {
+                key_path,
+                passphrase,
+            } => f
+                .debug_struct("PrivateKey")
+                .field("key_path", key_path)
+                .field("passphrase", &passphrase.as_ref().map(|_| "******"))
+                .finish(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize, PartialOrd, Ord)]
@@ -222,22 +332,6 @@ pub enum NodeRole {
     Registry,
     #[default]
     Worker,
-}
-
-/// Mutually exclusive authentication forms; a password and a key are not
-/// both representable, and `method` picks the variant at parse time.
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(tag = "method", rename_all = "snake_case", deny_unknown_fields)]
-pub enum SshAuth {
-    Password {
-        password: String,
-    },
-    #[serde(rename_all = "kebab-case")]
-    PrivateKey {
-        key_path: PathBuf,
-        #[serde(default)]
-        passphrase: Option<String>,
-    },
 }
 
 /// Apply documented defaults. Pure function: no I/O, no validation.

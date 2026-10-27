@@ -2,6 +2,7 @@
 //! plan graph; SSH/artifact/CLI live behind them.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use miette::Result;
 use serde::Serialize;
@@ -24,6 +25,74 @@ pub enum Outcome {
     /// Transport dropped mid-apply; remote state is unknown. The engine
     /// must re-probe, never blind-retry.
     Unknown(String),
+}
+
+/// A remote command plus the metadata the real transport needs to run it
+/// safely: whether it must run escalated (sudo for non-root logins), whether
+/// it mutates the node, how long it may run, and which secret values must
+/// never survive into its captured output (R8).
+#[derive(Debug, Clone)]
+pub struct Cmd {
+    pub script: String,
+    /// Run escalated: the transport wraps this in sudo when the login
+    /// user is not root and `[ssh] become` allows it.
+    pub privileged: bool,
+    /// False for read-only probes (reserved for the transport-loss retry
+    /// policy; mutating commands must never be retried blindly).
+    pub mutating: bool,
+    /// Per-command timeout; `None` uses the transport default.
+    pub timeout: Option<Duration>,
+    /// Secret values scrubbed from stdout/stderr after execution.
+    pub redact: Vec<String>,
+}
+
+impl Cmd {
+    /// A privileged, mutating command — the safe default: managing the
+    /// node is what kurin does.
+    pub fn new(script: impl Into<String>) -> Self {
+        Self {
+            script: script.into(),
+            privileged: true,
+            mutating: true,
+            timeout: None,
+            redact: Vec::new(),
+        }
+    }
+
+    /// A privileged, read-only probe.
+    pub fn probe(script: impl Into<String>) -> Self {
+        Self {
+            script: script.into(),
+            privileged: true,
+            mutating: false,
+            timeout: None,
+            redact: Vec::new(),
+        }
+    }
+
+    /// Run as the login user, without escalation (host introspection).
+    pub fn unprivileged(mut self) -> Self {
+        self.privileged = false;
+        self
+    }
+
+    /// Mark the command read-only.
+    pub fn readonly(mut self) -> Self {
+        self.mutating = false;
+        self
+    }
+
+    /// Bound the command's runtime.
+    pub fn with_timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = Some(timeout);
+        self
+    }
+
+    /// Register a secret that must be scrubbed from captured output.
+    pub fn redact(mut self, secret: impl Into<String>) -> Self {
+        self.redact.push(secret.into());
+        self
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
@@ -82,12 +151,30 @@ pub trait Task: Send + Sync {
 
 /// Remote session abstraction: the only way tasks touch a node.
 /// Implemented by russh (real) and MockSession (tests / dry-run --check).
+///
+/// `exec` is the privileged convenience wrapper: in the real transport it
+/// is exactly `exec_cmd(&Cmd::new(command))`, i.e. every command runs
+/// escalated (sudo for non-root logins). Probes that must observe the node
+/// as the login user — precheck, preflight — use
+/// `exec_cmd(&Cmd::probe(..).unprivileged())` instead.
 #[async_trait::async_trait]
 pub trait Session: Send + Sync {
-    /// Run a command to completion.
+    /// Run a command to completion, escalated.
     async fn exec(&self, command: &str) -> Result<ExecOutput>;
-    /// Write a file (mkdir -p the parents, overwrite).
+    /// Run a command with its full metadata (become, timeout, redaction).
+    /// The default runs the raw script through `exec`, so mock transports
+    /// keep compiling and behave exactly as before.
+    async fn exec_cmd(&self, cmd: &Cmd) -> Result<ExecOutput> {
+        self.exec(&cmd.script).await
+    }
+    /// Write a file (mkdir -p the parents, overwrite) with mode 0644.
     async fn write_file(&self, path: &str, contents: &[u8]) -> Result<()>;
+    /// Write a file with an explicit mode (octal, e.g. `0o600`). The
+    /// default ignores the mode and defers to `write_file`.
+    async fn write_file_mode(&self, path: &str, contents: &[u8], mode: u32) -> Result<()> {
+        let _ = mode;
+        self.write_file(path, contents).await
+    }
     /// sha256 of a remote file, or None if it does not exist.
     async fn file_sha256(&self, path: &str) -> Result<Option<String>>;
     /// `systemctl is-active <name>` == active.
@@ -165,5 +252,93 @@ impl Event {
             Event::StageDone { .. } => "stage-done",
             Event::ClusterReady => "cluster-ready",
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    /// The shape every mock transport in the workspace has: only `exec`
+    /// (plus the other required methods), no knowledge of `Cmd`.
+    struct RecordingSession {
+        scripts: Mutex<Vec<String>>,
+        files: Mutex<Vec<String>>,
+    }
+
+    impl RecordingSession {
+        fn new() -> Self {
+            Self {
+                scripts: Mutex::new(Vec::new()),
+                files: Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl Session for RecordingSession {
+        async fn exec(&self, command: &str) -> Result<ExecOutput> {
+            self.scripts.lock().unwrap().push(command.to_string());
+            Ok(ExecOutput {
+                exit_code: 0,
+                stdout: String::new(),
+                stderr: String::new(),
+            })
+        }
+        async fn write_file(&self, path: &str, _contents: &[u8]) -> Result<()> {
+            self.files.lock().unwrap().push(path.to_string());
+            Ok(())
+        }
+        async fn file_sha256(&self, _path: &str) -> Result<Option<String>> {
+            Ok(None)
+        }
+        async fn service_active(&self, _name: &str) -> Result<bool> {
+            Ok(false)
+        }
+    }
+
+    #[test]
+    fn cmd_constructors_and_builders() {
+        let c = Cmd::new("s");
+        assert!(c.privileged && c.mutating && c.timeout.is_none() && c.redact.is_empty());
+        let p = Cmd::probe("s");
+        assert!(p.privileged && !p.mutating && p.timeout.is_none());
+        let u = Cmd::probe("s").unprivileged();
+        assert!(!u.privileged && !u.mutating);
+        let r = Cmd::new("s").readonly();
+        assert!(r.privileged && !r.mutating);
+        let t = Cmd::new("s").with_timeout(Duration::from_secs(5));
+        assert_eq!(t.timeout, Some(Duration::from_secs(5)));
+        let d = Cmd::new("s").redact("fake-secret");
+        assert_eq!(d.redact, vec!["fake-secret".to_string()]);
+    }
+
+    /// The provided `exec_cmd` must hand the raw script to `exec`, so the
+    /// existing mock transports keep working unchanged.
+    #[tokio::test]
+    async fn exec_cmd_default_runs_raw_script_via_exec() {
+        let s = RecordingSession::new();
+        let out = s.exec_cmd(&Cmd::new("uname -a")).await.unwrap();
+        assert!(out.ok());
+        assert_eq!(
+            *s.scripts.lock().unwrap(),
+            vec!["uname -a".to_string()],
+            "exec_cmd must delegate to exec with the script verbatim"
+        );
+    }
+
+    /// The provided `write_file_mode` must defer to `write_file` (mode
+    /// handling belongs to the real transport).
+    #[tokio::test]
+    async fn write_file_mode_default_defers_to_write_file() {
+        let s = RecordingSession::new();
+        s.write_file_mode("/etc/kurin/x.conf", b"body", 0o600)
+            .await
+            .unwrap();
+        assert_eq!(
+            *s.files.lock().unwrap(),
+            vec!["/etc/kurin/x.conf".to_string()]
+        );
     }
 }

@@ -18,9 +18,10 @@
 use std::fmt::Write as _;
 use std::sync::Arc;
 
-use kurin_config::{Cluster, Node, NodeRole};
+use kurin_config::{BecomeMode, Cluster, Node, NodeRole};
 use miette::Result;
 
+use kurin_core::engine::Cmd;
 use kurin_core::executor::SessionPool;
 
 /// One probe outcome.
@@ -90,7 +91,9 @@ pub async fn run(cluster: &Cluster, pool: &Arc<dyn SessionPool>) -> Result<Prech
         let node = node.clone();
         handles.push(tokio::spawn(async move {
             let session = pool.get(&node.name).await?;
-            let out = session.exec(&script).await?;
+            // Unprivileged: the probe must see the node as the login user
+            // does (its own sudo capability is part of what it measures).
+            let out = session.exec_cmd(&Cmd::probe(script).unprivileged()).await?;
             Ok::<_, miette::Report>((node, out))
         }));
     }
@@ -146,12 +149,43 @@ emit() { printf '%s\t%s\t%s\n' "$1" "$2" "$3"; }
 "#,
     );
     // -- privileges -------------------------------------------------------
-    s.push_str(
-        r#"if [ "$(id -u)" = 0 ]; then emit sudo ok "running as root"
-elif sudo -n true 2>/dev/null; then emit sudo ok "passwordless sudo"
-else emit sudo fail "ssh user is not root and has no passwordless sudo"; fi
+    // The script runs as the login user (unprivileged), so `sudo -n true`
+    // here exercises exactly the path kurin's become wrapping will take.
+    // CAN_ROOT records whether `prepare` can act on this node at all and
+    // feeds the sysctl check below.
+    if node.ssh.user == "root" {
+        s.push_str(
+            r#"emit sudo ok "running as root"
+CAN_ROOT=1
 "#,
-    );
+        );
+    } else {
+        match node.ssh.r#become {
+            BecomeMode::None => {
+                s.push_str(
+                    r#"emit sudo fail "ssh user is not root and become is disabled"
+CAN_ROOT=0
+"#,
+                );
+            }
+            BecomeMode::Auto | BecomeMode::Sudo => {
+                if node.ssh.become_password.is_some() {
+                    s.push_str(
+                        r#"if sudo -n true 2>/dev/null; then emit sudo ok "passwordless sudo"
+else emit sudo ok "sudo with configured password"; fi
+CAN_ROOT=1
+"#,
+                    );
+                } else {
+                    s.push_str(
+                        r#"if sudo -n true 2>/dev/null; then emit sudo ok "passwordless sudo"; CAN_ROOT=1
+else emit sudo fail "ssh user is not root and sudo needs a password: grant passwordless sudo or set [ssh] become-password"; CAN_ROOT=0; fi
+"#,
+                    );
+                }
+            }
+        }
+    }
     // -- OS ---------------------------------------------------------------
     s.push_str(
         r#"if [ -r /etc/os-release ]; then
@@ -182,10 +216,14 @@ done
     // -- sysctls (kurin sets these; the bridge key only exists once
     // br_netfilter is loaded, which `prepare` does — so a missing file is
     // fine when the module is loadable, and fails only when it is not).
+    // A sudo-capable login sets them through become even though the probe
+    // itself cannot write /proc/sys.
     s.push_str(
         r#"for k in net.ipv4.ip_forward net.bridge.bridge-nf-call-iptables; do
   f="/proc/sys/$(echo "$k" | tr '.' '/')"
   if [ -w "$f" ]; then emit "sysctl:$k" ok "current=$(cat "$f" 2>/dev/null || echo '?') (settable)"
+  elif [ "$CAN_ROOT" = 1 ] && [ -e "$f" ]; then
+    emit "sysctl:$k" ok "current=$(cat "$f" 2>/dev/null || echo '?') (settable via sudo)"
   elif [ ! -e "$f" ] && modprobe -n -q br_netfilter 2>/dev/null; then
     emit "sysctl:$k" ok "absent until br_netfilter loads (kurin loads it)"
   else emit "sysctl:$k" fail "not writable: $f (kernel module or sysctl namespace missing)"; fi
@@ -362,6 +400,90 @@ address = "192.168.10.13"
 role = "lb"
 "#;
         parse_str(std::path::Path::new("test.toml"), toml).expect("config parses")
+    }
+
+    /// Same shape as [`cluster`] but with configurable [ssh] settings, so
+    /// the sudo probe can be generated for every become combination.
+    fn cluster_ssh(ssh: &str) -> Cluster {
+        let toml = format!(
+            r#"
+version = "v1alpha1"
+name = "pc"
+[kubernetes]
+version = "1.33.1"
+[network]
+pod-cidr = "10.233.64.0/18"
+service-cidr = "10.233.0.0/18"
+[ssh]
+{ssh}
+[ssh.auth]
+method = "password"
+password = "fake-not-real"
+[nodes.m1]
+address = "192.168.10.11"
+role = "control-plane"
+"#
+        );
+        parse_str(std::path::Path::new("test.toml"), &toml).expect("config parses")
+    }
+
+    fn first_script(c: &Cluster) -> String {
+        probe_script(c, &c.nodes[0])
+    }
+
+    #[test]
+    fn root_login_reports_running_as_root_without_probing_sudo() {
+        let s = first_script(&cluster_ssh("user = \"root\""));
+        assert!(s.contains(r#"emit sudo ok "running as root""#), "{s}");
+        assert!(!s.contains("sudo -n true"), "{s}");
+        assert!(s.contains("CAN_ROOT=1"), "{s}");
+    }
+
+    #[test]
+    fn become_none_fails_actionably_for_non_root() {
+        let s = first_script(&cluster_ssh("user = \"ubuntu\"\nbecome = \"none\""));
+        assert!(
+            s.contains(r#"emit sudo fail "ssh user is not root and become is disabled""#),
+            "{s}"
+        );
+        assert!(!s.contains("sudo -n true"), "{s}");
+        assert!(s.contains("CAN_ROOT=0"), "{s}");
+    }
+
+    #[test]
+    fn sudo_auto_probes_passwordless_and_fails_actionably() {
+        let s = first_script(&cluster_ssh("user = \"ubuntu\""));
+        assert!(s.contains("sudo -n true"), "{s}");
+        assert!(s.contains(r#"emit sudo ok "passwordless sudo""#), "{s}");
+        assert!(
+            s.contains("grant passwordless sudo or set [ssh] become-password"),
+            "{s}"
+        );
+    }
+
+    #[test]
+    fn configured_password_reports_ok_without_probing() {
+        // Obvious fake value (R8).
+        let s = first_script(&cluster_ssh(
+            "user = \"ubuntu\"\nbecome-password = \"fake-sudo-pass\"",
+        ));
+        assert!(
+            s.contains(r#"emit sudo ok "sudo with configured password""#),
+            "{s}"
+        );
+        assert!(s.contains("CAN_ROOT=1"), "{s}");
+    }
+
+    #[test]
+    fn sysctl_check_gates_on_can_root_for_non_root_logins() {
+        // The sysctl wording is runtime-driven by CAN_ROOT: the branch
+        // must exist so a sudo-capable login reports "settable via sudo"
+        // instead of a bogus "not writable" failure.
+        let s = first_script(&cluster_ssh("user = \"ubuntu\""));
+        assert!(s.contains("[ \"$CAN_ROOT\" = 1 ] && [ -e \"$f\" ]"), "{s}");
+        assert!(s.contains("(settable via sudo)"), "{s}");
+        // Root keeps the direct `-w` fast path first.
+        assert!(s.contains("(settable)"), "{s}");
     }
 
     #[test]

@@ -3,14 +3,15 @@
 //! gate. Every cross-field conflict is a hard error before any SSH happens.
 
 use std::collections::{BTreeMap, HashMap};
+use std::fmt;
 use std::net::IpAddr;
 
 use ipnet::Ipv4Net;
 use semver::Version;
 
 use crate::config::{
-    ClusterConfig, CniConfig, Distribution, HaMode, NodeRole, RegistryKind, RuntimeKind, SshAuth,
-    StorageKind, CONFIG_VERSION,
+    BecomeMode, ClusterConfig, CniConfig, Distribution, HaMode, NodeRole, RegistryKind,
+    RuntimeKind, SshAuth, StorageKind, CONFIG_VERSION,
 };
 use crate::error::{ConfigError, Result};
 
@@ -27,14 +28,36 @@ pub struct Node {
     pub labels: BTreeMap<String, String>,
 }
 
-#[derive(Debug, Clone)]
+/// Fully-resolved SSH access for one node (node override > [ssh] default).
+#[derive(Clone)]
 pub struct ResolvedSsh {
     pub user: String,
     pub port: u16,
+    /// Privilege escalation policy (see `[ssh] become`).
+    pub r#become: BecomeMode,
+    /// sudo password, when this login's sudo is not passwordless.
+    pub become_password: Option<String>,
     pub auth: SshAuth,
 }
 
-#[derive(Debug, Clone)]
+/// R8: passwords must never reach logs, events, errors or snapshots via
+/// Debug; both secret fields are masked as `******`.
+impl fmt::Debug for ResolvedSsh {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ResolvedSsh")
+            .field("user", &self.user)
+            .field("port", &self.port)
+            .field("become", &self.r#become)
+            .field(
+                "become_password",
+                &self.become_password.as_ref().map(|_| "******"),
+            )
+            .field("auth", &self.auth)
+            .finish()
+    }
+}
+
+#[derive(Clone)]
 pub struct Cluster {
     pub name: String,
     /// Offline artifact bundle directory (None = online install).
@@ -69,6 +92,41 @@ pub struct Cluster {
     pub source: String,
 }
 
+/// R8: the derived Debug would print the registry password verbatim.
+impl fmt::Debug for Cluster {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Cluster")
+            .field("name", &self.name)
+            .field("offline_dir", &self.offline_dir)
+            .field("zone", &self.zone)
+            .field("distribution", &self.distribution)
+            .field("ha_mode", &self.ha_mode)
+            .field("runtime", &self.runtime)
+            .field("kubernetes_version", &self.kubernetes_version)
+            .field("pod_cidr", &self.pod_cidr)
+            .field("service_cidr", &self.service_cidr)
+            .field("dns_domain", &self.dns_domain)
+            .field("cni", &self.cni)
+            .field("vip", &self.vip)
+            .field("nodes", &self.nodes)
+            .field("registry_kind", &self.registry_kind)
+            .field("registry_port", &self.registry_port)
+            .field("registry_username", &self.registry_username)
+            .field(
+                "registry_password",
+                &self.registry_password.as_ref().map(|_| "******"),
+            )
+            .field("registry_data_dir", &self.registry_data_dir)
+            .field("storage_kind", &self.storage_kind)
+            .field("storage_default", &self.storage_default)
+            .field("storage_server", &self.storage_server)
+            .field("storage_path", &self.storage_path)
+            // `source` is the raw TOML, which contains secrets; never Debug it.
+            .field("source", &"<redacted>")
+            .finish()
+    }
+}
+
 impl Cluster {
     pub fn control_plane(&self) -> impl Iterator<Item = &Node> {
         self.nodes
@@ -99,6 +157,9 @@ impl Cluster {
         let default_user = cfg.ssh.user.unwrap_or_else(|| "root".into());
         let default_port = cfg.ssh.port.unwrap_or(22);
         let default_auth = cfg.ssh.auth;
+        // node override > [ssh] default > auto.
+        let default_become = cfg.ssh.r#become.unwrap_or_default();
+        let default_become_password = cfg.ssh.become_password;
 
         let mut nodes = Vec::with_capacity(cfg.nodes.len());
         for (name, n) in cfg.nodes {
@@ -116,6 +177,10 @@ impl Cluster {
                 ssh: ResolvedSsh {
                     user: n.user.unwrap_or_else(|| default_user.clone()),
                     port: n.port.unwrap_or(default_port),
+                    r#become: n.r#become.unwrap_or(default_become),
+                    become_password: n
+                        .become_password
+                        .or_else(|| default_become_password.clone()),
                     auth,
                 },
                 labels: n.labels,
@@ -223,6 +288,15 @@ impl Cluster {
                     "node name {name:?} is not a valid DNS label: use lowercase letters, digits \
                      and '-', starting and ending with a letter or digit (uppercase or \
                      underscore hostnames break kubeadm installs)"
+                )));
+            }
+            // A password nobody will ever read is a config smell; reject at
+            // load time. `become = "none"` with a non-root user is allowed
+            // here — precheck is what reports that combination.
+            if n.ssh.r#become == BecomeMode::None && n.ssh.become_password.is_some() {
+                return Err(invalid(format!(
+                    "node {name}: ssh.become-password is set but become = \"none\"; remove \
+                     become-password or use become = \"auto\" | \"sudo\""
                 )));
             }
         }
@@ -412,4 +486,177 @@ pub fn check_version(cfg: &ClusterConfig) -> Result<()> {
         ));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::parse_str;
+    use std::path::Path;
+
+    /// Obvious fake values (R8): these are test credentials, never real
+    /// ones, and the masking tests assert they cannot leak.
+    const FAKE_SSH_PASSWORD: &str = "fake-ssh-password-not-real";
+    const FAKE_BECOME_PASSWORD: &str = "fake-become-password-not-real";
+    const FAKE_PASSPHRASE: &str = "fake-passphrase-not-real";
+
+    fn cluster(ssh_extra: &str, node_extra: &str) -> Cluster {
+        try_cluster(ssh_extra, node_extra).expect("config parses")
+    }
+
+    fn try_cluster(ssh_extra: &str, node_extra: &str) -> Result<Cluster> {
+        let toml = format!(
+            r#"version = "v1alpha1"
+name = "become"
+[ssh]
+user = "ubuntu"
+{ssh_extra}
+[ssh.auth]
+method = "password"
+password = "{FAKE_SSH_PASSWORD}"
+[nodes.n1]
+address = "10.0.0.11"
+role = "control-plane"
+{node_extra}"#
+        );
+        parse_str(Path::new("become.toml"), &toml)
+    }
+
+    #[test]
+    fn become_defaults_to_auto() {
+        let c = cluster("", "");
+        assert_eq!(c.nodes[0].ssh.r#become, BecomeMode::Auto);
+        assert_eq!(c.nodes[0].ssh.become_password, None);
+    }
+
+    #[test]
+    fn node_override_beats_cluster_default() {
+        let c = cluster("become = \"sudo\"", "become = \"none\"");
+        assert_eq!(c.nodes[0].ssh.r#become, BecomeMode::None);
+        assert_eq!(c.nodes[0].ssh.become_password, None);
+
+        let c = cluster("become = \"sudo\"", "become = \"auto\"");
+        assert_eq!(c.nodes[0].ssh.r#become, BecomeMode::Auto);
+    }
+
+    #[test]
+    fn inherited_password_with_become_none_is_rejected() {
+        // The cluster password is inherited into a node that disables
+        // escalation: an odd combination, rejected loudly.
+        let err = try_cluster(
+            "become-password = \"cluster-level-fake\"",
+            "become = \"none\"",
+        )
+        .expect_err("must be rejected");
+        let msg = format!("{err}");
+        assert!(msg.contains("become-password"), "message: {msg}");
+    }
+
+    #[test]
+    fn node_password_inherits_cluster_default() {
+        let c = cluster("become-password = \"cluster-level-fake\"", "");
+        assert_eq!(
+            c.nodes[0].ssh.become_password.as_deref(),
+            Some("cluster-level-fake")
+        );
+    }
+
+    #[test]
+    fn become_password_with_become_none_is_rejected() {
+        let toml = "version = \"v1alpha1\"\nname = \"become\"\n[ssh]\nuser = \"ubuntu\"\n\
+                    become = \"none\"\nbecome-password = \"fake\"\n[ssh.auth]\n\
+                    method = \"password\"\npassword = \"x\"\n[nodes.n1]\n\
+                    address = \"10.0.0.11\"\nrole = \"control-plane\"\n";
+        let err = parse_str(Path::new("become.toml"), toml).expect_err("must be rejected");
+        let msg = format!("{err}");
+        assert!(msg.contains("become-password"), "message: {msg}");
+        assert!(msg.contains("none"), "message: {msg}");
+    }
+
+    #[test]
+    fn become_none_with_non_root_user_is_allowed() {
+        // Config load must pass; precheck is what fails this combination.
+        let c = cluster("become = \"none\"", "");
+        assert_eq!(c.nodes[0].ssh.user, "ubuntu");
+        assert_eq!(c.nodes[0].ssh.r#become, BecomeMode::None);
+    }
+
+    #[test]
+    fn debug_masks_every_secret() {
+        let c = cluster(&format!("become-password = \"{FAKE_BECOME_PASSWORD}\""), "");
+        let ssh = &c.nodes[0].ssh;
+        let dbg = format!("{ssh:?}");
+        assert!(
+            !dbg.contains(FAKE_SSH_PASSWORD),
+            "ssh password leaked: {dbg}"
+        );
+        assert!(
+            !dbg.contains(FAKE_BECOME_PASSWORD),
+            "become password leaked: {dbg}"
+        );
+        assert!(dbg.contains("******"), "no masking in: {dbg}");
+        assert!(dbg.contains("become_password: Some(\"******\")"));
+        assert!(dbg.contains("password: \"******\""));
+
+        let key = SshAuth::PrivateKey {
+            key_path: "/tmp/k".into(),
+            passphrase: Some(FAKE_PASSPHRASE.into()),
+        };
+        let dbg = format!("{key:?}");
+        assert!(!dbg.contains(FAKE_PASSPHRASE), "passphrase leaked: {dbg}");
+        assert!(
+            dbg.contains("passphrase: Some(\"******\")"),
+            "no masking: {dbg}"
+        );
+        assert!(dbg.contains("key_path: \"/tmp/k\""));
+    }
+    #[test]
+    fn debug_masks_secrets_in_config_and_cluster() {
+        const FAKE_REGISTRY_PASSWORD: &str = "fake-registry-password-not-real";
+        let toml = format!(
+            r#"version = "v1alpha1"
+name = "mask"
+[ssh]
+user = "ubuntu"
+become-password = "{FAKE_BECOME_PASSWORD}"
+[ssh.auth]
+method = "password"
+password = "{FAKE_SSH_PASSWORD}"
+[registry]
+kind = "zot"
+username = "admin"
+password = "{FAKE_REGISTRY_PASSWORD}"
+[nodes.n1]
+address = "10.0.0.11"
+role = "control-plane"
+[nodes.r1]
+address = "10.0.0.12"
+role = "registry"
+"#
+        );
+        let raw = crate::parse(Path::new("mask.toml"), &toml).expect("config parses");
+        let dbg = format!("{raw:?}");
+        for secret in [
+            FAKE_SSH_PASSWORD,
+            FAKE_BECOME_PASSWORD,
+            FAKE_REGISTRY_PASSWORD,
+        ] {
+            assert!(
+                !dbg.contains(secret),
+                "secret leaked from ClusterConfig: {dbg}"
+            );
+        }
+        assert!(dbg.contains("******"), "no masking in ClusterConfig: {dbg}");
+
+        let cluster = parse_str(Path::new("mask.toml"), &toml).expect("cluster loads");
+        let dbg = format!("{cluster:?}");
+        for secret in [
+            FAKE_SSH_PASSWORD,
+            FAKE_BECOME_PASSWORD,
+            FAKE_REGISTRY_PASSWORD,
+        ] {
+            assert!(!dbg.contains(secret), "secret leaked from Cluster: {dbg}");
+        }
+        assert!(dbg.contains("registry_password: Some(\"******\")"));
+    }
 }

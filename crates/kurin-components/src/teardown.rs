@@ -339,6 +339,8 @@ mod tests {
             ssh: ResolvedSsh {
                 user: "root".into(),
                 port: 22,
+                r#become: kurin_config::BecomeMode::Auto,
+                become_password: None,
                 auth: SshAuth::PrivateKey {
                     key_path: "~/.ssh/id_ed25519".into(),
                     passphrase: None,

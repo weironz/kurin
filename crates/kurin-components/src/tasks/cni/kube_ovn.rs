@@ -170,6 +170,8 @@ mod tests {
             ssh: ResolvedSsh {
                 user: "root".into(),
                 port: 22,
+                r#become: kurin_config::BecomeMode::Auto,
+                become_password: None,
                 auth: SshAuth::Password {
                     password: "x".into(),
                 },

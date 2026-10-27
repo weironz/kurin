@@ -162,6 +162,8 @@ fn node(name: &str, role: kurin_config::NodeRole, host: u8) -> kurin_config::Nod
         ssh: kurin_config::ResolvedSsh {
             user: "root".into(),
             port: 22,
+            r#become: kurin_config::BecomeMode::Auto,
+            become_password: None,
             auth: kurin_config::SshAuth::Password {
                 password: "x".into(),
             },

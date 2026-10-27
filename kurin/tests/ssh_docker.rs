@@ -120,6 +120,8 @@ impl TestNode {
                     ResolvedSsh {
                         user: "root".into(),
                         port: self.port,
+                        r#become: kurin_config::BecomeMode::Auto,
+                        become_password: None,
                         auth,
                     },
                 ),

@@ -17,6 +17,13 @@ All notable changes to kurin. Format follows Keep a Changelog; semver.
   SELinux permissive, firewalld stopped; kernel modules persisted in
   modules-load.d; rpm package names for kernel deps.
 - Rocky 9 e2e (rpm family).
+- Non-root SSH users are supported via sudo: `[ssh] become = "auto" |
+  "sudo" | "none"` (default auto) escalates privileged commands with
+  `sudo -n -- sh -c …`, or `sudo -S` when `[ssh] become-password` is
+  set (the password travels the encrypted channel's stdin, never the
+  command line). Node-level `become`/`become-password` overrides,
+  become-aware precheck (sudo row + sysctl "settable via sudo"), and
+  file uploads staged through `install` so modes survive escalation.
 
 ### Fixed
 - `kurin upgrade`: a failed `kubectl drain` now aborts that node's upgrade

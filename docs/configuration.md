@@ -29,6 +29,8 @@ kind = "calico"                  # "calico" | "flannel" | "cilium" | "kube-ovn" 
 [ssh]
 user = "root"                    # 缺省 root；节点级可覆盖
 port = 22
+become = "auto"                  # 非 root 登录的提权方式："auto" | "sudo" | "none"
+become-password = "…"            # sudo 需要密码时使用（经加密通道 stdin 传入）
 
 [ssh.auth]                       # 集群默认鉴权；节点级可覆盖
 method = "private_key"           # "private_key" | "password"
@@ -72,6 +74,8 @@ internal-address = "192.168.10.11"   # 集群内通信地址（缺省 = address�
 role   = "control-plane"        # "control-plane" | "worker" | "lb" | "registry"
 user   = "root"                 # 节点级覆盖（缺省继承 [ssh]）
 port   = 22
+become = "auto"                  # 节点级提权覆盖（缺省继承 [ssh]）
+become-password = "…"            # 节点级 sudo 密码覆盖（缺省继承 [ssh]）
 labels = { "env" = "prod" }    # 生效方式见下  节点标签
 
 [nodes.master01.auth]           # 节点级鉴权覆盖（结构同 [ssh.auth]）
@@ -224,6 +228,50 @@ key-path = "/home/ubuntu/.ssh/id_ed25519"
 ```
 
 两种写法都实测 `--dry-run` 解析与规划通过（2026-10-26）。
+
+### `[ssh] become` / 节点级 `become`（非 root 用户提权）
+
+kurin 的特权命令（写 `/etc`、`kubeadm init`、`systemctl` 等）默认按登录用户执行；
+非 root 登录时按 become 策略包装成 `sudo`。解析顺序：**节点级 `become` >
+集群 `[ssh] become` > `auto`**（`become-password` 同理）。
+
+| 值 | 行为 |
+|---|---|
+| `auto`（默认） | 登录用户是 `root` 时原样执行；非 root 时包成 `sudo -n -- sh -c '<脚本>'` |
+| `sudo` | 与 `auto` 相同（root 永不 sudo） |
+| `none` | 从不提权；非 root 用户在 precheck 阶段失败（`ssh user is not root and become is disabled`） |
+
+- `become-password`：sudo 需要密码时，命令改为 `sudo -S -p '' -- sh -c '<脚本>'`，
+  密码经 SSH 加密通道的 stdin 传入，**不进命令行**，也不会出现在日志、事件与
+  错误文本里（R8）。`become = "none"` 时配置 `become-password` 是配置错误，
+  解析阶段直接拒绝。
+- 文件写入（`write_file`）：先以登录用户身份写入 `/tmp/kurin-<随机>`，再
+  `install -D -m <mode>` 到目标路径（需要提权时经 sudo），临时文件随后删除；
+  所以 mode/属主在 root 与非 root 登录下行为一致。
+- precheck 的 `sudo` 检查项基于 become 判定：root => ok；非 root + `none` =>
+  fail；非 root + `auto`/`sudo` 时探测 `sudo -n true`，可用 => ok
+  （"passwordless sudo"），否则配置了 `become-password` => ok（"sudo with
+  configured password"），否则 fail 并给出可操作提示。
+- 等待 WP-20（秘密引用）之前，`become-password` 只接受字面值。
+
+示例（大多数节点用免密 sudo 的 `ubuntu`，个别节点覆盖）：
+
+```toml
+[ssh]
+user = "ubuntu"
+become = "auto"               # 缺省即 auto，写出来仅为示意
+
+[nodes.master01]
+address = "192.168.10.11"
+role = "control-plane"
+# 继承 [ssh]：ubuntu + auto（该用户已配置免密 sudo）
+
+[nodes.worker01]
+address = "192.168.10.21"
+role = "worker"
+become = "sudo"                # 节点级覆盖
+become-password = "s3cret"     # 该节点的 sudo 需要密码
+```
 
 ### 节点名
 

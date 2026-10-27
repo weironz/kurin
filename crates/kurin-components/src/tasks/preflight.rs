@@ -4,7 +4,7 @@
 use kurin_config::Node;
 use miette::Result;
 
-use kurin_core::engine::{Drift, Outcome, Session, Stage, Task};
+use kurin_core::engine::{Cmd, Drift, Outcome, Session, Stage, Task};
 
 pub struct Preflight {
     node: Node,
@@ -32,9 +32,13 @@ impl Task for Preflight {
     }
 
     async fn check(&self, session: &dyn Session) -> Result<Drift> {
+        // Read-only host facts: run as the login user (no sudo detour) —
+        // /proc and getenforce answer the same either way.
         // One command, one truth source: /proc/swaps shows swap state.
         let out = session
-            .exec("test -z \"$(tail -n +2 /proc/swaps)\" && echo ok")
+            .exec_cmd(
+                &Cmd::probe("test -z \"$(tail -n +2 /proc/swaps)\" && echo ok").unprivileged(),
+            )
             .await?;
         if !out.ok() {
             return Ok(Drift::Drifted(format!(
@@ -43,7 +47,10 @@ impl Task for Preflight {
             )));
         }
         let out = session
-            .exec("command -v getenforce >/dev/null && getenforce || echo disabled")
+            .exec_cmd(
+                &Cmd::probe("command -v getenforce >/dev/null && getenforce || echo disabled")
+                    .unprivileged(),
+            )
             .await?;
         if out.stdout.trim() == "Enforcing" {
             return Ok(Drift::Drifted(format!(
