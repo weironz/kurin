@@ -1,3 +1,8 @@
+## WP-76：conformance 门禁（2026-10-28）
+
+- **`scripts/conformance.sh` + `just conformance [name]`**：从 tier3 的首个控制面复制 kubeconfig（kubeadm `admin.conf` / k3s `k3s.yaml`），把 `127.0.0.1` 改写为 VM 地址，调用 hydrophone `run --kubeconfig … --output-dir docs/conformance/<UTC ts>` 归档报告；`HYDROPHONE` / `HYDROPHONE_ARGS` 可覆盖二进制与额外参数。
+- **未执行**：本机未安装 hydrophone；脚本通过 `bash -n`。发版前维护者在 tier3 上执行并归档报告。
+
 ## WP-73：kurin import --from-cluster（2026-10-28）
 
 - **`kurin import --from-cluster --host <ip> [--user root] [--port 22] [--key PATH | --password-env NAME] [--known-hosts MODE] [-o FILE]`**：从运行中集群的 `kube-system/kurin-state` 反推 v1alpha2 配置（换控制机 / 纳管到 Web）。单条 SSH 会话直连 `--host`（须为控制面节点）：先按节点实际持有的 kubeconfig 探测 kubectl 形态（k3s `--kubeconfig /etc/rancher/k3s/k3s.yaml`，kubeadm `--kubeconfig /etc/kubernetes/admin.conf`），再读 ConfigMap 的 `data["spec.toml"]`。worker 节点（两个 kubeconfig 都没有）与无记录集群（WP-19 之前）都给明确报错。

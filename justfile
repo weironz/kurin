@@ -205,6 +205,10 @@ tier2-status:
 tier1-etcd:
     e2e/tier1/etcd.sh target/tier1/debug/kurin
 
+# WP-76: Kubernetes conformance gate (release only; needs hydrophone + tier3)
+conformance name="kurin-tier3":
+    scripts/conformance.sh {{name}}
+
 # full local gate before pushing anything that touches behavior
 ci-gate: check tier0
     just tier0-test

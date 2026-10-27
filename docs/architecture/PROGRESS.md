@@ -73,7 +73,7 @@
 | WP-73 kurin import | done | 见提交 | 无 | 在另一台控制机 `kurin import --from-cluster … -o tier2.toml` 后 `kurin add nodes -f tier2.toml` | 只读直连（无计划/锁/操作日志）；v1alpha1 记录先迁移为 v1alpha2；kubectl 形态按节点上的 kubeconfig 探测（kubeadm/k3s）；`--password-env` 把每个 `******` 都写成同一 env 引用并列出清单告警，`--key` 只重写 `[ssh.auth]`，密码形态缺口明确报错列出字段；`-o` 0600 落盘、缺省 stdout；`--json` 报告 `{cluster, distribution, kubernetes_version, nodes, output}`（需配 `-o`） |
 | WP-74 OS 扩展 | todo | | | | |
 | WP-75 CIS 加固 | todo | | | | |
-| WP-76 conformance 门禁 | todo | | | | |
+| WP-76 conformance 门禁 | done | 见提交 | 无 | 维护者：`just conformance`（需 hydrophone + tier3），报告存 `docs/conformance/<ts>/` | `scripts/conformance.sh`（复制 kubeconfig、改 server 地址、hydrophone run、归档）；本机未装 hydrophone 未执行 |
 | WP-77 种子仓库 | todo | | | | |
 | WP-78 英文文案与文档站 | done | 见提交 | 无 | `mdbook build`（docs/site，需安装 mdbook）| 593 键 en 字典（类型强制键集一致）、运行时语言切换（antd/dayjs 跟随、localStorage 持久化）、189 Vitest + 8 Playwright；mdBook 脚手架 + 同步脚本 |
 
@@ -143,6 +143,7 @@
 - WP-39：签名包校验、篡改 blob 拒绝、未签名包在 signature 模式拒绝（`cargo test -p kurin-artifact --test transfer`）；CI 工作流需在 tag 上人工验证。
 - WP-49：`just tier3-registry zot`、`docker-registry`、`external`（external 指向 zot）。
 - WP-63：tier1 真实 create 过程中刷新页面，确认日志从断点继续；`pnpm --dir web test:e2e`。
+- WP-76：`just conformance`（需安装 hydrophone 与 tier3 集群），报告归档到 `docs/conformance/`。
 - WP-66：tier1 已实跑 `lifecycle.spec.ts`（3.9m PASS）与「创建中关闭浏览器」（2.4m PASS）；`resilience.spec.ts` 的重启 retry、CLI 抢锁、密码扫描需 `KURIN_E2E_RESTART_CMD` / `KURIN_E2E_CLI` / `KURIN_E2E_SECRET`，待维护者执行。
 - WP-65：Playwright `packages.spec.ts` 覆盖包导入/校验/推送/制作 base、升级预览+执行、证书续期、TOML 编辑保存；tier2 页面升级一个小版本。
 - WP-64：Playwright `addons.spec.ts` 覆盖安装/卸载与三个危险操作；tier1 页面安装/卸载 metrics-server。
@@ -170,6 +171,7 @@
 - WP-39：签名包校验、篡改 blob 拒绝、未签名包在 signature 模式拒绝（`cargo test -p kurin-artifact --test transfer`）；CI 工作流需在 tag 上人工验证。
 - WP-49：`just tier3-registry zot`、`docker-registry`、`external`（external 指向 zot）。
 - WP-63：tier1 真实 create 过程中刷新页面，确认日志从断点继续；`pnpm --dir web test:e2e`。
+- WP-76：`just conformance`（需安装 hydrophone 与 tier3 集群），报告归档到 `docs/conformance/`。
 - WP-66：tier1 已实跑 `lifecycle.spec.ts`（3.9m PASS）与「创建中关闭浏览器」（2.4m PASS）；`resilience.spec.ts` 的重启 retry、CLI 抢锁、密码扫描需 `KURIN_E2E_RESTART_CMD` / `KURIN_E2E_CLI` / `KURIN_E2E_SECRET`，待维护者执行。
 - WP-65：Playwright `packages.spec.ts` 覆盖包导入/校验/推送/制作 base、升级预览+执行、证书续期、TOML 编辑保存；tier2 页面升级一个小版本。
 - WP-64：Playwright `addons.spec.ts` 覆盖安装/卸载与三个危险操作；tier1 页面安装/卸载 metrics-server。
