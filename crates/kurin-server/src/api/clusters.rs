@@ -10,6 +10,7 @@ use axum::Json;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
+use crate::api::wp54::load_spec;
 use crate::collector::{RefreshOutcome, STALE_AFTER};
 use crate::error::ApiError;
 use crate::state::AppState;
@@ -319,6 +320,104 @@ pub(crate) async fn refresh(
 fn current_spec(store: &crate::store::Store, name: &str) -> Option<kurin_config::Cluster> {
     let revision = store.current_revision(name).ok().flatten()?;
     kurin_config::parse_str(Path::new("cluster.toml"), &revision.toml).ok()
+}
+
+#[derive(Deserialize, TS)]
+pub(crate) struct AddNodeBody {
+    name: String,
+    address: String,
+    /// worker / control-plane / lb / registry.
+    role: String,
+}
+
+#[derive(Deserialize, TS)]
+pub(crate) struct AddNodesBody {
+    nodes: Vec<AddNodeBody>,
+    #[serde(default)]
+    offline: Option<String>,
+}
+
+#[derive(Serialize, TS)]
+pub(crate) struct OperationSubmitted {
+    operation: String,
+    state: String,
+    cluster: Option<String>,
+}
+
+/// `POST /api/v1/clusters/{name}/nodes`: append nodes to the current
+/// revision with `toml_edit` and submit the `add-nodes` operation (UI
+/// §8.1 nodes tab). The structured action keeps comments and key order
+/// intact; the TOML editor remains the escape hatch.
+pub(crate) async fn add_nodes(
+    State(state): State<AppState>,
+    AxumPath(name): AxumPath<String>,
+    body: Result<Json<AddNodesBody>, JsonRejection>,
+) -> Result<Response, ApiError> {
+    let Json(body) = body.map_err(|rejection| ApiError::bad_json(&rejection))?;
+    if body.nodes.is_empty() {
+        return Err(ApiError::BadRequest("至少需要一个节点".into()));
+    }
+    let store = state.store();
+    let revision = store
+        .current_revision(&name)?
+        .ok_or_else(|| ApiError::Conflict(format!("集群 {name:?} 还没有配置，请先导入")))?;
+    let mut doc: toml_edit::DocumentMut = revision
+        .toml
+        .parse()
+        .map_err(|e: toml_edit::TomlError| ApiError::BadRequest(e.to_string()))?;
+
+    let mut patch = kurin_config::quick::patch::ConfigPatch::default();
+    for node in &body.nodes {
+        let address = node
+            .address
+            .parse()
+            .map_err(|_| ApiError::BadRequest(format!("节点地址不合法：{}", node.address)))?;
+        let role = match node.role.as_str() {
+            "worker" => kurin_config::config::NodeRole::Worker,
+            "control-plane" => kurin_config::config::NodeRole::ControlPlane,
+            "lb" => kurin_config::config::NodeRole::Lb,
+            "registry" => kurin_config::config::NodeRole::Registry,
+            other => {
+                return Err(ApiError::BadRequest(format!(
+                    "未知的节点角色 {other:?}（worker|control-plane|lb|registry）"
+                )))
+            }
+        };
+        patch.nodes.push(kurin_config::quick::patch::PatchNode {
+            name: Some(node.name.clone()),
+            address,
+            role,
+            internal_address: None,
+            user: None,
+            port: None,
+            labels: Default::default(),
+            auth: None,
+        });
+    }
+    patch
+        .apply(&mut doc)
+        .map_err(|e| ApiError::BadRequest(e.to_string()))?;
+
+    let document = doc.to_string();
+    // Validate before saving so a bad patch never becomes a revision.
+    load_spec(&document)?;
+    store.save_config(&name, &document, revision.rev, Some("添加节点".into()))?;
+    let record = state.runner().submit(crate::ops::SubmitRequest {
+        cluster: name,
+        kind: "add-nodes".into(),
+        params: serde_json::json!({ "offline": body.offline }),
+        actor: "api".into(),
+        retry_of: None,
+    })?;
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(OperationSubmitted {
+            operation: record.id,
+            state: record.state.as_str().to_string(),
+            cluster: record.cluster,
+        }),
+    )
+        .into_response())
 }
 
 #[derive(Serialize, TS)]

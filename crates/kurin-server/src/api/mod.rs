@@ -33,6 +33,7 @@ pub fn router() -> Router<AppState> {
         )
         .route("/api/v1/clusters/{name}/refresh", post(clusters::refresh))
         .route("/api/v1/clusters/{name}/archive", post(clusters::archive))
+        .route("/api/v1/clusters/{name}/nodes", post(clusters::add_nodes))
         .route(
             "/api/v1/clusters/{name}/operations",
             post(operations::submit),

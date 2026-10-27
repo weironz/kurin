@@ -68,7 +68,7 @@ pub fn router() -> Router<AppState> {
 ///
 /// The `ConfigError` variants carry `miette::SourceSpan`s against the
 /// submitted text; those become the `labels` the frontend renders.
-fn load_spec(source: &str) -> Result<kurin_config::Cluster, ApiError> {
+pub(crate) fn load_spec(source: &str) -> Result<kurin_config::Cluster, ApiError> {
     let spec = kurin_config::parse_str(Path::new("cluster.toml"), source)
         .map_err(|error| diagnostics_from(&error))?;
     kurin_components::component::validate(&spec).map_err(|error| diagnostics_from(&error))?;

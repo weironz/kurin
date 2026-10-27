@@ -1050,3 +1050,59 @@ async fn archive_is_rejected_while_an_operation_is_active() {
     let response = send(app, request).await;
     assert_eq!(response.status(), StatusCode::CONFLICT);
 }
+
+// ── POST /clusters/{name}/nodes ────────────────────────────────────────
+
+#[tokio::test]
+async fn add_nodes_appends_to_the_revision_and_submits_the_operation() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = state_with(dir.path(), Arc::new(NoopBackend));
+    import(&state, "single");
+    let app = kurin_server::router(state.clone());
+    let cookie = login(app.clone(), dir.path()).await;
+
+    let request = authed(
+        Method::POST,
+        "/api/v1/clusters/single/nodes",
+        &cookie,
+        json!({ "nodes": [{ "name": "worker02", "address": "192.168.10.22", "role": "worker" }] }),
+    );
+    let response = send(app, request).await;
+    assert_eq!(response.status(), StatusCode::ACCEPTED);
+    let body = json_body(response).await;
+    let operation = body["operation"].as_str().expect("operation id");
+    assert_eq!(
+        state
+            .store()
+            .get_operation(operation)
+            .unwrap()
+            .unwrap()
+            .kind,
+        "add-nodes"
+    );
+    let revision = state.store().current_revision("single").unwrap().unwrap();
+    assert!(
+        revision.toml.contains("[nodes.worker02]"),
+        "revision missing the new node: {}",
+        revision.toml
+    );
+    assert!(revision.toml.contains("address = \"192.168.10.22\""));
+}
+
+#[tokio::test]
+async fn add_nodes_rejects_a_duplicate_name() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = state_with(dir.path(), Arc::new(NoopBackend));
+    import(&state, "single");
+    let app = kurin_server::router(state);
+    let cookie = login(app.clone(), dir.path()).await;
+
+    let request = authed(
+        Method::POST,
+        "/api/v1/clusters/single/nodes",
+        &cookie,
+        json!({ "nodes": [{ "name": "worker01", "address": "192.168.10.22", "role": "worker" }] }),
+    );
+    let response = send(app, request).await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
