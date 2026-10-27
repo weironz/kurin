@@ -204,6 +204,55 @@ export interface OperationSummary {
   logLines?: number;
 }
 
+/**
+ * `GET /operations/{id}`：快照 + 进度聚合 + 事件游标（UI §7「状态 + 按阶段/节点聚合的进度」）。
+ * WP-63 对临时 DTO 的扩展；列表项不需要的字段只在详情响应中出现。
+ */
+export type OperationDetail = OperationSummary & {
+  /** 已持久化事件的最大 seq；历史分页（`/logs?after=`）与 SSE `?after=` 的起点。无事件为 0。 */
+  lastSeq: number;
+  /**
+   * 计划内全部任务的当前状态（含未开始的 `pending`），按计划顺序。
+   * 进度网格的初始状态；事件流在其上增量更新（乱序按状态等级合并，不降级）。
+   * 老操作可缺失，此时退化为纯事件流聚合（没有「待执行」格子）。
+   */
+  progress?: OperationProgress;
+};
+
+/** 进度网格单元格状态（UI §8.1：待执行/执行中/跳过/完成/已核对/告警/失败）。 */
+export type TaskCellState =
+  | 'pending'
+  | 'running'
+  | 'skipped'
+  | 'reconciled'
+  | 'done'
+  | 'warn'
+  | 'failed';
+
+/** 进度聚合里的一个任务（`GET /operations/{id}` 的 `progress.tasks` 项）。 */
+export interface OperationTaskSnapshot {
+  /** 任务 key：`<stage>/<kind>@<node>`（与事件里的 task id 同一命名）。 */
+  id: string;
+  node: string | null;
+  stage: string;
+  state: TaskCellState;
+  /** 终态耗时（ms）。 */
+  ms?: number;
+  /** 跳过/失败/告警原因。 */
+  reason?: string;
+}
+
+/** `GET /operations/{id}` 的进度聚合。 */
+export interface OperationProgress {
+  tasks: OperationTaskSnapshot[];
+}
+
+/** `POST /operations/{id}/cancel`：202 + 更新后的操作快照（状态变为 cancelled）。 */
+export type CancelOperationResponse = OperationSummary;
+
+/** `POST /operations/{id}/retry`：202 + 新创建的操作（`retryOf` 指向原操作）。 */
+export type RetryOperationResponse = OperationSummary;
+
 /** `GET /operations?cluster=&state=&kind=` 分页信封。 */
 export interface OperationList {
   items: OperationSummary[];
@@ -228,25 +277,32 @@ export interface OperationEventEnvelope {
   payload: OperationEventBody;
 }
 
-/** 信封 body —— 现有 executor 事件原文或 v1.1 新增的 step/log/resource。 */
+/**
+ * 信封 body —— 现有 executor 事件原文（`kurin --json` 的 v1 形状，kebab-case 与
+ * `crates/kurin-core/src/engine.rs` 的 `Event` 枚举一致：`task-skipped`/`task-failed`/
+ * `task-reconciled`，`node`/`stage` 非 Option）+ v1.1 新增的 warn/log/resource。
+ */
 export type OperationEventBody =
-  | {
-      type: 'task-start' | 'task-done' | 'task-skip' | 'task-fail';
-      id: string;
-      node?: string;
-      stage?: string;
-      ms?: number;
-    }
+  | { type: 'task-start'; id: string; node: string; stage: string }
+  | { type: 'task-skipped'; id: string; node: string; stage: string; reason?: string }
+  | { type: 'task-done'; id: string; node: string; stage: string; ms: number }
+  | { type: 'task-failed'; id: string; node: string; stage: string; reason: string }
+  | { type: 'task-reconciled'; id: string; node: string; stage: string }
+  /** BestEffort 失败等：任务带告警结束（architecture/02 §3.10 `TaskWarn`）。 */
+  | { type: 'task-warn'; id: string; node: string; stage: string; message: string }
+  | { type: 'stage-done'; stage: string }
+  | { type: 'cluster-ready' }
   | { type: 'step'; node: string; step: string; ok: boolean; detail: string }
-  | { type: 'note'; level: 'debug' | 'info' | 'warn' | 'error'; message: string }
+  | { type: 'note'; level: LogLevel; message: string }
   | { type: 'state'; state: OperationState; error?: string }
   | {
       type: 'log';
       node?: string | null;
       stage?: string | null;
+      /** 任务 key；远端输出（stdout/stderr）折叠在该任务组下（UI §8.5）。 */
       task?: string | null;
-      level: 'debug' | 'info' | 'warn' | 'error';
-      stream: 'kurin' | 'stdout' | 'stderr';
+      level: LogLevel;
+      stream: LogStream;
       line: string;
       elapsedMs?: number;
     }
@@ -255,9 +311,44 @@ export type OperationEventBody =
       stage: string;
       kind: string;
       name: string;
+      namespace?: string | null;
       ready: boolean;
+      /** 就绪状态文本（如 `1/2 ready`）。 */
       detail?: string;
     };
+
+/** 日志级别（note/log 事件）。 */
+export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
+
+/** 日志流：kurin 自身 / 远端命令 stdout / stderr。 */
+export type LogStream = 'kurin' | 'stdout' | 'stderr';
+
+/* --------------------- 日志分页查询 (§7 v1.1, WP-63) ---------------------- */
+
+/** `GET /operations/{id}/logs` 查询参数（UI §7：分页与筛选）。 */
+export interface OperationLogsQuery {
+  /** 只返回 seq 严格大于该值的事件（升序游标）。 */
+  after?: number;
+  /** 页大小上限（默认 500，服务端封顶）。 */
+  limit?: number;
+  node?: string;
+  stage?: string;
+  task?: string;
+  level?: LogLevel;
+  stream?: LogStream;
+  /** 全文搜索。 */
+  q?: string;
+}
+
+/** `GET /operations/{id}/logs` 响应：按 seq 升序的事件页 + 当前最大 seq。 */
+export interface OperationLogsPage {
+  items: OperationEventEnvelope[];
+  /** 服务端已持久化事件的最大 seq（判断是否到达末尾、SSE 续读起点）。 */
+  lastSeq: number;
+}
+
+/** `GET /operations/{id}/logs.download?format=` 的下载格式（UI §8.5）。 */
+export type LogDownloadFormat = 'log' | 'jsonl';
 
 /* ------------------------------ PlanView (§7) ----------------------------- */
 

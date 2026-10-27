@@ -537,7 +537,8 @@ export const handlers = [
     return HttpResponse.json({ ...mockOperationList, items, total: items.length });
   }),
 
-  // 操作详情
+  // 操作详情：WP-63 场景详情（含 progress/lastSeq）在 operationHandlers.ts 注册；
+  // MSW 按「先注册先匹配」，这里只兜底 mockOperations 的摘要形状（无网格种子）。
   http.get('/api/v1/operations/:id', ({ params }) => {
     if (!sessionEstablished) {
       return unauthorized();

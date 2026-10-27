@@ -63,7 +63,7 @@
 | WP-60 前端脚手架 | done | 见提交 | 无 | 无 | 提前实施（先用手写 provisional DTO 对 mock 开发，WP-55 替换为 ts-rs 生成类型）；34 个 Vitest 用例通过 |
 | WP-61 集群总览与详情 | done | 见提交 | 无 | 无（WP-53 验收场景待后端） | 15s 轮询、五态徽标、详情四 Tab；46 个 Vitest 用例 |
 | WP-62 创建向导 | todo | | | tier1 真实创建 | |
-| WP-63 操作详情与日志控制台 | todo | | | tier1 刷新续读 | |
+| WP-63 操作详情与日志控制台 | done | 见提交 | 无 | tier1 真实 create 中刷新页面，日志从断点继续 | 阶段×节点网格；资源表；日志控制台（筛选/搜索/跟随/虚拟滚动/下载）；取消/重试；91 Vitest + 1 Playwright |
 | WP-64 Addon 页面与危险操作 | todo | | | tier1 metrics-server | |
 | WP-65 包页面/升级/证书/TOML 编辑器 | todo | | | tier2 页面升级 | |
 | WP-66 前端端到端验收 | todo | | | 维护者执行 | |
@@ -85,6 +85,7 @@
 - WP-16：`storage/*` 标为 online-only（镜像在 bundle 但 bootstrap 不预载，WP-47 接管）；`ha/kube-vip` 镜像 pin 在版本表而非 manifest，标 online-only；`capabilities` 为隐藏命令且恒出 JSON。
 - WP-50：Host 拒绝用 403 `forbidden-host`（§7 清单外）；错误/DTO 采用顶层 `{code,message,diagnostics?}` + camelCase（对齐 WP-60 前端）；默认白名单含 `[::1]`；会话 TTL 24h；新增 `GET /session` 与 `GET /api/v1/healthz`。
 - WP-39：`sigstore` crate 不可用（会引入第二套加密栈/Fulcio/rekor），按 04 §6 预案用 `p256` 实现 cosign simple-signing；新增依赖仅 `p256`（已在依赖图中）。
+- WP-63：事件 DTO 沿用 v1 kebab-case + 信封；`GET /operations/{id}` 额外返回 `lastSeq`/`progress.tasks`；`/logs` 返回升序页；Playwright 用真实 Node HTTP 服务模拟 SSE 断线（route.fulfill 无法流式推送）。
 - WP-54：`render` 语义为 200+TOML+诊断（validate 是裁决者）；package 操作作为无集群 Operation；V4 迁移新增 `packages` 表并豁免只读 kind 的 `one_active_op`。
 - WP-48：cilium chart 1.20.4 / kube-ovn chart 1.16.15（sha256 实抓）；接管仅在无 helm release 且旧对象存在时启用；`HelmPayload::resolve` 改走 PayloadSet 三源。
 - WP-47：任务 id `storage/install@node` → `addons/local-path@node`；k3s 带 `[storage]` 现在也会安装；修复 WP-46 模板缺失的 `{% endset %}`。
@@ -136,6 +137,7 @@
 （随 WP 完成追加）
 - WP-39：签名包校验、篡改 blob 拒绝、未签名包在 signature 模式拒绝（`cargo test -p kurin-artifact --test transfer`）；CI 工作流需在 tag 上人工验证。
 - WP-49：`just tier3-registry zot`、`docker-registry`、`external`（external 指向 zot）。
+- WP-63：tier1 真实 create 过程中刷新页面，确认日志从断点继续；`pnpm --dir web test:e2e`。
 - WP-54：tier1 上 `/nodes/probe` 真实节点、`/addons` 安装后采集、`/packages/create-base` → push 到本地 zot。
 - WP-48：`just tier1-cilium`、`e2e/tier1/kube-ovn.sh`、`just tier1-cni-takeover cilium|kube-ovn`、`just tier1-offline-cni cilium`。
 - WP-47：`e2e/tier1/storage.sh local-path`、`nfs`（配置不变，断言 addons 任务与 StorageClass/PVC）。
@@ -155,6 +157,7 @@
 - WP-50：`kurin serve` 回环冒烟（一次性登录链接、`/session`、401/403/400、TLS h2）；`cargo clippy -p kurin --features ui`。
 - WP-39：签名包校验、篡改 blob 拒绝、未签名包在 signature 模式拒绝（`cargo test -p kurin-artifact --test transfer`）；CI 工作流需在 tag 上人工验证。
 - WP-49：`just tier3-registry zot`、`docker-registry`、`external`（external 指向 zot）。
+- WP-63：tier1 真实 create 过程中刷新页面，确认日志从断点继续；`pnpm --dir web test:e2e`。
 - WP-54：tier1 上 `/nodes/probe` 真实节点、`/addons` 安装后采集、`/packages/create-base` → push 到本地 zot。
 - WP-48：`just tier1-cilium`、`e2e/tier1/kube-ovn.sh`、`just tier1-cni-takeover cilium|kube-ovn`、`just tier1-offline-cni cilium`。
 - WP-47：`e2e/tier1/storage.sh local-path`、`nfs`（配置不变，断言 addons 任务与 StorageClass/PVC）。
