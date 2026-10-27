@@ -250,17 +250,11 @@ impl Cluster {
     pub fn validate(&self) -> Result<()> {
         let invalid = |hint: String| ConfigError::invalid(self.source.clone(), hint);
 
-        // Distribution-level rules (k3s's embedded containerd and its
-        // CNI constraints) moved into the `distro/k3s` component with
-        // WP-15; kurin-config keeps the structural checks below.
-        // calico/flannel/cilium images are all pinned in the offline bundle;
-        // kube-ovn's chart-rendered fleet is not (mirrors rewrite only).
-        if self.offline_dir.is_some() && matches!(self.cni, CniConfig::KubeOvn) {
-            return Err(invalid(
-                "network.cni = \"kube-ovn\" is not air-gap ready yet (its images are not part of the offline bundle); use calico, flannel or cilium for offline installs"
-                    .into(),
-            ));
-        }
+        // Component-owned rules (distributions, runtime, CNI, HA, the
+        // registries, storage) live in the `Component` implementations
+        // in `kurin-components` (WP-15/16); the CLI runs them right
+        // after this crate's load pipeline. kurin-config keeps the
+        // structural checks below.
         if let Some(d) = &self.offline_dir {
             if !d.is_dir() {
                 return Err(invalid(format!(
@@ -339,117 +333,18 @@ impl Cluster {
                 "at least one control-plane node is required".into(),
             ));
         }
-        let lb_nodes = self.nodes.iter().filter(|n| n.role == NodeRole::Lb).count();
-        if lb_nodes > 0 && self.ha_mode != HaMode::KurinLb {
-            return Err(invalid(
-                "role = \"lb\" nodes are only valid with ha.mode = \"kurin-lb\"".into(),
-            ));
-        }
-        // registry nodes: contract in docs/registry-contracts.md
-        let reg_nodes: Vec<&Node> = self
+        // Registry nodes without a configured kind have no enabled
+        // component to reject them — the structural rule stays here (the
+        // kind-specific gates live in the registry components).
+        let reg_nodes = self
             .nodes
             .iter()
             .filter(|n| n.role == NodeRole::Registry)
-            .collect();
-        match (reg_nodes.len(), self.registry_kind) {
-            (0, Some(_)) => {
-                return Err(invalid(
-                    "[registry] is configured but no node has role = \"registry\"".into(),
-                ))
-            }
-            (0, None) => {}
-            (n, None) => {
-                return Err(invalid(format!(
-                    "role = \"registry\" nodes need [registry] kind (docker-registry, zot or harbor); {n} node(s) declared"
-                )))
-            }
-            (n, Some(RegistryKind::Harbor)) if n > 1 => {
-                return Err(invalid(
-                    "[registry] kind = \"harbor\" supports exactly one registry node (no shared storage)"
-                        .into(),
-                ))
-            }
-            (_, Some(k)) => {
-                if self.registry_username.is_some() != self.registry_password.is_some() {
-                    return Err(invalid(
-                        "[registry] username and password must be set together".into(),
-                    ));
-                }
-                if k == RegistryKind::Harbor
-                    && self
-                        .registry_username
-                        .as_deref()
-                        .is_some_and(|u| u != "admin")
-                {
-                    return Err(invalid(
-                        "[registry] kind = \"harbor\" can only authenticate as \"admin\" (its single admin account)"
-                            .into(),
-                    ));
-                }
-            }
-        }
-        // storage gates: nfs needs a server + path.
-        if let Some(StorageKind::Nfs) = self.storage_kind {
-            if self.storage_server.is_none() || self.storage_path.is_none() {
-                return Err(invalid(
-                    "storage.kind = \"nfs\" requires storage.server and storage.path".into(),
-                ));
-            }
-        }
-        match self.ha_mode {
-            HaMode::KubeVip => match (cp, self.vip) {
-                (0, _) => unreachable!(),
-                (1, Some(_)) => {
-                    return Err(invalid(
-                        "ha.vip is set but only one control-plane node exists".into(),
-                    ))
-                }
-                (n, None) if n > 1 => {
-                    // Allowed: stacked control plane; the first master is
-                    // the API SPOF. The CLI warns on join.
-                }
-                (_, Some(vip))
-                    if self
-                        .nodes
-                        .iter()
-                        .any(|n| n.address == vip || n.internal_address == vip) =>
-                {
-                    return Err(invalid(
-                        "ha.vip must not collide with any node address".into(),
-                    ))
-                }
-                _ => {}
-            },
-            HaMode::ExternalEndpoint => {
-                if cp < 2 {
-                    return Err(invalid(
-                        "ha.mode = \"external-endpoint\" needs >= 2 control-plane nodes".into(),
-                    ));
-                }
-                if self.vip.is_none() {
-                    return Err(invalid(
-                        "ha.mode = \"external-endpoint\" requires ha.vip = <your LB address>"
-                            .into(),
-                    ));
-                }
-            }
-            HaMode::KurinLb => {
-                if cp < 2 {
-                    return Err(invalid(
-                        "ha.mode = \"kurin-lb\" needs >= 2 control-plane nodes".into(),
-                    ));
-                }
-                if lb_nodes == 0 {
-                    return Err(invalid(
-                        "ha.mode = \"kurin-lb\" requires at least one [nodes.*] entry with role = \"lb\"".into(),
-                    ));
-                }
-                if self.vip.is_none() {
-                    return Err(invalid(
-                        "ha.mode = \"kurin-lb\" requires ha.vip for the keepalived VIP".into(),
-                    ));
-                }
-            }
+            .count();
+        if reg_nodes > 0 && self.registry_kind.is_none() {
+            return Err(invalid(format!(
+                "role = \"registry\" nodes need [registry] kind (docker-registry, zot or harbor); {reg_nodes} node(s) declared"
+            )));
         }
         if self.service_cidr.contains(&self.pod_cidr.network())
             || self.pod_cidr.contains(&self.service_cidr.network())

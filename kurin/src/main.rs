@@ -126,6 +126,11 @@ enum Commands {
         #[arg(long)]
         with_kubernetes: Option<String>,
     },
+    /// The built-in component capability table (machine-readable). Hidden:
+    /// consumed by `just docs-matrix` and the Web UI, not part of the
+    /// stable CLI surface.
+    #[command(hide = true)]
+    Capabilities,
     /// Add nodes from an updated config to an existing cluster.
     Add(AddArgs),
     /// Delete a node or the whole cluster.
@@ -519,6 +524,7 @@ async fn run(cli: Cli) -> Result<()> {
             arch,
             with_kubernetes,
         } => build_artifacts(dir, arch, with_kubernetes).await,
+        Commands::Capabilities => capabilities_cmd(out).await,
         Commands::Certs { what } => match what {
             CertsWhat::Check { file, warn_days } => {
                 let cluster = load_config(&file)?;
@@ -835,6 +841,15 @@ fn resolve_cluster(explicit: Option<String>) -> Result<String> {
     }
 }
 
+/// `kurin capabilities --json`: the aggregated component capability
+/// table. Machine-facing input for `just docs-matrix` and the Web UI.
+async fn capabilities_cmd(_out: OutputOpts) -> Result<()> {
+    let json = serde_json::to_string_pretty(&kurin::components::capabilities_report())
+        .map_err(|e| miette::miette!("serialize capability table: {e}"))?;
+    println!("{json}");
+    Ok(())
+}
+
 async fn build_artifacts(
     out: PathBuf,
     arch: Option<String>,
@@ -873,8 +888,14 @@ async fn build_artifacts(
         };
         let store = kurin::artifact::ArtifactStore::open_default()?;
         std::fs::create_dir_all(&out).into_diagnostic()?;
-        for entry in manifest.artifacts() {
-            let spec = manifest.spec(&entry.name, arch)?;
+        // The bundle content is the component registry's aggregation (the
+        // offline image set is no longer hand-maintained); the manifest
+        // itself still resolves versions and pins.
+        for name in kurin::components::bundle_artifacts(arch)
+            .into_iter()
+            .map(|r| r.name)
+        {
+            let spec = manifest.spec(&name, arch)?;
             let dir = store.artifact_dir(&spec);
             std::fs::create_dir_all(&dir).into_diagnostic()?;
             let dest = store.fetch(&spec, zone).await?;

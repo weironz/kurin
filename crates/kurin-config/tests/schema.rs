@@ -69,15 +69,9 @@ fn version_gate_rejects_unknown_version() {
     );
 }
 
-#[test]
-fn vip_collides_with_node_address() {
-    let bad = format!("{GOOD}\n[ha]\nvip = \"10.99.0.11\"\n");
-    let err = parse_str(Path::new("x.toml"), &bad).unwrap_err();
-    let msg = err.to_string();
-    // vip on a single CP is already an error; collision covered too
-    assert!(msg.contains("invalid configuration"), "got: {msg}");
-}
-
+// The ha.vip, registry-kind and harbor rules moved to the ha/* and
+// registry/* components (WP-16); their tests live in
+// crates/kurin-components/src/component/{ha,registry}.rs now.
 #[test]
 fn missing_auth_fails_clearly() {
     let noauth = GOOD.replace(
@@ -165,26 +159,8 @@ fn registry_role_requires_registry_kind() {
     assert!(msg.contains("[registry] kind"), "got: {msg}");
 }
 
-#[test]
-fn registry_kind_without_registry_node_rejected() {
-    // [registry] set but no node claiming the role: hard error.
-    let bad = GOOD_WITH_REGISTRY.replace("role = \"registry\"", "role = \"worker\"");
-    let err = parse_str(Path::new("x.toml"), &bad).unwrap_err();
-    let msg = format!("{err:?}");
-    assert!(msg.contains("no node has role"), "got: {msg}");
-}
-
-#[test]
-fn harbor_rejects_multiple_registry_nodes() {
-    let bad = format!(
-        "{GOOD_WITH_REGISTRY}\n[nodes.reg2]\naddress = \"10.99.0.31\"\nrole = \"registry\"\n"
-    )
-    .replace("kind = \"zot\"", "kind = \"harbor\"");
-    let err = parse_str(Path::new("x.toml"), &bad).unwrap_err();
-    let msg = format!("{err:?}");
-    assert!(msg.contains("harbor"), "got: {msg}");
-}
-
+// registry-kind-without-node and the harbor single-node / admin rules
+// moved to the registry components (WP-16).
 #[test]
 fn registry_defaults_docker_registry_to_port_5000() {
     let cfg = parse_str(Path::new("x.toml"), GOOD_WITH_REGISTRY).unwrap();

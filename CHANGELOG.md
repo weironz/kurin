@@ -2,9 +2,21 @@
 
 All notable changes to kurin. Format follows Keep a Changelog; semver.
 
-## 0.4.0 - 2026-10-27 (unreleased)
-
 ### Added
+- `kurin capabilities --json` (hidden subcommand): the aggregated
+  component capability table (id, kind, distributions, archs, offline,
+  zones, ops) — the single source of truth behind `just docs-matrix` and
+  the upcoming Web capability table. All built-in components (ha, cni,
+  registry, storage, post join the WP-15 os/runtime/distro set) are now
+  registered in `kurin_components::registry()`; the offline bundle and
+  the bootstrap image import set are aggregated from each component's
+  `artifacts()` declaration instead of hand-maintained lists (parity
+  tests pin both to the previous content).
+- `just docs-matrix`: regenerates the `create cluster` table in
+  `docs/command-matrix.md` from `kurin capabilities --json`. The
+  support/reject cells are generated; the e2e column stays manually
+  maintained.
+
 - nelm-style readiness tracking (WP-18): `kurin-kube::track` waits for a set
   of objects until every one satisfies its readiness rule — Deployment,
   StatefulSet, DaemonSet, Job, Pod, PVC, CRD, APIService and Node have

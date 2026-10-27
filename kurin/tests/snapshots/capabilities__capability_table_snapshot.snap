@@ -1,0 +1,451 @@
+---
+source: kurin/tests/capabilities.rs
+expression: json
+---
+[
+  {
+    "id": "os/baseline",
+    "kind": "os",
+    "distributions": [
+      "k8s",
+      "k3s"
+    ],
+    "archs": [
+      "amd64",
+      "arm64"
+    ],
+    "offline": "bundle",
+    "zones": [
+      "global",
+      "cn"
+    ],
+    "ops": [
+      "create"
+    ]
+  },
+  {
+    "id": "os/sysctl",
+    "kind": "os",
+    "distributions": [
+      "k8s",
+      "k3s"
+    ],
+    "archs": [
+      "amd64",
+      "arm64"
+    ],
+    "offline": "bundle",
+    "zones": [
+      "global",
+      "cn"
+    ],
+    "ops": [
+      "create"
+    ]
+  },
+  {
+    "id": "os/kernel-deps",
+    "kind": "os",
+    "distributions": [
+      "k8s",
+      "k3s"
+    ],
+    "archs": [
+      "amd64",
+      "arm64"
+    ],
+    "offline": "bundle",
+    "zones": [
+      "global",
+      "cn"
+    ],
+    "ops": [
+      "create"
+    ]
+  },
+  {
+    "id": "runtime/containerd",
+    "kind": "runtime",
+    "distributions": [
+      "k8s"
+    ],
+    "archs": [
+      "amd64",
+      "arm64"
+    ],
+    "offline": "bundle",
+    "zones": [
+      "global",
+      "cn"
+    ],
+    "ops": [
+      "create"
+    ]
+  },
+  {
+    "id": "runtime/crio",
+    "kind": "runtime",
+    "distributions": [
+      "k8s"
+    ],
+    "archs": [
+      "amd64",
+      "arm64"
+    ],
+    "offline": "bundle",
+    "zones": [
+      "global",
+      "cn"
+    ],
+    "ops": [
+      "create"
+    ]
+  },
+  {
+    "id": "distro/kubeadm",
+    "kind": "distribution",
+    "distributions": [
+      "k8s"
+    ],
+    "archs": [
+      "amd64",
+      "arm64"
+    ],
+    "offline": "bundle",
+    "zones": [
+      "global",
+      "cn"
+    ],
+    "ops": [
+      "create"
+    ]
+  },
+  {
+    "id": "distro/k3s",
+    "kind": "distribution",
+    "distributions": [
+      "k3s"
+    ],
+    "archs": [
+      "amd64",
+      "arm64"
+    ],
+    "offline": "bundle",
+    "zones": [
+      "global",
+      "cn"
+    ],
+    "ops": [
+      "create"
+    ]
+  },
+  {
+    "id": "ha/kube-vip",
+    "kind": "ha",
+    "distributions": [
+      "k8s",
+      "k3s"
+    ],
+    "archs": [
+      "amd64",
+      "arm64"
+    ],
+    "offline": "online-only",
+    "zones": [
+      "global",
+      "cn"
+    ],
+    "ops": [
+      "create"
+    ]
+  },
+  {
+    "id": "ha/kurin-lb",
+    "kind": "ha",
+    "distributions": [
+      "k8s",
+      "k3s"
+    ],
+    "archs": [
+      "amd64",
+      "arm64"
+    ],
+    "offline": "online-only",
+    "zones": [
+      "global",
+      "cn"
+    ],
+    "ops": [
+      "create"
+    ]
+  },
+  {
+    "id": "ha/external",
+    "kind": "ha",
+    "distributions": [
+      "k8s",
+      "k3s"
+    ],
+    "archs": [
+      "amd64",
+      "arm64"
+    ],
+    "offline": "bundle",
+    "zones": [
+      "global",
+      "cn"
+    ],
+    "ops": [
+      "create"
+    ]
+  },
+  {
+    "id": "cni/calico",
+    "kind": "cni",
+    "distributions": [
+      "k8s"
+    ],
+    "archs": [
+      "amd64",
+      "arm64"
+    ],
+    "offline": "bundle",
+    "zones": [
+      "global",
+      "cn"
+    ],
+    "ops": [
+      "create"
+    ]
+  },
+  {
+    "id": "cni/flannel",
+    "kind": "cni",
+    "distributions": [
+      "k8s",
+      "k3s"
+    ],
+    "archs": [
+      "amd64",
+      "arm64"
+    ],
+    "offline": "bundle",
+    "zones": [
+      "global",
+      "cn"
+    ],
+    "ops": [
+      "create"
+    ]
+  },
+  {
+    "id": "cni/cilium",
+    "kind": "cni",
+    "distributions": [
+      "k8s"
+    ],
+    "archs": [
+      "amd64",
+      "arm64"
+    ],
+    "offline": "bundle",
+    "zones": [
+      "global",
+      "cn"
+    ],
+    "ops": [
+      "create"
+    ]
+  },
+  {
+    "id": "cni/kube-ovn",
+    "kind": "cni",
+    "distributions": [
+      "k8s"
+    ],
+    "archs": [
+      "amd64",
+      "arm64"
+    ],
+    "offline": "rejected",
+    "zones": [
+      "global",
+      "cn"
+    ],
+    "ops": [
+      "create"
+    ]
+  },
+  {
+    "id": "cni/none",
+    "kind": "cni",
+    "distributions": [
+      "k8s",
+      "k3s"
+    ],
+    "archs": [
+      "amd64",
+      "arm64"
+    ],
+    "offline": "bundle",
+    "zones": [
+      "global",
+      "cn"
+    ],
+    "ops": [
+      "create"
+    ]
+  },
+  {
+    "id": "registry/zot",
+    "kind": "registry",
+    "distributions": [
+      "k8s"
+    ],
+    "archs": [
+      "amd64",
+      "arm64"
+    ],
+    "offline": "bundle",
+    "zones": [
+      "global",
+      "cn"
+    ],
+    "ops": [
+      "create"
+    ]
+  },
+  {
+    "id": "registry/docker-registry",
+    "kind": "registry",
+    "distributions": [
+      "k8s"
+    ],
+    "archs": [
+      "amd64",
+      "arm64"
+    ],
+    "offline": "bundle",
+    "zones": [
+      "global",
+      "cn"
+    ],
+    "ops": [
+      "create"
+    ]
+  },
+  {
+    "id": "registry/harbor",
+    "kind": "registry",
+    "distributions": [
+      "k8s"
+    ],
+    "archs": [
+      "amd64",
+      "arm64"
+    ],
+    "offline": "bundle",
+    "zones": [
+      "global",
+      "cn"
+    ],
+    "ops": [
+      "create"
+    ]
+  },
+  {
+    "id": "storage/local-path",
+    "kind": "storage",
+    "distributions": [
+      "k8s"
+    ],
+    "archs": [
+      "amd64",
+      "arm64"
+    ],
+    "offline": "online-only",
+    "zones": [
+      "global",
+      "cn"
+    ],
+    "ops": [
+      "create"
+    ]
+  },
+  {
+    "id": "storage/nfs",
+    "kind": "storage",
+    "distributions": [
+      "k8s"
+    ],
+    "archs": [
+      "amd64",
+      "arm64"
+    ],
+    "offline": "online-only",
+    "zones": [
+      "global",
+      "cn"
+    ],
+    "ops": [
+      "create"
+    ]
+  },
+  {
+    "id": "post/kubeconfig",
+    "kind": "post",
+    "distributions": [
+      "k8s"
+    ],
+    "archs": [
+      "amd64",
+      "arm64"
+    ],
+    "offline": "bundle",
+    "zones": [
+      "global",
+      "cn"
+    ],
+    "ops": [
+      "create"
+    ]
+  },
+  {
+    "id": "post/summary",
+    "kind": "post",
+    "distributions": [
+      "k8s"
+    ],
+    "archs": [
+      "amd64",
+      "arm64"
+    ],
+    "offline": "bundle",
+    "zones": [
+      "global",
+      "cn"
+    ],
+    "ops": [
+      "create"
+    ]
+  },
+  {
+    "id": "post/labels",
+    "kind": "post",
+    "distributions": [
+      "k8s"
+    ],
+    "archs": [
+      "amd64",
+      "arm64"
+    ],
+    "offline": "bundle",
+    "zones": [
+      "global",
+      "cn"
+    ],
+    "ops": [
+      "create"
+    ]
+  }
+]

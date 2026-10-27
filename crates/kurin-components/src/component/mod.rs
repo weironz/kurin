@@ -4,8 +4,11 @@
 //! declaration, its artifact list and its plan contribution; the planner
 //! consults the explicit [`registry()`] — there is no dynamic loading.
 //!
-//! WP-15 migrates the os, runtime and distro components; ha, cni,
-//! registry, storage and post stay as planner functions until WP-16.
+//! WP-15 migrated the os, runtime and distro components; WP-16 adds ha,
+//! cni, registry, storage (an addon-layer candidate, see WP-47) and the
+//! post-install reporting. `capabilities()` aggregated over the registry
+//! is the single source of truth behind `kurin capabilities --json` and
+//! `just docs-matrix`.
 //!
 //! The frozen plan snapshots pin a node-major layout for the per-node
 //! tracks (all of one node's os and runtime tasks before the next
@@ -20,11 +23,17 @@ use kurin_config::{Cluster, ConfigError, Distribution};
 use kurin_core::arch::Arch;
 use kurin_core::plan::OpKind;
 use kurin_core::plan::PlanBuilder;
+use kurin_core::zone::Zone;
 use miette::Result;
 
+pub mod cni;
 pub mod distro;
+pub mod ha;
 pub mod os;
+pub mod post;
+pub mod registry;
 pub mod runtime;
+pub mod storage;
 
 /// The layer a built-in component belongs to (03 §3): pieces that run on
 /// the node itself, grouped by what they own.
@@ -36,27 +45,83 @@ pub enum ComponentKind {
     Runtime,
     /// Kubernetes distribution.
     Distribution,
-    /// CNI plugin (WP-16).
+    /// CNI plugin.
     Cni,
-    /// API endpoint HA (WP-16).
+    /// API endpoint HA.
     Ha,
-    /// Node-hosted image registry (WP-16).
+    /// Node-hosted image registry.
     Registry,
+    /// Dynamic storage provisioning (first-layer until WP-47 moves it
+    /// to the addon layer).
+    Storage,
+    /// Post-install reporting (kubeconfig, summary, labels).
+    Post,
     /// Declarative addon engine (WP-40+).
     AddonEngine,
 }
 
+impl ComponentKind {
+    /// Stable lowercase name — the key the capability table and the
+    /// docs-matrix generator group by.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ComponentKind::Os => "os",
+            ComponentKind::Runtime => "runtime",
+            ComponentKind::Distribution => "distribution",
+            ComponentKind::Cni => "cni",
+            ComponentKind::Ha => "ha",
+            ComponentKind::Registry => "registry",
+            ComponentKind::Storage => "storage",
+            ComponentKind::Post => "post",
+            ComponentKind::AddonEngine => "addon-engine",
+        }
+    }
+}
+
+/// The download zones every built-in component works in (the CN mirror
+/// table covers the whole manifest; `scripts/check-mirrors.sh` guards
+/// the parity).
+pub const ALL_ZONES: &[Zone] = &[Zone::Global, Zone::Cn];
+
+/// Offline-bundle readiness of a component — the three honest states the
+/// capability table distinguishes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Offline {
+    /// Everything the component needs ships in the offline bundle.
+    Bundle,
+    /// Validation rejects offline installs for this component (honest
+    /// failure instead of a half-installed cluster).
+    Rejected,
+    /// Not bundle-managed: a dependency (distro package, runtime image
+    /// pull) needs the network even on an offline install.
+    OnlineOnly,
+}
+
+impl Offline {
+    /// Stable lowercase name — the value `kurin capabilities --json`
+    /// emits and the docs-matrix generator maps to a cell.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Offline::Bundle => "bundle",
+            Offline::Rejected => "rejected",
+            Offline::OnlineOnly => "online-only",
+        }
+    }
+}
+
 /// What a component supports. Aggregated over the registry this becomes
 /// the single source of truth for config validation, the docs matrix and
-/// the Web capability table (WP-16).
+/// the Web capability table.
 #[derive(Debug, Clone)]
 pub struct Capabilities {
     /// Distributions the component runs on.
     pub distributions: &'static [Distribution],
     /// Architectures with pinned artifacts.
     pub archs: &'static [Arch],
-    /// Whether the component works from the offline bundle.
-    pub offline: bool,
+    /// Offline-bundle readiness (see [`Offline`]).
+    pub offline: Offline,
+    /// Download zones the component works in.
+    pub zones: &'static [Zone],
     /// Operations the component contributes tasks to.
     pub ops: &'static [OpKind],
 }
@@ -188,8 +253,10 @@ pub trait Component: Send + Sync {
 }
 
 /// The explicit registry of built-in components: no dynamic loading, and
-/// the item order is the consultation order (os track first, then the
-/// runtime, then the distribution that ties them together).
+/// the item order is the consultation order — the os track first, then
+/// the runtime, then the distribution that ties them together, then the
+/// kubeadm-track areas (ha, cni, registry, storage, post) in the order
+/// their `plan_*` functions used to run.
 pub struct ComponentRegistry {
     items: Vec<Arc<dyn Component>>,
 }
@@ -217,9 +284,161 @@ pub fn registry() -> &'static ComponentRegistry {
             Arc::new(runtime::Crio),
             Arc::new(distro::Kubeadm),
             Arc::new(distro::K3s),
+            Arc::new(ha::KubeVip),
+            Arc::new(ha::KurinLb),
+            Arc::new(ha::External),
+            Arc::new(cni::Calico),
+            Arc::new(cni::Flannel),
+            Arc::new(cni::Cilium),
+            Arc::new(cni::KubeOvn),
+            Arc::new(cni::NoneCni),
+            Arc::new(registry::Zot),
+            Arc::new(registry::DockerRegistry),
+            Arc::new(registry::Harbor),
+            Arc::new(storage::LocalPath),
+            Arc::new(storage::Nfs),
+            Arc::new(post::Kubeconfig),
+            Arc::new(post::Summary),
+            Arc::new(post::Labels),
         ],
     });
     &REGISTRY
+}
+
+/// One row of the capability table: what a built-in component supports.
+/// Aggregated over the registry this is what `kurin capabilities --json`
+/// emits, `just docs-matrix` renders and the Web UI will consume.
+#[derive(Debug, serde::Serialize)]
+pub struct CapabilityRow {
+    /// Component id (`<kind>/<name>`).
+    pub id: &'static str,
+    /// Layer the component belongs to.
+    pub kind: &'static str,
+    /// Distributions the component runs on.
+    pub distributions: Vec<String>,
+    /// Architectures with pinned artifacts.
+    pub archs: Vec<String>,
+    /// Offline-bundle readiness (`bundle` | `rejected` | `online-only`).
+    pub offline: &'static str,
+    /// Download zones the component works in.
+    pub zones: Vec<String>,
+    /// Operations the component contributes tasks to.
+    pub ops: Vec<String>,
+}
+
+/// The capability table, one row per registered component in
+/// consultation order.
+pub fn capabilities_report() -> Vec<CapabilityRow> {
+    registry()
+        .iter()
+        .map(|component| {
+            let caps = component.capabilities();
+            CapabilityRow {
+                id: component.id(),
+                kind: component.kind().as_str(),
+                distributions: caps
+                    .distributions
+                    .iter()
+                    .map(|d| match d {
+                        Distribution::K8s => "k8s".to_string(),
+                        Distribution::K3s => "k3s".to_string(),
+                    })
+                    .collect(),
+                archs: caps.archs.iter().map(|a| a.as_str().to_string()).collect(),
+                offline: caps.offline.as_str(),
+                zones: caps
+                    .zones
+                    .iter()
+                    .map(|z| match z {
+                        Zone::Global => "global".to_string(),
+                        Zone::Cn => "cn".to_string(),
+                    })
+                    .collect(),
+                ops: caps.ops.iter().map(|o| o.as_str().to_string()).collect(),
+            }
+        })
+        .collect()
+}
+
+/// The synthetic spec bundle aggregation resolves against: the bundle
+/// exists for air-gapped installs, so spec-conditional extras (the k3s
+/// air-gap tarball) are in.
+fn bundle_spec() -> Cluster {
+    Cluster {
+        name: "kurin-bundle".into(),
+        offline_dir: Some(std::path::PathBuf::new()),
+        zone: None,
+        distribution: Distribution::K8s,
+        ha_mode: kurin_config::HaMode::KubeVip,
+        runtime: kurin_config::RuntimeKind::Containerd,
+        kubernetes_version: kurin_artifact::version::KUBERNETES_VERSION
+            .parse()
+            .expect("the pinned kubernetes version parses"),
+        pod_cidr: "10.233.64.0/18"
+            .parse()
+            .expect("the pod cidr literal parses"),
+        service_cidr: "10.233.0.0/18"
+            .parse()
+            .expect("the service cidr literal parses"),
+        dns_domain: "cluster.local".into(),
+        cni: kurin_config::CniConfig::Calico,
+        vip: None,
+        nodes: Vec::new(),
+        registry_kind: None,
+        registry_port: 5000,
+        registry_username: None,
+        registry_password: None,
+        registry_data_dir: "/var/lib/kurin/registry".into(),
+        storage_kind: None,
+        storage_default: false,
+        storage_server: None,
+        storage_path: None,
+        source: String::new(),
+    }
+}
+
+/// The artifact set the offline bundle carries: the union of every
+/// registered component's artifacts (enabled or not — the bundle is
+/// cluster-agnostic) for one arch, de-duplicated by name. `kurin
+/// artifact` builds from this list instead of the raw manifest; the
+/// parity test in `kurin/tests/capabilities.rs` pins the two together.
+pub fn bundle_artifacts(arch: Arch) -> Vec<ArtifactRef> {
+    let spec = bundle_spec();
+    let mut out: Vec<ArtifactRef> = Vec::new();
+    for component in registry().iter() {
+        for r in component.artifacts(&spec, arch) {
+            if !out.iter().any(|e| e.name == r.name) {
+                out.push(r);
+            }
+        }
+    }
+    out
+}
+
+/// Image artifacts the bootstrap track must preload on every member:
+/// what kubelet pulls before any node is Ready — the runtime's sandbox
+/// image, the distribution's control-plane set and the selected CNI's
+/// fleet. Storage and post components apply after the cluster is up and
+/// pull on demand, so they stay out (matching the hand-maintained set
+/// this replaces). Both `images/import` and the registry seed resolve
+/// their payloads from this.
+pub fn bootstrap_images(cluster: &Cluster, arch: Arch) -> Vec<ArtifactRef> {
+    let mut out: Vec<ArtifactRef> = Vec::new();
+    for component in registry().iter() {
+        if !matches!(
+            component.kind(),
+            ComponentKind::Runtime | ComponentKind::Distribution | ComponentKind::Cni
+        ) || !component.enabled(cluster)
+        {
+            continue;
+        }
+        for r in component.artifacts(cluster, arch) {
+            if r.kind == ArtifactKind::Image && !out.iter().any(|e| e.name == r.name) {
+                out.push(r);
+            }
+        }
+    }
+    out
 }
 
 /// Run every enabled component's validation rules over `cluster`;
@@ -242,7 +461,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn registry_lists_the_seven_wp15_components_in_consultation_order() {
+    fn registry_lists_the_built_in_components_in_consultation_order() {
         let ids: Vec<&'static str> = registry().iter().map(|c| c.id()).collect();
         assert_eq!(
             ids,
@@ -254,13 +473,66 @@ mod tests {
                 "runtime/crio",
                 "distro/kubeadm",
                 "distro/k3s",
+                "ha/kube-vip",
+                "ha/kurin-lb",
+                "ha/external",
+                "cni/calico",
+                "cni/flannel",
+                "cni/cilium",
+                "cni/kube-ovn",
+                "cni/none",
+                "registry/zot",
+                "registry/docker-registry",
+                "registry/harbor",
+                "storage/local-path",
+                "storage/nfs",
+                "post/kubeconfig",
+                "post/summary",
+                "post/labels",
             ]
         );
         assert_eq!(
-            registry().get("runtime/crio").map(|c| c.id()),
-            Some("runtime/crio")
+            registry().get("cni/calico").map(|c| c.id()),
+            Some("cni/calico")
         );
-        assert!(registry().get("cni/calico").is_none(), "WP-16 territory");
+    }
+
+    #[test]
+    fn the_capability_report_covers_every_registered_component() {
+        let report = capabilities_report();
+        assert_eq!(report.len(), registry().iter().count());
+        assert_eq!(report[0].id, "os/baseline");
+        assert_eq!(report[0].kind, "os");
+        // The cni rows are the docs-matrix inputs: their distributions
+        // and offline readiness drive the generated cells.
+        let calico = report.iter().find(|r| r.id == "cni/calico").unwrap();
+        assert_eq!(calico.distributions, ["k8s"]);
+        assert_eq!(calico.offline, "bundle");
+        let kube_ovn = report.iter().find(|r| r.id == "cni/kube-ovn").unwrap();
+        assert_eq!(kube_ovn.offline, "rejected");
+        let kube_vip = report.iter().find(|r| r.id == "ha/kube-vip").unwrap();
+        assert_eq!(kube_vip.offline, "online-only");
+        assert_eq!(kube_vip.distributions, ["k8s", "k3s"]);
+        assert_eq!(kube_vip.zones, ["global", "cn"]);
+    }
+
+    #[test]
+    fn the_bundle_aggregation_reaches_every_manifest_entry() {
+        // The parity test in kurin/tests/capabilities.rs pins the exact
+        // set; here the cheap invariant: every manifest name is claimed
+        // by some component, so no payload can disappear from bundles.
+        let manifest = ArtifactManifest::embedded().expect("the embedded manifest parses");
+        let aggregated: std::collections::BTreeSet<String> = bundle_artifacts(Arch::Amd64)
+            .into_iter()
+            .map(|r| r.name)
+            .collect();
+        for entry in manifest.artifacts() {
+            assert!(
+                aggregated.contains(&entry.name),
+                "{} is not declared by any component",
+                entry.name
+            );
+        }
     }
 
     #[test]
@@ -284,6 +556,29 @@ mod tests {
             "etcd",
             "k3s",
             "k3s-airgap",
+            "cni-plugins",
+            "calico-operator",
+            "calico-node",
+            "calico-cni",
+            "calico-pod2daemon-flexvol",
+            "calico-kube-controllers",
+            "calico-typha",
+            "calico-csi",
+            "calico-node-driver-registrar",
+            "tigera-operator",
+            "flannel",
+            "flannel-image",
+            "flannel-cni-plugin",
+            "cilium-cli",
+            "cilium-image",
+            "cilium-operator-generic",
+            "cilium-envoy",
+            "zot",
+            "docker-registry",
+            "harbor-installer",
+            "local-path-provisioner",
+            "busybox",
+            "nfs-subdir-provisioner",
         ];
         for arch in [Arch::Amd64, Arch::Arm64] {
             for name in names {

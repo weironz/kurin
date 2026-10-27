@@ -6,7 +6,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use kurin_config::Node;
+use kurin_config::{Cluster, Node};
 use miette::Result;
 
 use kurin_artifact::artifact::{Arch, ArtifactKind, ArtifactManifest, ArtifactSpec, ArtifactStore};
@@ -16,49 +16,37 @@ use kurin_core::run::RunContext;
 pub struct ImagesImport {
     node: Node,
     arch: Arch,
-    cni: kurin_config::CniConfig,
+    /// Image artifact names to import — the bootstrap set the enabled
+    /// runtime/distribution/CNI components declare (see
+    /// [`crate::component::bootstrap_images`]; storage and post apply
+    /// after the cluster is up and pull on demand).
+    images: Vec<String>,
     /// Run sources: offline dir, manifest override and mirror zone.
     run: Arc<RunContext>,
 }
 
 impl ImagesImport {
-    pub fn new(
-        node: &Node,
-        arch: Arch,
-        cni: kurin_config::CniConfig,
-        run: &Arc<RunContext>,
-    ) -> Self {
+    pub fn new(node: &Node, arch: Arch, cluster: &Cluster, run: &Arc<RunContext>) -> Self {
         Self {
             node: node.clone(),
             arch,
-            cni,
+            images: crate::component::bootstrap_images(cluster, arch)
+                .into_iter()
+                .map(|r| r.name)
+                .collect(),
             run: Arc::clone(run),
         }
     }
 
-    /// Image entries to import: the control-plane set plus the selected
-    /// CNI's runtime images (offline bundles carry all of them; importing
-    /// only the selected CNI keeps per-node imports ~600 MB smaller).
+    /// Image entries to import: the bootstrap set the enabled components
+    /// declare — the control-plane fleet plus the selected CNI's runtime
+    /// images (offline bundles carry all of them; importing only the
+    /// selected set keeps per-node imports ~600 MB smaller).
     fn selected_images(&self, manifest: &ArtifactManifest) -> Vec<String> {
-        let cp = [
-            "pause",
-            "kube-apiserver",
-            "kube-controller-manager",
-            "kube-scheduler",
-            "kube-proxy",
-            "coredns",
-            "etcd",
-        ];
-        let mut names: Vec<String> = cp.iter().map(|s| s.to_string()).collect();
-        names.extend(
-            Self::cni_image_names(&self.cni)
-                .into_iter()
-                .map(String::from),
-        );
         manifest
             .artifacts()
             .iter()
-            .filter(|e| e.kind == ArtifactKind::Image && names.contains(&e.name))
+            .filter(|e| e.kind == ArtifactKind::Image && self.images.contains(&e.name))
             .map(|e| e.name.clone())
             .collect()
     }
@@ -66,31 +54,6 @@ impl ImagesImport {
     fn needs_import(&self) -> bool {
         self.run.sources.offline_dir.is_some()
             || self.run.sources.zone == kurin_core::zone::Zone::Cn
-    }
-
-    /// Image artifacts the *selected CNI* pulls at runtime: kubelet must
-    /// find them preloaded on offline (or mirror-zone) installs.
-    /// Public for the registry seed task (same selection, pushed upstream).
-    pub(crate) fn cni_image_names(cni: &kurin_config::CniConfig) -> Vec<&'static str> {
-        match cni {
-            kurin_config::CniConfig::Calico => vec![
-                // control-plane + calico fleet are part of the base set
-                // (kubeadm pulls its own; calico listed in the manifest).
-                "calico-node",
-                "calico-cni",
-                "calico-pod2daemon-flexvol",
-                "calico-kube-controllers",
-                "calico-typha",
-                "calico-csi",
-                "calico-node-driver-registrar",
-                "tigera-operator",
-            ],
-            kurin_config::CniConfig::Flannel => vec!["flannel-image", "flannel-cni-plugin"],
-            kurin_config::CniConfig::Cilium => {
-                vec!["cilium-image", "cilium-operator-generic", "cilium-envoy"]
-            }
-            kurin_config::CniConfig::KubeOvn | kurin_config::CniConfig::None => vec![],
-        }
     }
 
     /// Where this node's payload directory lives.

@@ -1,44 +1,14 @@
-//! cni/*: one plugin per file; plan dispatches from `cluster.cni`.
+//! cni/*: one plugin per file; the `cni/*` components in
+//! `crate::component` each construct their plugin's task.
 
 pub mod calico;
 pub mod cilium;
 pub mod flannel;
 pub mod kube_ovn;
 
-use std::sync::Arc;
-
 use kurin_config::Cluster;
-use kurin_core::facts::FactsTable;
-use miette::Result;
-
 use kurin_core::engine::Task;
-use kurin_core::run::RunContext;
-
-/// Task implementing the configured CNI. Plugin modules keep their pinned
-/// manifest handling internally; this is the only place that branches.
-/// Manifest-based plugins resolve their pinned payload for the arch of
-/// the control-plane node they apply through.
-pub fn plugin_task(
-    cluster: &Cluster,
-    facts: &FactsTable,
-    run: &Arc<RunContext>,
-) -> Result<Arc<dyn Task>> {
-    let cp_arch = match cluster.control_plane().next() {
-        Some(cp) => facts.arch(&cp.name)?,
-        None => kurin_core::arch::Arch::host()?,
-    };
-    match &cluster.cni {
-        kurin_config::CniConfig::Calico => {
-            Ok(Arc::new(calico::CalicoOperator::new(cluster, cp_arch, run)))
-        }
-        kurin_config::CniConfig::Flannel => {
-            Ok(Arc::new(flannel::Flannel::new(cluster, cp_arch, run)))
-        }
-        kurin_config::CniConfig::Cilium => cilium::plugin(cluster, run),
-        kurin_config::CniConfig::KubeOvn => Ok(Arc::new(kube_ovn::KubeOvn::new(cluster, run))),
-        kurin_config::CniConfig::None => Ok(Arc::new(NoCni::new(cluster))),
-    }
-}
+use miette::Result;
 
 /// `cni = "none"`: the operator installs their own plugin. No task work.
 pub struct NoCni {

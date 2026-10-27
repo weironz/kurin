@@ -7,7 +7,9 @@ use kurin_core::arch::Arch;
 use kurin_core::plan::{OpKind, PlanBuilder};
 use miette::Result;
 
-use super::{tracks, ArtifactRef, Capabilities, Component, ComponentKind, Diagnostics};
+use super::{
+    tracks, ArtifactRef, Capabilities, Component, ComponentKind, Diagnostics, Offline, ALL_ZONES,
+};
 use crate::tasks;
 
 /// `runtime/containerd`: the standalone containerd install — config and
@@ -37,7 +39,8 @@ impl Component for Containerd {
         Capabilities {
             distributions: &[Distribution::K8s],
             archs: &[Arch::Amd64, Arch::Arm64],
-            offline: true,
+            offline: Offline::Bundle,
+            zones: ALL_ZONES,
             ops: &[OpKind::Create],
         }
     }
@@ -99,7 +102,8 @@ impl Component for Crio {
         Capabilities {
             distributions: &[Distribution::K8s],
             archs: &[Arch::Amd64, Arch::Arm64],
-            offline: true,
+            offline: Offline::Bundle,
+            zones: ALL_ZONES,
             ops: &[OpKind::Create],
         }
     }

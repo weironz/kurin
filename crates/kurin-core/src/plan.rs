@@ -57,6 +57,25 @@ pub enum OpKind {
     EtcdRestore,
 }
 
+impl OpKind {
+    /// Stable lowercase name — the wire value of the capability table
+    /// (`kurin capabilities --json`) and the docs-matrix generator.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            OpKind::Create => "create",
+            OpKind::AddNodes => "add-nodes",
+            OpKind::DeleteNode => "delete-node",
+            OpKind::DeleteCluster => "delete-cluster",
+            OpKind::Upgrade => "upgrade",
+            OpKind::CertsRenew => "certs-renew",
+            OpKind::AddonInstall => "addon-install",
+            OpKind::AddonRemove => "addon-remove",
+            OpKind::EtcdBackup => "etcd-backup",
+            OpKind::EtcdRestore => "etcd-restore",
+        }
+    }
+}
+
 const CREATE_PHASES: &[Phase] = &[
     Phase::new("discover", "discover"),
     Phase::new("preflight", "preflight"),

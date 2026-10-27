@@ -7,7 +7,9 @@ use kurin_core::engine::Stage;
 use kurin_core::plan::{OpKind, PlanBuilder};
 use miette::Result;
 
-use super::{tracks, ArtifactRef, Capabilities, Component, ComponentKind, Diagnostics};
+use super::{
+    tracks, ArtifactRef, Capabilities, Component, ComponentKind, Diagnostics, Offline, ALL_ZONES,
+};
 use crate::tasks;
 use std::sync::Arc;
 
@@ -38,7 +40,8 @@ impl Component for Kubeadm {
         Capabilities {
             distributions: &[Distribution::K8s],
             archs: &[Arch::Amd64, Arch::Arm64],
-            offline: true,
+            offline: Offline::Bundle,
+            zones: ALL_ZONES,
             ops: &[OpKind::Create],
         }
     }
@@ -90,7 +93,7 @@ impl Component for Kubeadm {
                 Arc::new(tasks::images::ImagesImport::new(
                     node,
                     arch,
-                    b.cluster().cni.clone(),
+                    b.cluster(),
                     b.run(),
                 )),
             );
@@ -174,7 +177,8 @@ impl Component for K3s {
         Capabilities {
             distributions: &[Distribution::K3s],
             archs: &[Arch::Amd64, Arch::Arm64],
-            offline: true,
+            offline: Offline::Bundle,
+            zones: ALL_ZONES,
             ops: &[OpKind::Create],
         }
     }

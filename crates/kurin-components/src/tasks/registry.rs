@@ -704,7 +704,10 @@ pub struct RegistrySeed {
     username: String,
     password: String,
     arch: Arch,
-    cni: kurin_config::CniConfig,
+    /// Image artifact names to push — the bootstrap set the enabled
+    /// runtime/distribution/CNI components declare (same selection as
+    /// `images/import`).
+    images: Vec<String>,
     /// Run sources: offline dir, manifest override and mirror zone.
     run: Arc<RunContext>,
 }
@@ -741,36 +744,24 @@ impl RegistrySeed {
                 .clone()
                 .unwrap_or_else(|| "kurin-registry".into()),
             arch,
-            cni: cluster.cni.clone(),
+            images: crate::component::bootstrap_images(cluster, arch)
+                .into_iter()
+                .map(|r| r.name)
+                .collect(),
             run: Arc::clone(run),
         })
     }
 
-    /// The images to push: same selection as `images/import` (bundle
-    /// content for this CNI), always from the offline bundle when present,
-    /// else from the local artifact cache.
+    /// The images to push: same selection as `images/import` (the
+    /// enabled components' bootstrap set), always from the offline
+    /// bundle when present, else from the local artifact cache.
     /// Cheap view: image names + repo/tag only (no archives built) — used
     /// by check()'s drift signature.
     async fn seed_names(&self) -> Result<Vec<(String, String)>> {
         let manifest = kurin_artifact::artifact::install_manifest(&self.run.sources)?;
-        let cp = [
-            "pause",
-            "kube-apiserver",
-            "kube-controller-manager",
-            "kube-scheduler",
-            "kube-proxy",
-            "coredns",
-            "etcd",
-        ];
-        let mut names: Vec<String> = cp.iter().map(|s| s.to_string()).collect();
-        names.extend(
-            crate::tasks::images::ImagesImport::cni_image_names(&self.cni)
-                .into_iter()
-                .map(String::from),
-        );
         let mut out = Vec::new();
-        for name in names {
-            let spec = manifest.spec(&name, self.arch)?;
+        for name in &self.images {
+            let spec = manifest.spec(name, self.arch)?;
             // Upstream reference "host/org/repo:tag"; the apply side keeps
             // only the repo path after the first '/'.
             let reference =

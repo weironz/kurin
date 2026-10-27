@@ -1,19 +1,22 @@
 # 命令 × 形态支持矩阵
 
-每一列是一个配置维度。`✅` = 真机 e2e 验证过；`❌ 拒绝` = 配置/命令校验时明确报错（诚实失败，不静默腐蚀）。
+每一列是一个配置维度。`✅` = 真机 e2e 验证过；`❌ 拒绝` = 配置/命令校验时明确报错（诚实失败，不静默腐蚀）。「create cluster」表由 `just docs-matrix` 从 `kurin capabilities --json`（组件注册表聚合）生成：支持/拒绝列为生成器所有，e2e 验证列手工维护。
 
 ## create cluster
-
-| 形态 | containerd | crio | k3s | 离线 | zone=cn |
-|---|---|---|---|---|---|
-| Calico | ✅ | ✅ | —（k3s 默认 canal）| ✅ | ✅ |
-| Flannel | ✅ | ✅ | ✅ | ❌ 拒绝 | ✅ |
-| Cilium | ✅ | ✅ | ✅ | ❌ 拒绝 | ✅ |
-| Kube-OVN | ✅ | ✅ | ✅ | ❌ 拒绝 | ✅ |
-| kube-vip HA | ✅ | ✅ | ✅ | ✅ | ✅ |
-| kurin-lb HA | ✅ | ✅ | — | — | ✅ |
-| external-endpoint HA | ✅ | ✅ | ❌ 拒绝（未验证组合）| — | — |
-| arm64 | ✅ | — | ✅ | ✅ | ✅ |
+<!-- docs-matrix:begin -->
+<!-- 由 `just docs-matrix` 生成：支持/拒绝列来自 kurin capabilities --json
+     （单一事实来源）；e2e 验证列手工维护，生成器只透传。 -->
+| 组件 | containerd | crio | k3s | 离线 | zone=cn | e2e 验证 |
+|---|---|---|---|---|---|---|
+| `ha/kube-vip` | ✅ | ✅ | ✅ | — | ✅ | ✅ |
+| `ha/kurin-lb` | — | — | ✅ | — | ✅ | ✅ |
+| `ha/external` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `cni/calico` | ✅ | ✅ | — | ✅ | ✅ | ✅ |
+| `cni/flannel` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `cni/cilium` | ✅ | ✅ | — | ✅ | ✅ | ✅ |
+| `cni/kube-ovn` | ✅ | ✅ | — | ❌ 拒绝 | ✅ | ✅ |
+| `cni/none` | ✅ | ✅ | ✅ | ✅ | ✅ | — |
+<!-- docs-matrix:end -->
 
 ## add nodes / delete node / delete cluster
 
@@ -110,4 +113,4 @@ sha256）。计划变化时拒绝续跑并提示去掉 `--resume`；v1 状态文
 - 所有 kubectl/k3s 命令经 session 下发到锚点节点执行；控制机（跑 kurin 的机器）无需安装任何集群组件。
 - `❌ 拒绝` 是**校验期**的明确报错，不是运行到一半失败。
 - kurin-lb / external-endpoint 与 distribution 正交；`role = "lb"` 节点只在这两种模式下出现。
-- 离线安装仅对 Calico 完整（其它 CNI 的镜像不在 bundle 内，校验期拒绝）。
+- 离线安装对 Calico / Flannel / Cilium 完整（镜像都在 bundle 内，由组件注册表 `artifacts()` 聚合）；kube-ovn 的 chart 渲染镜像不在 bundle 内，校验期拒绝。

@@ -24,13 +24,16 @@ clippy:
 test:
     cargo test --workspace
 
-# review pending insta snapshots (needs cargo-insta: `cargo install cargo-insta`)
-snapshots-review:
-    cargo insta review
 
+# regenerate the `create cluster` table in docs/command-matrix.md from
+# `kurin capabilities --json` (the e2e column stays hand-maintained)
+docs-matrix:
+    cargo build -q -p kurin
+    python3 scripts/docs-matrix.py
+
+# build the CLI binary
 build:
     cargo build --release
-
 # ── release (musl static) ─────────────────────────────────────────────
 
 # musl static binaries for both arch into release-dist/

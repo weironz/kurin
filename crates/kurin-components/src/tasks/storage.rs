@@ -523,7 +523,10 @@ password = "x"
 address = "192.168.10.11"
 role = "control-plane"
 "#;
-        let err = kurin_config::parse_str(std::path::Path::new("t.toml"), toml).unwrap_err();
+        let cluster =
+            kurin_config::parse_str(std::path::Path::new("t.toml"), toml).expect("cluster parses");
+        // The nfs gate moved to the storage/nfs component (WP-16).
+        let err = crate::component::validate(&cluster).unwrap_err();
         assert!(format!("{err:?}").contains("storage.server"));
     }
 }

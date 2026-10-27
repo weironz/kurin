@@ -8,7 +8,9 @@ use kurin_core::arch::Arch;
 use kurin_core::plan::{OpKind, PlanBuilder};
 use miette::Result;
 
-use super::{tracks, ArtifactRef, Capabilities, Component, ComponentKind, Diagnostics};
+use super::{
+    tracks, ArtifactRef, Capabilities, Component, ComponentKind, Diagnostics, Offline, ALL_ZONES,
+};
 use crate::tasks;
 
 /// `os/baseline`: the entry of the per-node track — preflight probes, the
@@ -40,15 +42,20 @@ impl Component for OsBaseline {
         Capabilities {
             distributions: &[Distribution::K8s, Distribution::K3s],
             archs: &[Arch::Amd64, Arch::Arm64],
-            offline: true,
+            offline: Offline::Bundle,
+            zones: ALL_ZONES,
             ops: &[OpKind::Create],
         }
     }
 
-    fn artifacts(&self, _spec: &Cluster, _arch: Arch) -> Vec<ArtifactRef> {
-        // The baseline converges with OS tooling only; kernel deps come
-        // from the distribution package layer, not the version table.
-        Vec::new()
+    fn artifacts(&self, _spec: &Cluster, arch: Arch) -> Vec<ArtifactRef> {
+        // The baseline's artifact sweep installs the pinned
+        // /opt/cni/bin plugin toolset on every node (flannel's CNI
+        // config and operator-provided plugins consume it; calico,
+        // cilium and kube-ovn ship their own binaries). Kernel deps
+        // come from the distribution package layer, not the version
+        // table.
+        vec![ArtifactRef::of("cni-plugins", arch)]
     }
 
     fn plan(&self, b: &mut PlanBuilder<'_>) -> Result<()> {
@@ -126,7 +133,8 @@ impl Component for Sysctl {
         Capabilities {
             distributions: &[Distribution::K8s, Distribution::K3s],
             archs: &[Arch::Amd64, Arch::Arm64],
-            offline: true,
+            offline: Offline::Bundle,
+            zones: ALL_ZONES,
             ops: &[OpKind::Create],
         }
     }
@@ -176,7 +184,8 @@ impl Component for KernelDeps {
         Capabilities {
             distributions: &[Distribution::K8s, Distribution::K3s],
             archs: &[Arch::Amd64, Arch::Arm64],
-            offline: true,
+            offline: Offline::Bundle,
+            zones: ALL_ZONES,
             ops: &[OpKind::Create],
         }
     }

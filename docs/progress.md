@@ -17,6 +17,29 @@
   零失败、os-baseline 执行、pod 全健康、selinux=Permissive / swap=off /
   firewalld=inactive）。镜像下载：官方 CDN ~1MB/s，新加坡 mirror 23MB/s。
 
+## WP-16：Component trait（二）与能力表（2026-10-28）
+
+- **全部内置组件迁移完成**：ha/kube-vip、ha/kurin-lb、ha/external、cni/*（calico、
+  flannel、cilium、kube-ovn、none）、registry/*（zot、docker-registry、harbor）、
+  storage/*（local-path、nfs；WP-47 再迁 addon 层）、post/*（kubeconfig、summary、
+  labels）共 16 个新组件注册进 `kurin_components::registry()`（连同 WP-15 的 7 个共
+  23 个）。`plan.rs` 的 `plan_<area>` 函数全部删除，构建只剩"遍历 enabled 组件调
+  plan()"。
+- **能力表成为单一事实来源**：新增隐藏子命令 `kurin capabilities --json`（输出
+  组件 id、kind、distributions、archs、offline、zones、ops，快照测试锁定）；
+  `just docs-matrix` 由 `scripts/docs-matrix.py` 从它生成 command-matrix.md 的
+  create cluster 表（支持/拒绝列归生成器，e2e 列手工维护）。
+- **制品聚合**：`artifacts(spec, arch)` 逐组件声明；`kurin artifact` 改为迭代
+  `bundle_artifacts()`（注册表聚合），离线镜像集合不再手工维护；
+  `images/import` 与 registry seed 的镜像集合也改由 `bootstrap_images()` 聚合
+  （runtime + distro + 所选 CNI），对照测试锁定与原手写清单完全一致。
+- **校验迁移**：kube-vip/kurin-lb/external 的 HA 规则、registry 的节点/凭据/harbor
+  规则、storage 的 nfs 规则、kube-ovn 的离线拒绝规则全部搬进各组件 `validate()`
+  （错误文本逐字保持，kurin-config 只留纯结构校验 + "registry 节点无 kind"这一
+  条没有启用组件可归属的结构规则）。
+- 快照零变化；`just check` 通过。需人工 e2e：`just tier1-offline`、`just
+  tier3-external-lb`。
+
 ## 对标 kubekey：precheck / registry / storage（2026-10-27）
 
 - **`kurin precheck`**（gap #1）：只读主机体检，单次 SSH 往返，per-check
