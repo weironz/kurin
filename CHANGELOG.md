@@ -47,6 +47,20 @@ All notable changes to kurin. Format follows Keep a Changelog; semver.
 - The internal model is now `ClusterSpec` (ADR-15): component-owned
   sections (`registry`, `storage`, `cni`) and artifact sources
   (`packages`) are sub-structs; `Cluster`/`Node` remain type aliases.
+- `kurin serve` (WP-50, built with `--features ui` — the release binaries
+  include it): the `kurin-server` crate skeleton — axum router behind the
+  UI §6.10 guards (Host allowlist incl. HTTP/2 `:authority`, JSON-only
+  mutations, session cookies `HttpOnly; SameSite=Strict`, drain → 503),
+  `GET /healthz`, `POST|GET|DELETE /api/v1/session` (token → cookie
+  exchange, logout) and a placeholder `GET /api/v1/meta` returning the
+  version. First start writes the access token to
+  `<data>/token` (0600, default `~/.local/share/kurin`) and prints the
+  `#token=` login link exactly once; `--rotate-token` replaces it and
+  invalidates every session. Non-loopback listeners require
+  `--tls-cert/--tls-key` (rustls) or an explicit `--allow-insecure-http`;
+  extra hosts go through `--public-host`. Request logging goes to `tracing`
+  under the `kurin_server::request` target, separate from operation logs.
+  New CLI surface only — default builds are unchanged.
 - The cluster records what kurin installed in
   `kube-system/ConfigMap kurin-state` (WP-19, ADR-09): `kurin-version`,
   `op-id`, `op-kind`, `finished-at`, the canonical **redacted** `spec.toml`,

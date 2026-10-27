@@ -1,5 +1,6 @@
 //! `kurin` binary: argv parsing only. Every operation lives in `kurin-ops`.
 
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -138,6 +139,8 @@ enum Commands {
     Delete(DeleteArgs),
     /// Read the JSONL operation logs written by every operation.
     Logs(LogsArgs),
+    /// Run the web UI server (built with `--features ui`).
+    Serve(ServeArgs),
 }
 
 #[derive(Subcommand)]
@@ -342,6 +345,35 @@ struct LogsArgs {
     /// `-vv` selects debug).
     #[arg(long)]
     level: Option<String>,
+}
+
+/// `kurin serve` options (UI architecture §3.1 / §6.10).
+#[derive(clap::Args)]
+struct ServeArgs {
+    /// Listen address (default: 127.0.0.1:7080; non-loopback requires TLS
+    /// or --allow-insecure-http).
+    #[arg(long, value_name = "ADDR", default_value = "127.0.0.1:7080")]
+    listen: SocketAddr,
+    /// Data directory holding the access token (and, later, the database);
+    /// default: ~/.local/share/kurin.
+    #[arg(long, value_name = "DIR")]
+    data_dir: Option<PathBuf>,
+    /// Extra allowed Host header (repeatable), e.g. kurin.example.com:7080.
+    #[arg(long = "public-host", value_name = "HOST")]
+    public_host: Vec<String>,
+    /// TLS certificate chain (PEM); requires --tls-key.
+    #[arg(long, requires = "tls_key", value_name = "FILE")]
+    tls_cert: Option<PathBuf>,
+    /// TLS private key (PEM); requires --tls-cert.
+    #[arg(long, requires = "tls_cert", value_name = "FILE")]
+    tls_key: Option<PathBuf>,
+    /// Serve plain HTTP on a non-loopback address (insecure; prints a
+    /// warning).
+    #[arg(long)]
+    allow_insecure_http: bool,
+    /// Generate a fresh access token, invalidating every session.
+    #[arg(long)]
+    rotate_token: bool,
 }
 
 #[tokio::main(flavor = "multi_thread")]
@@ -607,6 +639,42 @@ async fn run(cli: Cli) -> Result<()> {
                 .await
             }
         },
+        Commands::Serve(args) => serve(args).await,
+    }
+}
+
+/// Wire the parsed `serve` arguments into `kurin_server` (UI §3.1). Built
+/// without the `ui` feature the subcommand explains itself instead.
+async fn serve(args: ServeArgs) -> Result<()> {
+    #[cfg(feature = "ui")]
+    {
+        let options = kurin_server::ServeOptions {
+            listen: args.listen,
+            data_dir: args.data_dir.unwrap_or_else(kurin_server::default_data_dir),
+            public_hosts: args.public_host,
+            tls: match (args.tls_cert, args.tls_key) {
+                (Some(cert), Some(key)) => Some(kurin_server::TlsPaths { cert, key }),
+                (cert, key) => {
+                    debug_assert!(
+                        cert.is_none() && key.is_none(),
+                        "clap `requires` pairs them"
+                    );
+                    None
+                }
+            },
+            allow_insecure_http: args.allow_insecure_http,
+            rotate_token: args.rotate_token,
+        };
+        kurin_server::serve(options)
+            .await
+            .map_err(|e| miette::miette!("{e}"))
+    }
+    #[cfg(not(feature = "ui"))]
+    {
+        let _ = args;
+        Err(miette::miette!(
+            "`serve` needs a build with --features ui (the release binaries include it)"
+        ))
     }
 }
 

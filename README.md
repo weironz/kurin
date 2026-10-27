@@ -24,9 +24,20 @@ real end-to-end tests ([`docs/progress.md`](docs/progress.md)).
 - `create cluster` · `create config` · `add nodes` · `delete node` · `delete cluster`
   · `package create base|inspect` · `artifact` (deprecated alias) · `upgrade`
   · `certs check|renew` · `status`
+  · `artifact` · `upgrade` · `certs check|renew` · `status`
+- `serve` — the web UI backend (`--features ui` build; the release binaries
+  include it): loopback by default, one-time token login, TLS optional
 - `--dry-run` plan preview (fully offline); `--dry-run --check` live drift annotation
 
 ## Design
+
+- **`kurin serve` (web UI).** Same binary, built with `--features ui`: axum
+  skeleton, token→cookie auth and the security baseline from the
+  [UI architecture](docs/ui/ui-architecture-final.md) §6.10 — loopback-only
+  by default, `Host` allowlist, `application/json`-only mutations,
+  `SameSite=Strict` session cookies, TLS via rustls. The first start prints
+  the login link once and stores the token in `~/.local/share/kurin/token`
+  (0600); `--rotate-token` replaces it and logs everyone out.
 
 - **Planner / Executor split.** Planning is pure and offline; the executor is the
   only thing that opens SSH sessions. `plan` and `apply` cannot drift.

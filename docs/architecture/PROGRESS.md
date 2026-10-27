@@ -54,7 +54,7 @@
 | WP-47 存储迁移到 addon | todo | | | `e2e/tier1/storage.sh` | |
 | WP-48 CNI 改用 chart | todo | | | `just tier1-cilium`、kube-ovn、接管场景 | |
 | WP-49 registry zot 默认与 external | todo | | | `e2e/tier3/registry.sh` | |
-| WP-50 kurin-server 骨架与认证 | todo | | | | |
+| WP-50 kurin-server 骨架与认证 | done | 见提交 | 无（纯新增 crate 与 `serve` 子命令） | 无（仅回环监听自测） | axum 0.8 + axum-server(rustls/ring)；错误信封 `camelCase` 对齐 WP-60 前端契约；403 `forbidden-host` 为 §6.10 Host 规则新增状态码 |
 | WP-51 Store 与配置修订 | todo | | | | |
 | WP-52 OpRunner/事件持久化/SSE | todo | | | `scripts/api-smoke.sh` | |
 | WP-53 Collector | todo | | | 3 集群总览 | |
@@ -79,9 +79,11 @@
 
 ## 偏离记录
 
+- WP-50：Host 拒绝使用 403 `forbidden-host`（UI §7 状态码清单之外，语义上 400=语法不合适）；错误信封为顶层 `{code, message, diagnostics?}` 且 DTO 字段 `camelCase`（`expiresAt`/`componentVersions`），对齐已交付的 WP-60 前端契约而非 §7 的「snake_case」总则，WP-55 ts-rs 生成时以此为基准；默认 Host 白名单额外含 `[::1]:<port>`；`GET /api/v1/session`（会话自省）与 `GET /api/v1/healthz`（与 `/healthz` 等价）按 WP-60 mock 契约补齐；host 检查同时读 HTTP/2 `:authority`（TLS 下 curl/浏览器走 h2，无 Host 头）；会话 TTL 定为 24h（文档未规定）。新依赖：axum/axum-server/rand 纯 Rust，rustls(ring) 已在树内（russh/kube），musl/zig 交叉编译不受影响。
 - WP-00：`ScriptedSession` 在 `(exit, stdout, stderr)` 之外增加了「命令已执行但传输中断」的应答与副作用文件，用于覆盖 `Outcome::Unknown → 重新探测` 路径；`cli_output` 快照对任务耗时与阶段内行序做归一化（并发完成顺序不在 v1 契约内）。
 - WP-15：为保持快照的 per-node 任务布局，`PlanBuilder` 增加 `add_track`（phase 内按 track/node/调用序重排）；k3s 校验规则移入 `distro/k3s`，错误文本逐字节一致。
 - WP-16：`storage/*` 标为 online-only（镜像在 bundle 但 bootstrap 不预载，WP-47 接管）；`ha/kube-vip` 镜像 pin 在版本表而非 manifest，标 online-only；`capabilities` 为隐藏命令且恒出 JSON。
+- WP-50：Host 拒绝用 403 `forbidden-host`（§7 清单外）；错误/DTO 采用顶层 `{code,message,diagnostics?}` + camelCase（对齐 WP-60 前端）；默认白名单含 `[::1]`；会话 TTL 24h；新增 `GET /session` 与 `GET /api/v1/healthz`。
 - WP-32：`kurin artifact` 现在产出 OCI layout（旧目录树由 WP-34 兼容读取）；镜像按所选架构携带子 manifest，上游 index 原样保留；修复 busybox URL 模板（Docker Hub tag 无 `v` 前缀）。
 - WP-21：未知 addon 名默认拒绝，带 `source` 的外部 addon 名放行；v1alpha2 保留 `[artifacts]` 并新增 `[packages]`；新增 `toml_edit`（纯 Rust）。
 - WP-20：保留 `pub type Cluster = ClusterSpec` 别名以减少调用点改动；秘密在 `kurin-ops::prepare` 解析一次；`--dry-run` 不读秘密文件（文档已写明）。
@@ -111,6 +113,7 @@
 
 - WP-15：纯重构，快照零变化；回归 `just tier1`/`tier2` 即可。
 - WP-16：`just tier1-offline`、`just tier3-external-lb`。
+- WP-50：`kurin serve` 回环冒烟（一次性登录链接、`/session`、401/403/400、TLS h2）；`cargo clippy -p kurin --features ui`。
 - WP-32：`kurin package create base --arch amd64,arm64 -o file:///tmp/base.tar.zst`，再 `kurin package inspect file:///tmp/base.tar.zst`（真实网络下载约 10 分钟；本地假上游测试已覆盖校验路径）。
 - WP-21：`kurin config migrate` 后 `create cluster --dry-run`；全部 v1alpha1 样例迁移快照与等价断言已自动覆盖。
 - WP-20：tier1 用 `{ env = ... }` 与 `{ file = ... }`（0600）提供 SSH 密码；`--dry-run` 不读取秘密文件。

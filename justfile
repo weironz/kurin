@@ -10,7 +10,7 @@ default:
 # ── checks ────────────────────────────────────────────────────────────
 
 # everything CI's fast job runs (fmt + clippy + unit tests)
-check: fmt-check clippy test
+check: fmt-check clippy clippy-ui test
 
 fmt:
     cargo fmt --all
@@ -20,6 +20,10 @@ fmt-check:
 
 clippy:
     cargo clippy --workspace --all-targets -- -D warnings
+
+# the `serve`/kurin-server surface behind `--features ui` (UI doc §4.2)
+clippy-ui:
+    cargo clippy -p kurin --features ui -- -D warnings
 
 test:
     cargo test --workspace

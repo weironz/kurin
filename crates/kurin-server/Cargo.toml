@@ -7,3 +7,20 @@ repository.workspace = true
 description = "Kurin web service"
 
 [dependencies]
+axum.workspace = true
+axum-server.workspace = true
+rand.workspace = true
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+time = { workspace = true, features = ["formatting"] }
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber = { workspace = true, features = ["fmt"] }
+
+[dev-dependencies]
+serde_json.workspace = true
+tempfile.workspace = true
+tokio.workspace = true
+tower = { version = "0.5", features = ["util"] }
