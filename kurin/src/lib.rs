@@ -49,7 +49,9 @@ pub mod lock {
 }
 pub mod plan {
     pub use kurin_components::plan::{build, build_with_pool};
-    pub use kurin_core::plan::{Plan, StageNode};
+    pub use kurin_core::plan::{
+        NodeSel, OpKind, Phase, PhaseHandle, Plan, PlanBuilder, StageNode, TaskIdx,
+    };
 }
 pub mod precheck {
     pub use kurin_components::precheck::*;

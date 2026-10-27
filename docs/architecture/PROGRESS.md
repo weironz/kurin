@@ -17,7 +17,7 @@
 | WP-07 RunContext 与 Blackboard | done | 见提交 | 无 | `just tier2`、`just tier1-zone`、`just tier1-k3s` | 删除 artifact OnceLock；join 材料/k3s token 走 Blackboard（0600） |
 | WP-08 SSH 安全与端口转发 | todo | | | `just tier0 tier0-test` | |
 | WP-09 集群锁与 RunState v2 | done | 见提交 | 无 | 双终端 `add nodes` 抢锁 | 标准库 `File::try_lock`；RunState v2 兼容 v1；`--resume` 校验计划指纹 |
-| WP-10 PlanBuilder / NodeSel | todo | | | | |
+| WP-10 PlanBuilder / NodeSel | done | 见提交 | 无（快照零变化） | 无 | Phase/PlanBuilder/NodeSel/OpKind；移除 petgraph；保留既有阶段标签错位待 WP-11/12 修正 |
 | WP-11 DAG 执行器 | todo | | | tier1/tier2/tier3 全量 | |
 | WP-12 删除改为计划 | todo | | | `just tier1-k3s`、tier2 删 worker、tier3 删集群 | |
 | WP-13 升级改为计划 | todo | | | `just tier2-upgrade-minor`、`e2e/tier2/upgrade-offline.sh` | |
@@ -80,6 +80,7 @@
 ## 偏离记录
 
 - WP-00：`ScriptedSession` 在 `(exit, stdout, stderr)` 之外增加了「命令已执行但传输中断」的应答与副作用文件，用于覆盖 `Outcome::Unknown → 重新探测` 路径；`cli_output` 快照对任务耗时与阶段内行序做归一化（并发完成顺序不在 v1 契约内）。
+- WP-10：为保持快照逐字节一致，`plan_os`/`plan_runtime`/`plan_images` 接收 `&Node` 并按节点交错；k3s 分支集中在 `plan_k3s`；现有阶段标签错位（kubeadm-init 在 vip 等）保留并加注释。
 - WP-09：Blackboard 的权威持久化仍是 `<cluster>.bb.json`，RunState v2 的 `blackboard` 字段是写穿镜像；锁使用标准库 `File::try_lock`（MSRV 1.89+）。
 - WP-18：`track` 实现为 `kurin-kube` 自由函数而非 `ClusterApi` trait 方法（两个后端共用轮询逻辑）。
 - WP-17：`get_raw` 为 status 的 `/healthz*` 补充；`connect()` 接收 `Option<bool>`（tcp_forwarding）而非 FactsTable；musl 二进制 x86_64 9.6MB→15.7MB、aarch64 7.5MB→12.4MB。
@@ -98,6 +99,7 @@
 
 （随 WP 完成追加）
 
+- WP-10：结构性重构，快照零变化；回归 `just tier1`/`tier2` 即可。
 - WP-09：两个终端同时对 tier1 执行 `add nodes`，第二个立即失败并显示第一个的 pid 与命令。
 - WP-18：tier1 故意配错镜像，确认日志出现 Pod 事件与容器日志尾部及原因提示。
 - WP-17：`just tier2-status`、tier1 标签任务；`KURIN_IT_CLUSTER=<kubeconfig> cargo test -p kurin-kube --test cluster_it -- --ignored`。

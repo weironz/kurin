@@ -7,16 +7,12 @@ use std::fs;
 use std::sync::Arc;
 
 use kurin::executor::{run_with, RunOptions, SessionPool};
-use kurin::plan::Plan;
+use kurin::plan::{OpKind, Plan};
 use kurin::state::{RunState, StateFile};
-use petgraph::stable_graph::StableDiGraph;
 use support::ScriptedPool;
 
 fn empty_plan() -> Plan {
-    Plan {
-        graph: StableDiGraph::new(),
-        stages: Vec::new(),
-    }
+    Plan::empty(OpKind::Create)
 }
 
 fn pool() -> Arc<dyn SessionPool> {

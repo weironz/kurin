@@ -75,10 +75,9 @@ fn load_fixture(name: &str) -> kurin_config::Cluster {
 /// `describe()`, i.e. everything the plan carries besides the tree layout.
 fn plan_matrix(plan: &Plan) -> serde_json::Value {
     let stages: Vec<serde_json::Value> = plan
-        .stages
-        .iter()
-        .map(|&idx| {
-            let stage = &plan.graph[idx];
+        .stages()
+        .into_iter()
+        .map(|stage| {
             json!({
                 "stage": stage.stage.label(),
                 "ids": stage

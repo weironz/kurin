@@ -16,17 +16,17 @@ use crate::plan::Plan;
 /// Render the plan as the `--dry-run` tree.
 pub fn render_tree(plan: &Plan) -> String {
     let mut out = String::new();
-    for (si, &idx) in plan.stages.iter().enumerate() {
-        let stage = &plan.graph[idx];
-        let last_stage = si + 1 == plan.stages.len();
+    let groups = plan.phase_groups();
+    for (si, group) in groups.iter().enumerate() {
+        let last_stage = si + 1 == groups.len();
         let v = if last_stage { "└" } else { "├" };
         out.push_str(&format!(
             "{v}── stage: {} ({} tasks)\n",
-            stage.stage.label(),
-            stage.tasks.len()
+            group.phase.label,
+            group.tasks.len()
         ));
-        for (ti, planned) in stage.tasks.iter().enumerate() {
-            let last_t = ti + 1 == stage.tasks.len();
+        for (ti, planned) in group.tasks.iter().enumerate() {
+            let last_t = ti + 1 == group.tasks.len();
             let branch = if last_stage { "    " } else { "│   " };
             let tv = if last_t { "└" } else { "├" };
             let drift = match &planned.drift {

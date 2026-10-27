@@ -139,9 +139,8 @@ async fn discovered_arch_drives_per_node_artifact_selection() {
     // w1 (arm64) vs cp1 (amd64) in the artifacts stage descriptions.
     let plan = kurin::plan::build(&cluster, &support::run(&cluster, facts)).unwrap();
     let artifacts_stage = plan
-        .stages
-        .iter()
-        .map(|&idx| &plan.graph[idx])
+        .stages()
+        .into_iter()
         .find(|s| s.stage == kurin::Stage::Artifacts)
         .expect("artifacts stage");
     let describes: Vec<(String, String)> = artifacts_stage
@@ -164,9 +163,8 @@ async fn discovered_arch_drives_per_node_artifact_selection() {
 
     // The discover stage rows summarize the probed facts per node.
     let discover_stage = plan
-        .stages
-        .iter()
-        .map(|&idx| &plan.graph[idx])
+        .stages()
+        .into_iter()
         .find(|s| s.stage == kurin::Stage::Discover)
         .expect("discover stage");
     for planned in &discover_stage.tasks {

@@ -138,14 +138,12 @@ pub async fn run_with_bus(
     // JSONL).
     let mut rx = bus.subscribe();
 
-    for &idx in &plan.stages {
+    for group in plan.phase_groups_mut() {
         if run.cancel.is_cancelled() {
             return Err(miette::miette!("operation cancelled"));
         }
-        let node = &mut plan.graph[idx];
-        let stage = node.stage;
-        let phase = stage.label().to_string();
-        let tasks = std::mem::take(&mut node.tasks);
+        let phase = group.phase.label.to_string();
+        let tasks = group.tasks;
         bus.publish(Body::PhaseStarted {
             phase: phase.clone(),
         });
@@ -154,7 +152,6 @@ pub async fn run_with_bus(
                 phase: phase.clone(),
                 ms: 0,
             });
-            node.tasks = tasks;
             continue;
         }
 
@@ -202,14 +199,13 @@ pub async fn run_with_bus(
             }
         }
 
-        node.tasks = tasks;
         if let Some(err) = first_err {
             // Drop impl flushes the state file; remaining stages do not run.
             if failures > 1 {
                 return Err(miette::miette!(
                     "{err:?}\n(+ {} more task failures in stage {})",
                     failures - 1,
-                    stage.label()
+                    phase
                 ));
             }
             return Err(err);
@@ -605,9 +601,8 @@ async fn execute_one(
 /// with `would-change` / `unchanged` (Terraform-plan semantics). No events,
 /// no applies. Integration owner wires this from the CLI (main.rs TODO).
 pub async fn probe(plan: &mut Plan, pool: &Arc<dyn SessionPool>) -> Result<()> {
-    for &idx in &plan.stages {
-        let node = &mut plan.graph[idx];
-        let mut tasks = std::mem::take(&mut node.tasks);
+    for group in plan.phase_groups_mut() {
+        let tasks = group.tasks;
         let mut set: JoinSet<Result<(usize, Drift)>> = JoinSet::new();
         for (i, planned) in tasks.iter().enumerate() {
             let task = Arc::clone(&planned.task);
@@ -634,7 +629,6 @@ pub async fn probe(plan: &mut Plan, pool: &Arc<dyn SessionPool>) -> Result<()> {
                 }
             }
         }
-        node.tasks = tasks;
         if let Some(err) = first_err {
             return Err(err);
         }
@@ -649,11 +643,9 @@ mod tests {
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
-    use petgraph::stable_graph::StableDiGraph;
-
     use super::*;
     use crate::engine::{Drift, ExecOutput, Outcome, Session, Stage, Task};
-    use crate::plan::{Plan, StageNode};
+    use crate::plan::{OpKind, Phase, Plan};
 
     struct MockSession;
 
@@ -888,28 +880,21 @@ mod tests {
     }
 
     fn plan_with(tasks: Vec<Arc<dyn Task>>, stages: &[Stage]) -> Plan {
-        let mut graph = StableDiGraph::new();
-        let mut idx = Vec::with_capacity(stages.len());
-        for s in stages {
-            idx.push(graph.add_node(StageNode {
-                stage: *s,
-                tasks: Vec::new(),
-            }));
-        }
-        for w in idx.windows(2) {
-            graph.add_edge(w[0], w[1], ());
-        }
-        for t in tasks {
-            let pos = stages
-                .iter()
-                .position(|s| *s == t.stage())
-                .expect("task stage in stages");
-            graph[idx[pos]].tasks.push(PlannedTask {
-                task: t,
-                drift: None,
-            });
-        }
-        Plan { graph, stages: idx }
+        let groups: Vec<(Phase, Vec<PlannedTask>)> = stages
+            .iter()
+            .map(|stage| {
+                let group = tasks
+                    .iter()
+                    .filter(|t| t.stage() == *stage)
+                    .map(|t| PlannedTask {
+                        task: Arc::clone(t),
+                        drift: None,
+                    })
+                    .collect();
+                (Phase::new(stage.label(), stage.label()), group)
+            })
+            .collect();
+        Plan::from_stage_groups(OpKind::Create, groups)
     }
 
     fn task_events(events: &[Event]) -> Vec<&'static str> {
@@ -1222,9 +1207,8 @@ mod tests {
         probe(&mut plan, &pool()).await.unwrap();
 
         let get = |id: &str| {
-            plan.stages
+            plan.tasks
                 .iter()
-                .flat_map(|&i| plan.graph[i].tasks.iter())
                 .find(|t| t.task.id() == id)
                 .map(|t| t.drift.clone())
                 .expect("task in plan")

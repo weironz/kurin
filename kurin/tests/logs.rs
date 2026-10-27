@@ -244,12 +244,10 @@ fn missing_operation_is_an_error() {
 mod pipeline {
     use std::sync::Arc;
 
-    use petgraph::stable_graph::StableDiGraph;
-
     use kurin::engine::{Drift, ExecOutput, Outcome, PlannedTask, Session, Stage, Task};
     use kurin::events::{Body, EventBus, JsonlSink, Level, Stream};
     use kurin::executor::{run_with_bus, RunOptions, SessionPool};
-    use kurin::plan::{Plan, StageNode};
+    use kurin::plan::{OpKind, Phase, Plan};
 
     struct EchoSession;
 
@@ -325,18 +323,16 @@ mod pipeline {
         let bus = Arc::new(EventBus::new(op));
         bus.add_sink(Arc::new(JsonlSink::create(&path).unwrap()));
 
-        let mut graph = StableDiGraph::new();
-        let idx = graph.add_node(StageNode {
-            stage: Stage::Bootstrap,
-            tasks: vec![PlannedTask {
-                task: Arc::new(InitTask),
-                drift: None,
-            }],
-        });
-        let mut plan = Plan {
-            graph,
-            stages: vec![idx],
-        };
+        let mut plan = Plan::from_stage_groups(
+            OpKind::Create,
+            vec![(
+                Phase::new(Stage::Bootstrap.label(), Stage::Bootstrap.label()),
+                vec![PlannedTask {
+                    task: Arc::new(InitTask),
+                    drift: None,
+                }],
+            )],
+        );
         let pool: Arc<dyn SessionPool> = Arc::new(EchoPool);
         let run = Arc::new(kurin::run::RunContext::new(
             op,

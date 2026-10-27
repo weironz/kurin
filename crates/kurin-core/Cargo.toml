@@ -12,7 +12,6 @@ serde.workspace = true
 serde_json.workspace = true
 miette.workspace = true
 thiserror.workspace = true
-petgraph.workspace = true
 async-trait.workspace = true
 tokio.workspace = true
 tempfile.workspace = true
