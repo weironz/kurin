@@ -535,6 +535,7 @@ impl KurinBackend {
                         artifacts: c.artifacts,
                     })
                     .collect(),
+                    extras: Vec::new(),
                 };
                 let out = kurin_artifact::package::PackageOutput::parse(output)
                     .map_err(|e| miette::miette!("{e}"))?;

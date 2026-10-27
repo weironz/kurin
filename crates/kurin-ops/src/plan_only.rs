@@ -72,7 +72,7 @@ pub async fn plan_only(
             facts
         };
         run.set_facts(facts.clone());
-        crate::packages::validate_payload(&spec, &facts, &payload, false)?;
+        crate::packages::validate_payload(&spec, &facts, &payload, false).await?;
         let mut plan = kurin_components::plan::build_with_pool(&spec, Some(pool.clone()), &run)?;
         if check {
             kurin_core::executor::probe(&mut plan, &pool).await?;

@@ -502,7 +502,7 @@ async fn addon_catalog_lists_configured_addons_with_schemas() {
         .iter()
         .find(|row| row["name"] == "metrics-server")
         .expect("metrics-server in the catalog");
-    assert_eq!(metrics["version"], "0.7.2");
+    assert_eq!(metrics["version"], "0.9.0");
     assert_eq!(metrics["namespace"], "kube-system");
     assert!(
         metrics["values_schema"]
