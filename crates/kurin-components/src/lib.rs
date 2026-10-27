@@ -2,6 +2,7 @@
 
 #![allow(clippy::result_large_err)]
 
+pub mod addon;
 pub mod certs;
 pub mod component;
 pub mod discover;

@@ -1,0 +1,5 @@
+---
+source: crates/kurin-components/tests/addon.rs
+expression: stable(&error)
+---
+invalid addon.yaml: <root>/the-addon/addon.yaml: spec.hooks.post-install.\[0\]: unknown field `run`, expected one of `wait`, `apply`, `delete`, `label-nodes`, `annotate` at line 17 column 9

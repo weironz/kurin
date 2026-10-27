@@ -1,0 +1,6 @@
+---
+source: crates/kurin-components/tests/addon.rs
+expression: "summaries.join(\"\\n\")"
+---
+invalid addon: <root>/the-addon/addon.yaml: addon `needy` conflicts `another-ghost`, which the catalog does not provide
+invalid addon: <root>/the-addon/addon.yaml: addon `needy` requires `ghost-addon`, which the catalog does not provide

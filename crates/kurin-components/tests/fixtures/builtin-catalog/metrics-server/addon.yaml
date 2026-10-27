@@ -1,0 +1,40 @@
+apiVersion: addons.kurin.dev/v1alpha1
+kind: Addon
+metadata:
+  name: metrics-server
+  version: 0.8.0
+  title: Metrics Server
+  description: 资源指标 API，kubectl top 与 HPA 依赖它
+  category: monitoring
+spec:
+  compat:
+    kubernetes: ">=1.30.0"
+    distributions: [kubeadm, k3s]
+    arch: [amd64, arm64]
+  requires: []
+  conflicts: []
+  provides: [metrics-api]
+  namespace: kube-system
+  install:
+    helm:
+      chart: charts/metrics-server-3.13.0.tgz
+      release: metrics-server
+      values: values.yaml.j2
+  images:
+    - registry.k8s.io/metrics-server/metrics-server:v0.8.0@sha256:89d1e41c7a1e8e5b1a9e2e7ae6b1a04d1e5d39f5b1b0ea5b4a1a2e5b6c7d8e9f
+  values-schema: values.schema.json
+  defaults:
+    replicas: 1
+  readiness:
+    - kind: Deployment
+      name: metrics-server
+  timeout: 5m
+  hooks:
+    post-install:
+      - wait:
+          kind: APIService
+          name: v1beta1.metrics.k8s.io
+          condition: Available
+  uninstall:
+    keep:
+      - kind: CustomResourceDefinition

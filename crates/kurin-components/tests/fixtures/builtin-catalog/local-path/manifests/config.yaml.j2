@@ -1,0 +1,8 @@
+# MiniJinja manifest template (03 §4.4); rendering arrives with WP-41.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kurin-local-path-config
+  namespace: {{ addon.namespace }}
+data:
+  default-class: "{{ addon.values['default-class'] }}"

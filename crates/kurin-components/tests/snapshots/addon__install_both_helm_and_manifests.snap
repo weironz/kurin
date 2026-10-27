@@ -1,0 +1,5 @@
+---
+source: crates/kurin-components/tests/addon.rs
+expression: "summaries.join(\"\\n\")"
+---
+invalid addon: <root>/the-addon/addon.yaml: spec.install: `helm` and `manifests` are mutually exclusive; keep one

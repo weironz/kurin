@@ -1,0 +1,5 @@
+---
+source: crates/kurin-components/tests/addon.rs
+expression: "summaries.join(\"\\n\")"
+---
+invalid addon: <fixtures>/metrics-server/addon.yaml: addon `metrics-server` is provided twice: dir <fixtures>/metrics-server and dir <root>/the-addon

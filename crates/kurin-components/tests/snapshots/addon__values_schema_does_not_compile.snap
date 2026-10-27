@@ -1,0 +1,5 @@
+---
+source: crates/kurin-components/tests/addon.rs
+expression: "summaries.join(\"\\n\")"
+---
+invalid addon: <root>/the-addon/values.schema.json: not a valid JSON Schema: Pointer '/$defs/missing' does not exist

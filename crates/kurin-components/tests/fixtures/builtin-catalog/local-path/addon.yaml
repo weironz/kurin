@@ -1,0 +1,36 @@
+apiVersion: addons.kurin.dev/v1alpha1
+kind: Addon
+metadata:
+  name: local-path
+  version: 0.1.0
+  title: Local Path Provisioner
+  description: 用本地磁盘提供 StorageClass 的默认存储
+  category: storage
+spec:
+  compat:
+    kubernetes: ">=1.30.0"
+    distributions: [kubeadm, k3s]
+    arch: [amd64, arm64]
+  requires: []
+  conflicts: []
+  provides: [default-storage-class]
+  namespace: kube-system
+  install:
+    manifests:
+      - manifests/*.yaml.j2
+  images:
+    - rancher/mirrored-local-path-provisioner:v0.1.0@sha256:89d1e41c7a1e8e5b1a9e2e7ae6b1a04d1e5d39f5b1b0ea5b4a1a2e5b6c7d8e9f
+  values-schema: values.schema.json
+  defaults:
+    default-class: true
+  readiness:
+    - kind: Deployment
+      name: local-path-provisioner
+  timeout: 3m
+  hooks:
+    post-install:
+      - label-nodes:
+          labels:
+            kurin.io/local-path: "true"
+  uninstall:
+    keep: []

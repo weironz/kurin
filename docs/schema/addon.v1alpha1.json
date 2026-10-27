@@ -1,0 +1,645 @@
+{
+  "$defs": {
+    "AddonTimeout": {
+      "default": "5m",
+      "description": "Duration as `<n>s`/`<n>m`/`<n>h` pairs, e.g. `90s`, `5m`, `1h30m`.",
+      "examples": [
+        "30s",
+        "5m",
+        "1h30m"
+      ],
+      "pattern": "^([0-9]+[smh])+$",
+      "type": "string"
+    },
+    "AddonVersion": {
+      "description": "The addon's own version, usually the upstream app version; semver with an optional `v` prefix.",
+      "pattern": "^v?(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-((?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\\.(?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\\+([0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*))?$",
+      "type": "string"
+    },
+    "AnnotateAction": {
+      "additionalProperties": false,
+      "description": "Annotate an object.",
+      "properties": {
+        "annotations": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Annotations to set.",
+          "type": "object"
+        },
+        "kind": {
+          "description": "Kind, as written by kubectl.",
+          "type": "string"
+        },
+        "name": {
+          "description": "Object name.",
+          "type": "string"
+        },
+        "namespace": {
+          "description": "For namespaced kinds; defaults to the addon namespace.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "kind",
+        "name",
+        "annotations"
+      ],
+      "type": "object"
+    },
+    "ApiVersion": {
+      "description": "`apiVersion` this kurin build understands.",
+      "oneOf": [
+        {
+          "const": "addons.kurin.dev/v1alpha1",
+          "description": "`addons.kurin.dev/v1alpha1`.",
+          "type": "string"
+        }
+      ]
+    },
+    "ApplyAction": {
+      "additionalProperties": false,
+      "description": "Apply a manifest shipped in the addon package.",
+      "properties": {
+        "path": {
+          "description": "Package-relative path to the manifest.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "type": "object"
+    },
+    "Arch": {
+      "description": "Architecture an addon supports.",
+      "oneOf": [
+        {
+          "const": "amd64",
+          "description": "x86-64.",
+          "type": "string"
+        },
+        {
+          "const": "arm64",
+          "description": "AArch64.",
+          "type": "string"
+        }
+      ]
+    },
+    "Category": {
+      "description": "Catalog category of an addon (03 §4.1).",
+      "oneOf": [
+        {
+          "const": "networking",
+          "description": "Pod/service networking beyond the CNI.",
+          "type": "string"
+        },
+        {
+          "const": "storage",
+          "description": "Storage providers.",
+          "type": "string"
+        },
+        {
+          "const": "ingress",
+          "description": "Ingress controllers.",
+          "type": "string"
+        },
+        {
+          "const": "security",
+          "description": "Certificates, policy, admission.",
+          "type": "string"
+        },
+        {
+          "const": "monitoring",
+          "description": "Metrics and observability.",
+          "type": "string"
+        },
+        {
+          "const": "registry",
+          "description": "In-cluster registries.",
+          "type": "string"
+        },
+        {
+          "const": "dashboard",
+          "description": "Web consoles.",
+          "type": "string"
+        },
+        {
+          "const": "other",
+          "description": "Everything else.",
+          "type": "string"
+        }
+      ]
+    },
+    "Compat": {
+      "additionalProperties": false,
+      "description": "Cluster compatibility declared by the addon itself.",
+      "properties": {
+        "arch": {
+          "default": [],
+          "description": "Supported architectures (`amd64`, `arm64`); empty means any.",
+          "items": {
+            "$ref": "#/$defs/Arch"
+          },
+          "type": "array"
+        },
+        "distributions": {
+          "default": [],
+          "description": "Supported distributions (`kubeadm`, `k3s`); empty means any.",
+          "items": {
+            "$ref": "#/$defs/Distribution"
+          },
+          "type": "array"
+        },
+        "kubernetes": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SemverRange"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Semver range the cluster's Kubernetes version must satisfy."
+        }
+      },
+      "type": "object"
+    },
+    "DeleteAction": {
+      "additionalProperties": false,
+      "description": "Delete an object.",
+      "properties": {
+        "kind": {
+          "description": "Kind, as written by kubectl.",
+          "type": "string"
+        },
+        "name": {
+          "description": "Object name.",
+          "type": "string"
+        },
+        "namespace": {
+          "description": "For namespaced kinds; defaults to the addon namespace.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "kind",
+        "name"
+      ],
+      "type": "object"
+    },
+    "Distribution": {
+      "description": "Distribution names in v1alpha2: the kubeadm track is spelled\n`kubeadm`, and `k8s` remains accepted as a compatibility alias.",
+      "enum": [
+        "kubeadm",
+        "k3s"
+      ],
+      "type": "string"
+    },
+    "HelmInstall": {
+      "additionalProperties": false,
+      "description": "A Helm-chart install (03 §4.1).",
+      "properties": {
+        "chart": {
+          "description": "Chart location: a package-relative path (`charts/…tgz`, pulled\ninto the package at build time) or an `oci://…` reference.",
+          "type": "string"
+        },
+        "release": {
+          "description": "Helm release name; defaults to the addon's `metadata.name`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "values": {
+          "description": "Package-relative path to the MiniJinja values template; absent\nmeans the chart defaults plus `spec.defaults` only.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "chart"
+      ],
+      "type": "object"
+    },
+    "HookAction": {
+      "additionalProperties": false,
+      "description": "One hook entry: exactly one action is set.",
+      "properties": {
+        "annotate": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AnnotateAction"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Annotate an object."
+        },
+        "apply": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ApplyAction"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Apply a manifest from the addon package."
+        },
+        "delete": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DeleteAction"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Delete an object."
+        },
+        "label-nodes": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LabelNodesAction"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Label cluster nodes."
+        },
+        "wait": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WaitAction"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Wait for an object to reach a condition."
+        }
+      },
+      "type": "object"
+    },
+    "Hooks": {
+      "additionalProperties": false,
+      "description": "Built-in hook actions (03 §4.2 rule 2): no arbitrary shell, ever.",
+      "properties": {
+        "post-install": {
+          "default": [],
+          "description": "Actions run after a successful install.",
+          "items": {
+            "$ref": "#/$defs/HookAction"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "Install": {
+      "additionalProperties": false,
+      "description": "How an addon is applied (03 §4.1): exactly one variant is set.",
+      "properties": {
+        "helm": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HelmInstall"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Install through a Helm chart."
+        },
+        "manifests": {
+          "description": "Install through plain manifests (server-side apply).",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "KeepRef": {
+      "additionalProperties": false,
+      "description": "An object to keep on uninstall.",
+      "properties": {
+        "kind": {
+          "description": "Kind, as written by kubectl (`CustomResourceDefinition`).",
+          "type": "string"
+        },
+        "name": {
+          "description": "Object name; absent keeps every object of this kind.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "namespace": {
+          "description": "For namespaced kinds; defaults to the addon namespace.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    "Kind": {
+      "description": "`kind` this kurin build understands.",
+      "oneOf": [
+        {
+          "const": "Addon",
+          "description": "`Addon`.",
+          "type": "string"
+        }
+      ]
+    },
+    "LabelNodesAction": {
+      "additionalProperties": false,
+      "description": "Label cluster nodes.",
+      "properties": {
+        "labels": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Labels to set.",
+          "type": "object"
+        },
+        "selector": {
+          "description": "Node label selector; absent means every node.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "labels"
+      ],
+      "type": "object"
+    },
+    "Metadata": {
+      "additionalProperties": false,
+      "description": "Everything the catalog and CLI show about an addon.",
+      "properties": {
+        "category": {
+          "$ref": "#/$defs/Category",
+          "description": "Catalog grouping."
+        },
+        "description": {
+          "description": "What the addon does, shown by `kurin addon list`.",
+          "type": "string"
+        },
+        "icon": {
+          "description": "Optional icon file (package-relative path) for the Web UI.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "description": "DNS-label name, unique within a catalog (`metrics-server`).",
+          "type": "string"
+        },
+        "title": {
+          "description": "One-line display title; listings fall back to `name`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "version": {
+          "$ref": "#/$defs/AddonVersion",
+          "description": "The addon's own version, usually the upstream app version."
+        }
+      },
+      "required": [
+        "name",
+        "version",
+        "description",
+        "category"
+      ],
+      "type": "object"
+    },
+    "ObjectRef": {
+      "additionalProperties": false,
+      "description": "A cluster object, by kind and name.",
+      "properties": {
+        "kind": {
+          "description": "Kind, as written by kubectl (`Deployment`).",
+          "type": "string"
+        },
+        "name": {
+          "description": "Object name.",
+          "type": "string"
+        },
+        "namespace": {
+          "description": "For namespaced kinds; defaults to the addon namespace.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "kind",
+        "name"
+      ],
+      "type": "object"
+    },
+    "SemverRange": {
+      "description": "Semver requirement range, e.g. `>=1.30.0` or `>=1.30.0, <1.34.0`.",
+      "type": "string"
+    },
+    "Spec": {
+      "additionalProperties": false,
+      "description": "What and under which constraints the addon installs.",
+      "properties": {
+        "compat": {
+          "$ref": "#/$defs/Compat",
+          "description": "Cluster compatibility; kurin rejects incompatible combinations at\nvalidation time (03 §4.2 rule 4)."
+        },
+        "conflicts": {
+          "default": [],
+          "description": "Addon names that must not be installed alongside this one.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "defaults": {
+          "default": null,
+          "description": "Values merged below the user's; must satisfy `values-schema`."
+        },
+        "hooks": {
+          "$ref": "#/$defs/Hooks",
+          "default": {
+            "post-install": []
+          },
+          "description": "Post-install actions, restricted to built-ins (03 §4.2 rule 2)."
+        },
+        "images": {
+          "default": [],
+          "description": "Every image the addon may deploy, each digest-pinned — the sole\nbasis for offline packaging and preloading (03 §4.2 rule 1).",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "install": {
+          "$ref": "#/$defs/Install",
+          "description": "How the addon is applied: exactly one of `helm` or `manifests`."
+        },
+        "namespace": {
+          "description": "Namespace the addon installs into.",
+          "type": "string"
+        },
+        "provides": {
+          "default": [],
+          "description": "Capability labels other addons may refer to (consumed by the\nnot-yet-implemented `requires-any`).",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "readiness": {
+          "default": [],
+          "description": "Objects tracked for readiness; empty lets the tracker derive them\nfrom the rendered objects.",
+          "items": {
+            "$ref": "#/$defs/ObjectRef"
+          },
+          "type": "array"
+        },
+        "requires": {
+          "default": [],
+          "description": "Addon names that must be installed first.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "timeout": {
+          "$ref": "#/$defs/AddonTimeout",
+          "default": "5m",
+          "description": "Install and readiness timeout."
+        },
+        "uninstall": {
+          "$ref": "#/$defs/Uninstall",
+          "default": {
+            "keep": []
+          },
+          "description": "What uninstall retains."
+        },
+        "values-schema": {
+          "description": "Package-relative path to the user-parameter JSON Schema (03 §4.2\nrule 3). Absent means the addon takes no user values.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "compat",
+        "namespace",
+        "install"
+      ],
+      "type": "object"
+    },
+    "Uninstall": {
+      "additionalProperties": false,
+      "description": "What uninstall retains.",
+      "properties": {
+        "keep": {
+          "default": [],
+          "description": "Objects to keep (e.g. CRDs, PVCs).",
+          "items": {
+            "$ref": "#/$defs/KeepRef"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "WaitAction": {
+      "additionalProperties": false,
+      "description": "Wait for an object to reach a condition.",
+      "properties": {
+        "condition": {
+          "description": "Condition to wait for (e.g. `Ready`, `Available`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "kind": {
+          "description": "Kind, as written by kubectl (`APIService`).",
+          "type": "string"
+        },
+        "name": {
+          "description": "Object name.",
+          "type": "string"
+        },
+        "namespace": {
+          "description": "For namespaced kinds; defaults to the addon namespace.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "kind",
+        "name"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "A parsed `addon.yaml`.",
+  "properties": {
+    "apiVersion": {
+      "$ref": "#/$defs/ApiVersion",
+      "description": "Schema version of this document (`apiVersion` in addon.yaml)."
+    },
+    "kind": {
+      "$ref": "#/$defs/Kind",
+      "description": "Always `Addon`."
+    },
+    "metadata": {
+      "$ref": "#/$defs/Metadata",
+      "description": "Identity and catalog presentation."
+    },
+    "spec": {
+      "$ref": "#/$defs/Spec",
+      "description": "What to install and under which constraints."
+    }
+  },
+  "required": [
+    "apiVersion",
+    "kind",
+    "metadata",
+    "spec"
+  ],
+  "title": "kurin addon manifest (addons.kurin.dev/v1alpha1)",
+  "type": "object"
+}

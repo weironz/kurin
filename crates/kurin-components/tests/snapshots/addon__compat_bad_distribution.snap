@@ -1,0 +1,5 @@
+---
+source: crates/kurin-components/tests/addon.rs
+expression: stable(&error)
+---
+invalid addon.yaml: <root>/the-addon/addon.yaml: spec.compat.distributions.\[0\]: unknown variant `rke2`, expected one of `k8s`, `kubeadm`, `k3s` at line 10 column 21

@@ -59,6 +59,7 @@ rpassword = "7"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["registry", "std"] }
 tokio-util = { version = "0.7", features = ["rt"] }
+oci-spec = { version = "0.9", default-features = false, features = ["image"] }
 
 [profile.release]
 lto = true

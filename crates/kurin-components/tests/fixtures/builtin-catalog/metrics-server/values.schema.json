@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "metrics-server values",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "replicas": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 8,
+      "description": "metrics-server 副本数"
+    }
+  }
+}

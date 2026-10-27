@@ -1,0 +1,5 @@
+---
+source: crates/kurin-components/tests/addon.rs
+expression: "summaries.join(\"\\n\")"
+---
+invalid addon: <root>/the-addon/addon.yaml: spec.install: one of `helm` or `manifests` is required

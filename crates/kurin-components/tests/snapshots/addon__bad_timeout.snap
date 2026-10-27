@@ -1,0 +1,5 @@
+---
+source: crates/kurin-components/tests/addon.rs
+expression: stable(&error)
+---
+invalid addon.yaml: <root>/the-addon/addon.yaml: spec: `5x` is not a duration: unknown unit `x` (s, m or h) at line 9 column 3

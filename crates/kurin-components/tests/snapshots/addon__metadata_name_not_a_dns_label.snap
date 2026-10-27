@@ -1,0 +1,5 @@
+---
+source: crates/kurin-components/tests/addon.rs
+expression: "summaries.join(\"\\n\")"
+---
+invalid addon: <root>/the-addon/addon.yaml: metadata.name `Sample_Addon` is not a DNS label (lowercase alphanumerics and '-', at most 63 characters)

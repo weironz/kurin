@@ -33,6 +33,10 @@ test:
 schema:
     cargo run -q -p kurin -- config schema --version v1alpha2 > docs/schema/cluster.v1alpha2.json
 
+# regenerate the committed addon.yaml JSON Schema (drift fails `just test`)
+addon-schema:
+    cargo run -q -p kurin-components --example addon_schema > docs/schema/addon.v1alpha1.json
+
 # regenerate the `create cluster` table in docs/command-matrix.md from
 # `kurin capabilities --json` (the e2e column stays hand-maintained)
 docs-matrix:

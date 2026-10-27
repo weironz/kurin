@@ -1,0 +1,13 @@
+---
+source: crates/kurin-components/tests/addon.rs
+expression: render(&error)
+---
+kurin::addon::parse
+
+  x invalid addon.yaml: <root>/the-addon/addon.yaml
+    ,-[15:3]
+ 14 |   images: []
+ 15 |   extra: true
+    :   |
+    :   `-- spec: unknown field `extra`, expected one of `compat`, `requires`, `conflicts`, `provides`, `namespace`, `install`, `images`, `values-schema`, `defaults`, `readiness`, `timeout`, `hooks`, `uninstall` at line 15 column 3
+    `----

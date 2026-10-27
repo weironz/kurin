@@ -1,0 +1,5 @@
+---
+source: crates/kurin-components/tests/addon.rs
+expression: "summaries.join(\"\\n\")"
+---
+invalid addon: <root>/the-addon/addon.yaml: spec.images[0] `registry.k8s.io/metrics-server:v0.8.0` carries no digest; expected `<reference>@sha256:<64 hex digits>`

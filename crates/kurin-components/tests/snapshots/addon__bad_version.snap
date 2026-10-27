@@ -1,0 +1,5 @@
+---
+source: crates/kurin-components/tests/addon.rs
+expression: stable(&error)
+---
+invalid addon.yaml: <root>/the-addon/addon.yaml: metadata: `latest` is not a version: unexpected character 'l' while parsing major version number; expected semver, e.g. `0.8.0` (an optional `v` prefix is accepted) at line 4 column 3

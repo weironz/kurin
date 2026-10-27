@@ -1,0 +1,5 @@
+---
+source: crates/kurin-components/tests/addon.rs
+expression: stable(&error)
+---
+invalid addon.yaml: <root>/the-addon/addon.yaml: spec.compat.arch.\[0\]: unknown variant `ppc64le`, expected `amd64` or `arm64` at line 10 column 12

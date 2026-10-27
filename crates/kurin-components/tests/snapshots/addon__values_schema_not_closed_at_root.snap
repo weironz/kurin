@@ -1,0 +1,5 @@
+---
+source: crates/kurin-components/tests/addon.rs
+expression: "summaries.join(\"\\n\")"
+---
+invalid addon: <root>/the-addon/values.schema.json: root schema must set `additionalProperties: false`: user values with keys absent from the schema are rejected (03 §4.2 rule 3)
