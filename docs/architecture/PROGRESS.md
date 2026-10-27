@@ -53,7 +53,7 @@
 | WP-46 首批内置 addon | todo | | | `e2e/tier1/addons.sh` | |
 | WP-47 存储迁移到 addon | todo | | | `e2e/tier1/storage.sh` | |
 | WP-48 CNI 改用 chart | todo | | | `just tier1-cilium`、kube-ovn、接管场景 | |
-| WP-49 registry zot 默认与 external | todo | | | `e2e/tier3/registry.sh` | |
+| WP-49 registry zot 默认与 external | done | 见提交 | 新增 registry-default-v1alpha2 计划快照；quick 快照 kind 变 zot | `just tier3-registry zot/docker-registry/external` | v1alpha2 无 kind 默认 zot；v1alpha1 保持旧默认；external 校验与文档 |
 | WP-50 kurin-server 骨架与认证 | done | 见提交 | 无（纯新增 crate 与 `serve` 子命令） | 无（仅回环监听自测） | axum 0.8 + axum-server(rustls/ring)；错误信封 `camelCase` 对齐 WP-60 前端契约；403 `forbidden-host` 为 §6.10 Host 规则新增状态码 |
 | WP-51 Store 与配置修订 | done | 见提交 | 无 | 无（纯本地 DB） | rusqlite WAL + 单写线程/读池；user_version 迁移；秘密哨兵；base_rev 409；镜像 0600 |
 | WP-52 OpRunner/事件持久化/SSE | done | 见提交 | 无 | `scripts/api-smoke.sh <tier1.toml>` | SSE 先订阅后补读/seq 去重/心跳；JSONL 日志分页；取消/重试；重启标记 interrupted；并发上限 |
@@ -128,6 +128,7 @@
 
 （随 WP 完成追加）
 - WP-39：签名包校验、篡改 blob 拒绝、未签名包在 signature 模式拒绝（`cargo test -p kurin-artifact --test transfer`）；CI 工作流需在 tag 上人工验证。
+- WP-49：`just tier3-registry zot`、`docker-registry`、`external`（external 指向 zot）。
 - WP-37：`just bundle` 后 `just tier1-offline-cni flannel`、`cilium`、`kube-ovn`（需 multipass）。
 - WP-36：`e2e/tier3/registry.sh zot`；完全断网 3 节点：`KURIN_DISCONNECTED=1 KURIN_BASE_PACKAGE=oci-layout:///abs/base e2e/tier3/registry.sh zot`。
 - WP-35：`just tier1-offline oci-layout:///tmp/kurin-pkg`、`file:///tmp/kurin-base.tar.zst`、`oci://127.0.0.1:5000/kurin/base:v1.33.1-kubeadm`（三种来源各一次）。
@@ -140,6 +141,7 @@
 - WP-16：`just tier1-offline`、`just tier3-external-lb`。
 - WP-50：`kurin serve` 回环冒烟（一次性登录链接、`/session`、401/403/400、TLS h2）；`cargo clippy -p kurin --features ui`。
 - WP-39：签名包校验、篡改 blob 拒绝、未签名包在 signature 模式拒绝（`cargo test -p kurin-artifact --test transfer`）；CI 工作流需在 tag 上人工验证。
+- WP-49：`just tier3-registry zot`、`docker-registry`、`external`（external 指向 zot）。
 - WP-37：`just bundle` 后 `just tier1-offline-cni flannel`、`cilium`、`kube-ovn`（需 multipass）。
 - WP-36：`e2e/tier3/registry.sh zot`；完全断网 3 节点：`KURIN_DISCONNECTED=1 KURIN_BASE_PACKAGE=oci-layout:///abs/base e2e/tier3/registry.sh zot`。
 - WP-35：`just tier1-offline oci-layout:///tmp/kurin-pkg`、`file:///tmp/kurin-base.tar.zst`、`oci://127.0.0.1:5000/kurin/base:v1.33.1-kubeadm`（三种来源各一次）。
