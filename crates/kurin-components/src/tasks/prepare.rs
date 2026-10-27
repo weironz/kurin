@@ -334,6 +334,7 @@ mod tests {
                 port: 22,
                 r#become: kurin_config::BecomeMode::Auto,
                 become_password: None,
+                known_hosts: Default::default(),
                 auth: kurin_config::SshAuth::Password {
                     password: "x".into(),
                 },

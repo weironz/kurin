@@ -612,6 +612,7 @@ kind: Config
                 port: 22,
                 r#become: kurin_config::BecomeMode::Auto,
                 become_password: None,
+                known_hosts: Default::default(),
                 auth: SshAuth::Password {
                     password: "x".into(),
                 },
@@ -725,6 +726,7 @@ mod summary_tests {
                 port: 22,
                 r#become: kurin_config::BecomeMode::Auto,
                 become_password: None,
+                known_hosts: Default::default(),
                 auth: SshAuth::Password {
                     password: "x".into(),
                 },

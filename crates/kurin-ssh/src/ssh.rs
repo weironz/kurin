@@ -5,14 +5,18 @@
 //! `MaxStartups`. Connection setup is retried with exponential backoff;
 //! every network operation is bounded by a timeout.
 //!
-//! Host keys are trusted on first use and recorded in
-//! `~/.cache/kurin/known_hosts` (or `$XDG_CACHE_HOME/kurin/known_hosts`).
-//! A key that disagrees with a recorded one aborts the handshake. Strict
-//! host-key handling (no TOFU) is deliberately left to a later milestone.
+//! Host keys are recorded in `~/.cache/kurin/known_hosts` (or
+//! `$XDG_CACHE_HOME/kurin/known_hosts`). `[ssh] known-hosts` selects the
+//! policy: `tofu` (learn unknown hosts, default), `accept-new` (same but
+//! explicitly non-interactive), or `strict` (reject unknown hosts). A
+//! recorded key that disagrees with the presented one is always rejected.
+//!
+//! Mutating commands are never retried after a transport loss: the remote
+//! side may have executed them, so the engine re-probes instead.
 
 use std::collections::HashMap;
 use std::future::Future;
-use std::net::IpAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -26,12 +30,15 @@ use russh::keys::known_hosts::{check_known_hosts_path, learn_known_hosts_path};
 use russh::keys::{ssh_key, PrivateKeyWithHashAlg, PublicKeyOrCertificate};
 use russh::{ChannelMsg, Disconnect};
 use sha2::{Digest, Sha256};
-use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::{RwLock, Semaphore};
 
-use kurin_config::{BecomeMode, Cluster, ResolvedSsh, SshAuth};
+use kurin_config::{BecomeMode, Cluster, HostKeyMode, ResolvedSsh, SshAuth};
 
-use kurin_core::engine::{Cmd, ExecOutput, Session, Stream, UploadReport, UploadSource};
+use kurin_core::engine::{
+    Cmd, ExecOutput, LocalForward, RemoteForward, Session, Stream, TransportLost, UploadReport,
+    UploadSource,
+};
 
 /// Upper bound for one `exec` round trip, including data transfer.
 pub const EXEC_TIMEOUT: Duration = Duration::from_secs(900);
@@ -85,35 +92,81 @@ pub fn default_known_hosts_path() -> PathBuf {
     home.join(".cache").join("kurin").join("known_hosts")
 }
 
+/// What to do with a presented host key, given the store's verdict.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HostKeyDecision {
+    /// Key matches the recorded entry.
+    Accept,
+    /// Host is unknown and the policy allows recording it now.
+    Learn,
+    /// Refuse the handshake.
+    Reject,
+}
+
+/// Pure host-key policy: `recorded` is `Ok(true)` for a matching entry,
+/// `Ok(false)` for an unknown host, and `Err(..)` for a mismatch or an
+/// unreadable store. A mismatch is rejected in every mode.
+fn host_key_decision(
+    mode: HostKeyMode,
+    recorded: std::result::Result<bool, ()>,
+) -> HostKeyDecision {
+    match recorded {
+        Ok(true) => HostKeyDecision::Accept,
+        Ok(false) => match mode {
+            HostKeyMode::Strict => HostKeyDecision::Reject,
+            HostKeyMode::Tofu | HostKeyMode::AcceptNew => HostKeyDecision::Learn,
+        },
+        Err(()) => HostKeyDecision::Reject,
+    }
+}
+
 /// Host-key policy: accept the key if it matches the store, learn it if the
-/// host is unknown, refuse when a different key is already recorded.
+/// host is unknown (except under `strict`), refuse when a different key is
+/// already recorded.
 #[derive(Debug, Clone)]
 struct HostKeyPolicy {
     host: String,
     port: u16,
+    /// `[ssh] known-hosts` (node override already merged).
+    mode: HostKeyMode,
     known_hosts: PathBuf,
-    /// Set when a recorded key mismatches, so callers can surface the
-    /// actionable cause instead of a generic "connection failed".
+    /// Set when a recorded key mismatches or `strict` rejects an unknown
+    /// host, so callers can surface the actionable cause instead of a
+    /// generic "connection failed".
     mismatch: Arc<std::sync::Mutex<Option<String>>>,
+    /// Local target for `ssh -R` forwarded channels (set by
+    /// [`SshSession::forward_remote`]).
+    forward_target: Arc<std::sync::Mutex<Option<SocketAddr>>>,
 }
 
 impl HostKeyPolicy {
     fn trust(&self, key: &ssh_key::PublicKey) -> bool {
-        match check_known_hosts_path(&self.host, self.port, key, &self.known_hosts) {
-            Ok(true) => true,
-            // First contact with this host: remember the key (trust on first use).
-            Ok(false) => {
+        let recorded =
+            check_known_hosts_path(&self.host, self.port, key, &self.known_hosts).map_err(|_| ());
+        match host_key_decision(self.mode, recorded) {
+            HostKeyDecision::Accept => true,
+            HostKeyDecision::Learn => {
                 learn_known_hosts_path(&self.host, self.port, key, &self.known_hosts).is_ok()
             }
-            // Recorded key mismatch (or unreadable store): never trust.
-            Err(e) => {
-                *self.mismatch.lock().unwrap() = Some(format!(
-                    "host key for {}:{} does not match the recorded key ({e}); \
-                     if the node was rebuilt, remove the stale entry from {}",
-                    self.host,
-                    self.port,
-                    self.known_hosts.display()
-                ));
+            HostKeyDecision::Reject => {
+                let reason = if recorded.is_err() {
+                    format!(
+                        "host key for {}:{} does not match the recorded key; \
+                         if the node was rebuilt, remove the stale entry from {}",
+                        self.host,
+                        self.port,
+                        self.known_hosts.display()
+                    )
+                } else {
+                    format!(
+                        "host key for {}:{} is not recorded and known-hosts = \"strict\"; \
+                         add it to {} or set known-hosts = \"tofu\"",
+                        self.host,
+                        self.port,
+                        self.known_hosts.display()
+                    )
+                };
+                *self.mismatch.lock().unwrap() = Some(reason);
                 false
             }
         }
@@ -133,6 +186,43 @@ impl client::Handler for HostKeyPolicy {
             PublicKeyOrCertificate::Certificate(_) => Ok(false),
         }
     }
+
+    /// A remote forward (`ssh -R`) connection arrived: accept it and copy
+    /// bytes to the configured local target.
+    async fn server_channel_open_forwarded_tcpip(
+        &mut self,
+        channel: russh::Channel<client::Msg>,
+        _connected_address: &str,
+        _connected_port: u32,
+        _originator_address: &str,
+        _originator_port: u32,
+        reply: client::ChannelOpenHandle,
+        _session: &mut russh::client::Session,
+    ) -> std::result::Result<(), Self::Error> {
+        let target = *self.forward_target.lock().unwrap();
+        match target {
+            Some(addr) => {
+                reply.accept().await;
+                tokio::spawn(async move {
+                    match tokio::net::TcpStream::connect(addr).await {
+                        Ok(mut local) => {
+                            let mut remote = channel.into_stream();
+                            let _ = tokio::io::copy_bidirectional(&mut local, &mut remote).await;
+                        }
+                        Err(_) => {
+                            let _ = channel.close().await;
+                        }
+                    }
+                });
+            }
+            None => {
+                reply
+                    .reject(russh::ChannelOpenFailure::AdministrativelyProhibited)
+                    .await;
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Shared state for one node: connection slot, channel limiter, credentials.
@@ -143,6 +233,9 @@ struct NodeConn {
     known_hosts: PathBuf,
     channels: Arc<Semaphore>,
     conn: RwLock<Option<Arc<Handle<HostKeyPolicy>>>>,
+    /// Local target for `ssh -R` forwarded channels; shared with the
+    /// connection handler so it survives reconnects.
+    forward_target: Arc<std::sync::Mutex<Option<SocketAddr>>>,
 }
 
 impl NodeConn {
@@ -160,6 +253,7 @@ impl NodeConn {
             known_hosts,
             channels: Arc::new(Semaphore::new(max_channels.max(1))),
             conn: RwLock::new(None),
+            forward_target: Arc::new(std::sync::Mutex::new(None)),
         }
     }
 
@@ -176,8 +270,10 @@ impl NodeConn {
         let policy = HostKeyPolicy {
             host: self.target.address.to_string(),
             port: self.target.ssh.port,
+            mode: self.target.ssh.known_hosts,
             known_hosts: self.known_hosts.clone(),
             mismatch: Arc::clone(&mismatch),
+            forward_target: Arc::clone(&self.forward_target),
         };
         let mut handle = match tokio::time::timeout(
             CONNECT_TIMEOUT,
@@ -324,6 +420,32 @@ pub struct SshSession {
     conn: Arc<NodeConn>,
 }
 
+/// What to do after a channel operation failed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RetryAction {
+    /// Reconnect and run the op once more.
+    Retry,
+    /// The connection dropped during a mutating op: report `TransportLost`.
+    TransportLost,
+    /// Surface the original error.
+    Fail,
+}
+
+/// Retry policy: only read-only operations are retried, and only once.
+/// A mutating operation whose connection dropped is never replayed.
+fn retry_action(retryable: bool, attempt: usize, connection_closed: bool) -> RetryAction {
+    if !connection_closed {
+        return RetryAction::Fail;
+    }
+    if retryable && attempt < 2 {
+        RetryAction::Retry
+    } else if retryable {
+        RetryAction::Fail
+    } else {
+        RetryAction::TransportLost
+    }
+}
+
 impl SshSession {
     /// Run a command on a freshly opened channel and collect its output.
     /// `stdin`, when given, is written to the channel and closed with EOF
@@ -406,24 +528,33 @@ impl SshSession {
     }
 
     /// Acquire a channel slot, resolve the connection, run `op` under a timeout.
-    async fn with_channel<T, F, Fut>(&self, timeout: Duration, op: F) -> Result<T>
+    async fn with_channel<T, F, Fut>(&self, timeout: Duration, retryable: bool, op: F) -> Result<T>
     where
         F: FnOnce(Arc<Handle<HostKeyPolicy>>) -> Fut + Clone,
         Fut: Future<Output = Result<T>>,
     {
-        // One retry when the connection died mid-op (sshd restart, transient
-        // RST, a dropped channel on long uploads): `handle()` reconnects, and
-        // both exec and write_file are idempotent at the transport level.
+        // Read-only ops are retried once when the connection died mid-op
+        // (sshd restart, transient RST, a dropped channel on long uploads):
+        // `handle()` reconnects. Mutating ops are never replayed — the
+        // remote side may already have executed them.
         let mut attempt = 0;
         loop {
             attempt += 1;
-            let result = self.with_channel_once(timeout, op.clone()).await;
-            match result {
+            match self.with_channel_once(timeout, op.clone()).await {
                 Ok(value) => return Ok(value),
                 Err(err) => {
-                    let retryable = attempt < 2 && self.conn.is_closed_or_absent().await;
-                    if !retryable {
-                        return Err(err).wrap_err_with(|| format!("ssh {}", self.conn.label()));
+                    let closed = self.conn.is_closed_or_absent().await;
+                    match retry_action(retryable, attempt, closed) {
+                        RetryAction::Retry => continue,
+                        RetryAction::TransportLost => {
+                            return Err(miette::Report::new(TransportLost::new(
+                                self.conn.label(),
+                                err.to_string(),
+                            )));
+                        }
+                        RetryAction::Fail => {
+                            return Err(err).wrap_err_with(|| format!("ssh {}", self.conn.label()));
+                        }
                     }
                 }
             }
@@ -466,7 +597,7 @@ impl Session for SshSession {
         let (command, stdin) = become_command(&self.conn.target.ssh, cmd);
         let timeout = cmd.timeout.unwrap_or(EXEC_TIMEOUT);
         let mut out = self
-            .with_channel(timeout, |handle| {
+            .with_channel(timeout, !cmd.mutating, |handle| {
                 let command = command.clone();
                 let stdin = stdin.clone();
                 let redact = cmd.redact.clone();
@@ -492,7 +623,7 @@ impl Session for SshSession {
     ) -> Result<ExecOutput> {
         let (command, stdin) = become_command(&self.conn.target.ssh, cmd);
         let timeout = cmd.timeout.unwrap_or(EXEC_TIMEOUT);
-        let out = self
+        let result = self
             .with_channel_once(timeout, |handle| {
                 let command = command.clone();
                 let stdin = stdin.clone();
@@ -501,8 +632,19 @@ impl Session for SshSession {
                     Self::exec_on(&handle, &command, stdin.as_deref(), &redact, Some(sink)).await
                 }
             })
-            .await
-            .wrap_err_with(|| format!("ssh {}", self.conn.label()))?;
+            .await;
+        let out = match result {
+            Ok(out) => out,
+            Err(err) => {
+                if self.conn.is_closed_or_absent().await {
+                    return Err(miette::Report::new(TransportLost::new(
+                        self.conn.label(),
+                        err.to_string(),
+                    )));
+                }
+                return Err(err).wrap_err_with(|| format!("ssh {}", self.conn.label()));
+            }
+        };
         Ok(out)
     }
 
@@ -574,7 +716,8 @@ impl Session for SshSession {
         // Exit 3 marks "not a regular file / absent"; anything else is a real
         // failure (sha256sum missing, unreadable file, ...) and must surface.
         let command = format!("if [ -f {quoted} ]; then sha256sum {quoted}; else exit 3; fi");
-        let out = self.exec(&command).await?;
+        // A digest probe is read-only: the transport may retry it once.
+        let out = self.exec_cmd(&Cmd::probe(command)).await?;
         match out.exit_code {
             0 => {
                 let sum = out
@@ -604,12 +747,92 @@ impl Session for SshSession {
 
     async fn service_active(&self, name: &str) -> Result<bool> {
         let out = self
-            .exec(&format!("systemctl is-active -- {}", shell_quote(name)))
+            .exec_cmd(&Cmd::probe(format!(
+                "systemctl is-active -- {}",
+                shell_quote(name)
+            )))
             .await?;
         if out.exit_code == 127 {
             return Err(miette!("ssh: systemctl not found on node"));
         }
         Ok(out.stdout.trim() == "active")
+    }
+
+    /// Listen on `127.0.0.1:0` and tunnel every accepted connection to
+    /// `remote_addr` as seen from the node (`ssh -L`).
+    async fn forward_local(&self, remote_addr: SocketAddr) -> Result<LocalForward> {
+        let (listener, local_addr) = bind_local_forward()?;
+        let handle = self.conn.handle().await?;
+        let task = tokio::spawn(async move {
+            loop {
+                let (mut inbound, _peer) = match listener.accept().await {
+                    Ok(pair) => pair,
+                    Err(_) => break,
+                };
+                let handle = Arc::clone(&handle);
+                tokio::spawn(async move {
+                    let opened = handle
+                        .channel_open_direct_tcpip(
+                            remote_addr.ip().to_string(),
+                            u32::from(remote_addr.port()),
+                            "127.0.0.1",
+                            0,
+                        )
+                        .await;
+                    match opened {
+                        Ok(channel) => {
+                            let mut remote = channel.into_stream();
+                            let _ = tokio::io::copy_bidirectional(&mut inbound, &mut remote).await;
+                        }
+                        Err(_) => {
+                            let _ = inbound.shutdown().await;
+                        }
+                    }
+                });
+            }
+        });
+        Ok(LocalForward::new(local_addr, task.abort_handle()))
+    }
+
+    /// Ask the node to listen on `127.0.0.1:0` and tunnel connections back to
+    /// `local_addr` (`ssh -R`). The handler accepts the forwarded channels.
+    async fn forward_remote(&self, local_addr: SocketAddr) -> Result<RemoteForward> {
+        *self.conn.forward_target.lock().unwrap() = Some(local_addr);
+        let handle = self.conn.handle().await?;
+        let assigned = handle.tcpip_forward("127.0.0.1", 0).await.map_err(|e| {
+            miette!(
+                "ssh {}: remote forward request failed: {e}",
+                self.conn.label()
+            )
+        })?;
+        let remote_port = remote_forward_port(assigned)?;
+        Ok(RemoteForward { remote_port })
+    }
+}
+
+/// Bind the loopback listener for [`Session::forward_local`].
+fn bind_local_forward() -> Result<(tokio::net::TcpListener, SocketAddr)> {
+    let listener = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .map_err(|e| miette!("ssh: cannot bind local forward listener: {e}"))?;
+    listener
+        .set_nonblocking(true)
+        .map_err(|e| miette!("ssh: cannot configure local forward listener: {e}"))?;
+    let local_addr = listener
+        .local_addr()
+        .map_err(|e| miette!("ssh: cannot read local forward address: {e}"))?;
+    let listener = tokio::net::TcpListener::from_std(listener)
+        .map_err(|e| miette!("ssh: cannot register local forward listener: {e}"))?;
+    Ok((listener, local_addr))
+}
+
+/// Validate the port `tcpip_forward` assigned: 0 means the server refused to
+/// pick one, and anything above `u16` cannot be advertised.
+fn remote_forward_port(assigned: u32) -> Result<u16> {
+    match u16::try_from(assigned) {
+        Ok(port) if port != 0 => Ok(port),
+        _ => Err(miette!(
+            "ssh: remote forward returned invalid port {assigned}"
+        )),
     }
 }
 
@@ -619,7 +842,7 @@ impl SshSession {
     /// line as the password. Returns the byte count and local sha256.
     async fn stage_source(&self, tmp: &str, src: UploadSource) -> Result<(u64, String)> {
         let tmp = tmp.to_owned();
-        self.with_channel(WRITE_TIMEOUT, |handle| {
+        self.with_channel(WRITE_TIMEOUT, false, |handle| {
             let tmp = tmp.clone();
             let src = src.clone();
             async move { Self::stage_source_on(&handle, &tmp, src).await }
@@ -1146,6 +1369,7 @@ mod tests {
             port: 22,
             r#become: mode,
             become_password: password.map(Into::into),
+            known_hosts: Default::default(),
             auth: SshAuth::Password {
                 password: "fake-ssh-password".into(),
             },
@@ -1404,5 +1628,122 @@ mod tests {
                 "upload path grew peak RSS by {grew} KiB; it must stream, not buffer"
             );
         }
+    }
+
+    // -- retry policy (fake connection state) ----------------------------
+
+    #[test]
+    fn mutating_command_loss_is_never_retried() {
+        // A dropped connection during a mutating command surfaces a typed
+        // TransportLost on the first attempt and on any later one.
+        assert_eq!(retry_action(false, 1, true), RetryAction::TransportLost);
+        assert_eq!(retry_action(false, 2, true), RetryAction::TransportLost);
+    }
+
+    #[test]
+    fn readonly_probe_retries_exactly_once() {
+        assert_eq!(retry_action(true, 1, true), RetryAction::Retry);
+        assert_eq!(retry_action(true, 2, true), RetryAction::Fail);
+        assert_eq!(retry_action(true, 3, true), RetryAction::Fail);
+    }
+
+    #[test]
+    fn errors_on_a_live_connection_are_not_retried() {
+        assert_eq!(retry_action(true, 1, false), RetryAction::Fail);
+        assert_eq!(retry_action(false, 1, false), RetryAction::Fail);
+    }
+
+    #[test]
+    fn transport_lost_is_a_typed_diagnostic() {
+        let report = miette::Report::new(TransportLost::new("n1", "connection reset"));
+        assert!(report.downcast_ref::<TransportLost>().is_some());
+        assert_eq!(
+            report.downcast_ref::<TransportLost>().unwrap().operation,
+            "n1"
+        );
+    }
+
+    // -- host-key policy (pure) ------------------------------------------
+
+    #[test]
+    fn strict_rejects_an_unknown_host() {
+        assert_eq!(
+            host_key_decision(HostKeyMode::Strict, Ok(false)),
+            HostKeyDecision::Reject
+        );
+    }
+
+    #[test]
+    fn tofu_and_accept_new_learn_an_unknown_host() {
+        for mode in [HostKeyMode::Tofu, HostKeyMode::AcceptNew] {
+            assert_eq!(
+                host_key_decision(mode, Ok(false)),
+                HostKeyDecision::Learn,
+                "{mode:?} must learn an unknown host"
+            );
+        }
+    }
+
+    #[test]
+    fn a_matching_recorded_key_is_accepted_in_every_mode() {
+        for mode in [
+            HostKeyMode::Tofu,
+            HostKeyMode::Strict,
+            HostKeyMode::AcceptNew,
+        ] {
+            assert_eq!(host_key_decision(mode, Ok(true)), HostKeyDecision::Accept);
+        }
+    }
+
+    #[test]
+    fn a_mismatched_recorded_key_is_rejected_in_every_mode() {
+        for mode in [
+            HostKeyMode::Tofu,
+            HostKeyMode::Strict,
+            HostKeyMode::AcceptNew,
+        ] {
+            assert_eq!(
+                host_key_decision(mode, Err(())),
+                HostKeyDecision::Reject,
+                "{mode:?} must reject a key that disagrees with the store"
+            );
+        }
+    }
+
+    // -- forwarding ------------------------------------------------------
+
+    #[test]
+    fn remote_forward_port_validates_the_server_reply() {
+        assert_eq!(remote_forward_port(2222).unwrap(), 2222);
+        assert_eq!(remote_forward_port(1).unwrap(), 1);
+        assert!(remote_forward_port(0).is_err(), "0 means no port assigned");
+        assert!(
+            remote_forward_port(u32::from(u16::MAX) + 1).is_err(),
+            "ports above u16 cannot be advertised"
+        );
+    }
+
+    #[tokio::test]
+    async fn local_forward_binds_loopback_and_stops_on_drop() {
+        let (listener, addr) = bind_local_forward().unwrap();
+        assert!(addr.ip().is_loopback(), "must bind 127.0.0.1, got {addr}");
+        assert_ne!(addr.port(), 0, "the OS must assign an ephemeral port");
+
+        let task = tokio::spawn(async move {
+            loop {
+                if listener.accept().await.is_err() {
+                    break;
+                }
+            }
+        });
+        let forward = LocalForward::new(addr, task.abort_handle());
+        assert_eq!(forward.local_addr, addr);
+        drop(forward);
+
+        let joined = task.await;
+        assert!(
+            joined.unwrap_err().is_cancelled(),
+            "dropping LocalForward must abort the listener task"
+        );
     }
 }

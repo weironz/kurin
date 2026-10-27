@@ -16,6 +16,7 @@ expression: view(&t)
                 port: 22,
                 become: Auto,
                 become_password: None,
+                known_hosts: Tofu,
                 auth: PrivateKey {
                     key_path: "/root/.ssh/id_ed25519",
                     passphrase: None,
@@ -34,6 +35,7 @@ expression: view(&t)
                 port: 22,
                 become: Auto,
                 become_password: None,
+                known_hosts: Tofu,
                 auth: PrivateKey {
                     key_path: "/root/.ssh/id_ed25519",
                     passphrase: None,
@@ -52,6 +54,7 @@ expression: view(&t)
                 port: 22,
                 become: Auto,
                 become_password: None,
+                known_hosts: Tofu,
                 auth: PrivateKey {
                     key_path: "/root/.ssh/id_ed25519",
                     passphrase: None,
@@ -70,6 +73,7 @@ expression: view(&t)
                 port: 22,
                 become: Auto,
                 become_password: None,
+                known_hosts: Tofu,
                 auth: PrivateKey {
                     key_path: "/root/.ssh/id_ed25519",
                     passphrase: None,

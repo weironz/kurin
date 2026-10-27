@@ -17,7 +17,7 @@ use miette::Result;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
 use tokio::task::JoinSet;
 
-use crate::engine::{Drift, Event, Outcome, PlannedTask, Session};
+use crate::engine::{Drift, Event, Outcome, PlannedTask, Session, TransportLost};
 use crate::plan::Plan;
 use crate::state::RunState;
 
@@ -169,6 +169,14 @@ pub async fn run_with(
     Ok(())
 }
 
+/// Find a [`TransportLost`] anywhere in the error chain (tasks may add
+/// context around a transport failure).
+fn transport_lost_reason(err: &miette::Report) -> Option<String> {
+    err.chain()
+        .find_map(|cause| cause.downcast_ref::<TransportLost>())
+        .map(|lost| lost.to_string())
+}
+
 async fn execute_one(
     planned: PlannedTask,
     pool: Arc<dyn SessionPool>,
@@ -205,7 +213,15 @@ async fn execute_one(
         }
 
         let started = Instant::now();
-        let outcome = task.apply(session.as_ref()).await?;
+        let outcome = match task.apply(session.as_ref()).await {
+            Ok(outcome) => outcome,
+            // A lost connection during a mutating apply means the remote
+            // state is unknown: re-probe instead of blindly retrying.
+            Err(err) => match transport_lost_reason(&err) {
+                Some(reason) => Outcome::Unknown(reason),
+                None => return Err(err),
+            },
+        };
         let ms = started.elapsed().as_millis();
 
         match outcome {
@@ -765,5 +781,67 @@ mod tests {
         assert!(matches!(get("prepare/sysctl@n1"), Some(Drift::Drifted(_))));
         assert!(matches!(get("preflight/preflight@n1"), Some(Drift::InSync)));
         assert_eq!(drifted.applies() + in_sync.applies(), 0);
+    }
+
+    /// A task whose apply loses the connection: the executor must re-probe
+    /// (not retry) and reconcile when the re-probe is in sync.
+    struct LostTask {
+        checks: Mutex<VecDeque<Drift>>,
+        applies: AtomicUsize,
+    }
+
+    #[async_trait::async_trait]
+    impl Task for LostTask {
+        fn id(&self) -> String {
+            "prepare/lost@n1".into()
+        }
+        fn stage(&self) -> Stage {
+            Stage::Prepare
+        }
+        fn node(&self) -> &str {
+            "n1"
+        }
+        fn describe(&self) -> String {
+            "lost apply".into()
+        }
+        async fn check(&self, _session: &dyn Session) -> Result<Drift> {
+            Ok(self.checks.lock().unwrap().pop_front().expect("scripted"))
+        }
+        async fn apply(&self, _session: &dyn Session) -> Result<Outcome> {
+            self.applies.fetch_add(1, Ordering::SeqCst);
+            Err(miette::Report::new(TransportLost::new(
+                "n1",
+                "connection reset by peer",
+            )))
+        }
+    }
+
+    #[tokio::test]
+    async fn transport_lost_during_apply_is_reprobed_not_retried() {
+        let task = Arc::new(LostTask {
+            checks: Mutex::new(vec![Drift::Drifted("needs change".into()), Drift::InSync].into()),
+            applies: AtomicUsize::new(0),
+        });
+        let mut plan = plan_with(vec![task.clone()], &[Stage::Prepare]);
+        let mut events = Vec::new();
+        run(&mut plan, &pool(), &mut |e| events.push(e))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            task.applies.load(Ordering::SeqCst),
+            1,
+            "a lost mutating apply must not be retried"
+        );
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, Event::TaskReconciled { .. })),
+            "the re-probe should reconcile: {events:?}"
+        );
+        assert!(
+            !events.iter().any(|e| matches!(e, Event::TaskFailed { .. })),
+            "a reconciled task is not a failure: {events:?}"
+        );
     }
 }

@@ -193,7 +193,26 @@ pub struct SshDefaults {
     /// sudo password for logins whose sudo is not passwordless; fed over
     /// the SSH channel's stdin, never a command line.
     pub become_password: Option<String>,
+    /// Host-key verification policy (default "tofu").
+    pub known_hosts: Option<HostKeyMode>,
     pub auth: Option<SshAuth>,
+}
+
+/// What to do when a host key is not yet recorded.
+///
+/// A key that *is* recorded but does not match is always rejected, in every
+/// mode: that is the signal of a rebuilt node (remove the stale entry) or of
+/// an interception attempt.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum HostKeyMode {
+    /// Trust on first use: learn unknown hosts, reject mismatches (default).
+    #[default]
+    Tofu,
+    /// Reject unknown hosts; only keys already in the store are accepted.
+    Strict,
+    /// Learn unknown hosts without prompting; reject mismatches.
+    AcceptNew,
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -216,6 +235,9 @@ pub struct NodeConfig {
     /// Per-node sudo password override.
     #[serde(default)]
     pub become_password: Option<String>,
+    /// Per-node host-key policy override.
+    #[serde(default)]
+    pub known_hosts: Option<HostKeyMode>,
     /// Per-node auth overrides cluster-level defaults.
     #[serde(default)]
     pub auth: Option<SshAuth>,
@@ -268,6 +290,7 @@ impl std::fmt::Debug for SshDefaults {
                 "become_password",
                 &self.become_password.as_ref().map(|_| "******"),
             )
+            .field("known_hosts", &self.known_hosts)
             .field("auth", &self.auth)
             .finish()
     }

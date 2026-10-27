@@ -341,6 +341,7 @@ mod tests {
                 port: 22,
                 r#become: kurin_config::BecomeMode::Auto,
                 become_password: None,
+                known_hosts: Default::default(),
                 auth: SshAuth::PrivateKey {
                     key_path: "~/.ssh/id_ed25519".into(),
                     passphrase: None,

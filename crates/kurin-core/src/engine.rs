@@ -1,6 +1,7 @@
 //! Engine contract (W0). The executor sees only these traits plus the
 //! plan graph; SSH/artifact/CLI live behind them.
 
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -8,6 +9,72 @@ use std::time::{Duration, Instant};
 use miette::Result;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
+
+/// The SSH connection died while a mutating operation was in flight.
+///
+/// The remote side may or may not have executed the command, so the engine
+/// must re-probe instead of retrying. Read-only probes never produce this:
+/// they are retried once transparently.
+#[derive(Debug, thiserror::Error, miette::Diagnostic)]
+#[error("transport lost during `{operation}`: {reason}")]
+#[diagnostic(
+    code(kurin::transport_lost),
+    help("the remote state is unknown; re-probe the node before retrying")
+)]
+pub struct TransportLost {
+    /// What was being attempted (e.g. `exec` on the node label).
+    pub operation: String,
+    /// Underlying connection error.
+    pub reason: String,
+}
+
+impl TransportLost {
+    pub fn new(operation: impl Into<String>, reason: impl Into<String>) -> Self {
+        Self {
+            operation: operation.into(),
+            reason: reason.into(),
+        }
+    }
+}
+
+/// A local TCP listener tunnelled to a remote address (`ssh -L`).
+///
+/// Dropping it stops accepting new connections and aborts the listener task;
+/// already-forwarded connections close when their copy loop ends.
+pub struct LocalForward {
+    /// The bound loopback address clients connect to.
+    pub local_addr: SocketAddr,
+    stop: Option<tokio::task::AbortHandle>,
+}
+
+impl LocalForward {
+    pub fn new(local_addr: SocketAddr, stop: tokio::task::AbortHandle) -> Self {
+        Self {
+            local_addr,
+            stop: Some(stop),
+        }
+    }
+
+    /// Stop the listener now (also runs on drop).
+    pub fn stop(&mut self) {
+        if let Some(handle) = self.stop.take() {
+            handle.abort();
+        }
+    }
+}
+
+impl Drop for LocalForward {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
+/// A remote TCP listener tunnelled to a local address (`ssh -R`).
+#[derive(Debug, Clone)]
+pub struct RemoteForward {
+    /// Port the server assigned on its loopback interface.
+    pub remote_port: u16,
+}
 
 /// Result of a remote probe: is the node already in the desired state?
 #[derive(Debug, Clone)]
@@ -269,6 +336,21 @@ pub trait Session: Send + Sync {
     async fn file_sha256(&self, path: &str) -> Result<Option<String>>;
     /// `systemctl is-active <name>` == active.
     async fn service_active(&self, name: &str) -> Result<bool>;
+    /// Listen on `127.0.0.1:0` and tunnel each accepted connection to
+    /// `remote_addr` through the node (`ssh -L`). The returned handle owns
+    /// the listener; dropping it stops accepting.
+    async fn forward_local(&self, _remote_addr: SocketAddr) -> Result<LocalForward> {
+        Err(miette::miette!(
+            "ssh: this transport does not support local forwarding"
+        ))
+    }
+    /// Ask the node to listen on `127.0.0.1:0` and tunnel connections back to
+    /// `local_addr` (`ssh -R`). Returns the port the server assigned.
+    async fn forward_remote(&self, _local_addr: SocketAddr) -> Result<RemoteForward> {
+        Err(miette::miette!(
+            "ssh: this transport does not support remote forwarding"
+        ))
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]

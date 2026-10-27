@@ -80,6 +80,7 @@
 ## 偏离记录
 
 - WP-00：`ScriptedSession` 在 `(exit, stdout, stderr)` 之外增加了「命令已执行但传输中断」的应答与副作用文件，用于覆盖 `Outcome::Unknown → 重新探测` 路径；`cli_output` 快照对任务耗时与阶段内行序做归一化（并发完成顺序不在 v1 契约内）。
+- WP-08：`TransportLost` 定义在 `kurin-core::engine`（SSH 返回该错误，执行器 downcast 后按 `Outcome::Unknown` 重新探测）；`forward_remote` 的完整数据回传仅做了请求/端口与回调接线，端到端验证留给 WP-77。
 - WP-04：02 §3.4 的「discover 先于计划构建」与「计划树包含 discover 阶段」按保守方式统一：discover 在构建计划前执行，计划中的 `discover` 阶段是只读记录（check InSync / apply Verified）。`Arch` 移到 `kurin-core::arch`，`kurin-artifact` 继续 re-export。
 - WP-05：`exec_stream` 不做透明重试（流式重放会重复行/副作用）；捕获上限按 stdout/stderr 各自 16 MiB 计算，sink 仍收到每一行。
 - WP-03：`become` 是 Rust 保留字，运行期字段写作 `r#become`（配置键不变）；「节点 become=none + 继承集群 become-password」按跨字段冲突拒绝；无新依赖。集成时补上了 `SshDefaults`/`NodeConfig`/`RegistryConfig`/`Cluster` 的 Debug 脱敏（含 `Cluster.source` 原文），并加测试。
@@ -92,6 +93,7 @@
 
 （随 WP 完成追加）
 
+- WP-08：`just tier0 tier0-test`；转发集成 `cargo test -p kurin --test ssh_docker -- --ignored --nocapture`。
 - WP-04：`e2e/tier1/mixed-arch.md`（x86 控制机 + qemu/multipass arm64 节点，含 `--dry-run --check` 断言 discover 阶段与 arm64 制品行、离线 `--arch amd64,arm64`）；回归 `just tier1`（up/offline/precheck/nonroot）与 `just tier2` 升级路径。
 - WP-05：`just tier1-offline`（最大上传路径），记录上传期间控制机 RSS 峰值，确认无整文件缓冲回归。
 - WP-03：`e2e/tier1/nonroot.sh`（multipass 中 ubuntu 用户 + 免密 sudo，单节点 create + delete）；回归 `just tier0-test`、`just tier1`。

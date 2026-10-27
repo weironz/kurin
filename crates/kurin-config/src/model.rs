@@ -10,8 +10,8 @@ use ipnet::Ipv4Net;
 use semver::Version;
 
 use crate::config::{
-    BecomeMode, ClusterConfig, CniConfig, Distribution, HaMode, NodeRole, RegistryKind,
-    RuntimeKind, SshAuth, StorageKind, CONFIG_VERSION,
+    BecomeMode, ClusterConfig, CniConfig, Distribution, HaMode, HostKeyMode, NodeRole,
+    RegistryKind, RuntimeKind, SshAuth, StorageKind, CONFIG_VERSION,
 };
 use crate::error::{ConfigError, Result};
 
@@ -40,6 +40,8 @@ pub struct ResolvedSsh {
     pub r#become: BecomeMode,
     /// sudo password, when this login's sudo is not passwordless.
     pub become_password: Option<String>,
+    /// Host-key verification policy (node override > `[ssh]` default).
+    pub known_hosts: HostKeyMode,
     pub auth: SshAuth,
 }
 
@@ -55,6 +57,7 @@ impl fmt::Debug for ResolvedSsh {
                 "become_password",
                 &self.become_password.as_ref().map(|_| "******"),
             )
+            .field("known_hosts", &self.known_hosts)
             .field("auth", &self.auth)
             .finish()
     }
@@ -163,6 +166,7 @@ impl Cluster {
         // node override > [ssh] default > auto.
         let default_become = cfg.ssh.r#become.unwrap_or_default();
         let default_become_password = cfg.ssh.become_password;
+        let default_known_hosts = cfg.ssh.known_hosts.unwrap_or_default();
 
         let mut nodes = Vec::with_capacity(cfg.nodes.len());
         for (name, n) in cfg.nodes {
@@ -184,6 +188,7 @@ impl Cluster {
                     become_password: n
                         .become_password
                         .or_else(|| default_become_password.clone()),
+                    known_hosts: n.known_hosts.unwrap_or(default_known_hosts),
                     auth,
                 },
                 labels: n.labels,

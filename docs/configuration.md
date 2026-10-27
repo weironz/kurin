@@ -31,6 +31,7 @@ user = "root"                    # 缺省 root；节点级可覆盖
 port = 22
 become = "auto"                  # 非 root 登录的提权方式："auto" | "sudo" | "none"
 become-password = "…"            # sudo 需要密码时使用（经加密通道 stdin 传入）
+known-hosts = "tofu"             # 主机密钥策略："tofu"（默认）| "strict" | "accept-new"
 
 [ssh.auth]                       # 集群默认鉴权；节点级可覆盖
 method = "private_key"           # "private_key" | "password"
@@ -78,6 +79,7 @@ become = "auto"                  # 节点级提权覆盖（缺省继承 [ssh]）
 become-password = "…"            # 节点级 sudo 密码覆盖（缺省继承 [ssh]）
 arch = "amd64"                   # 可选："amd64" | "arm64"。仅作 --dry-run 回退；
                                  # 实际运行时 discover 阶段探测的架构优先。
+known-hosts = "strict"           # 节点级主机密钥策略覆盖（缺省继承 [ssh]）
 labels = { "env" = "prod" }    # 生效方式见下  节点标签
 
 [nodes.master01.auth]           # 节点级鉴权覆盖（结构同 [ssh.auth]）
@@ -274,6 +276,24 @@ role = "worker"
 become = "sudo"                # 节点级覆盖
 become-password = "s3cret"     # 该节点的 sudo 需要密码
 ```
+
+### `[ssh] known-hosts` / 节点级 `known-hosts`（主机密钥策略）
+
+主机密钥记录在 `$XDG_CACHE_HOME/kurin/known_hosts`（缺省
+`~/.cache/kurin/known_hosts`）。解析顺序：**节点级 `known-hosts` >
+集群 `[ssh] known-hosts` > `tofu`**。
+
+| 值 | 未记录的主机 | 已记录但密钥不匹配 |
+|---|---|---|
+| `tofu`（默认） | 学习并记录（首次使用即信任） | **拒绝** |
+| `accept-new` | 学习并记录，不提示 | **拒绝** |
+| `strict` | **拒绝**，错误信息给出 known_hosts 路径与修复方式 | **拒绝** |
+
+- 三者对“已记录密钥不匹配”一律拒绝：这要么是节点重装（从 known_hosts 删除
+  旧条目），要么是中间人。错误文本会指出主机、端口与 known_hosts 路径。
+- `strict` 适合生产：先手动把节点公钥写入 known_hosts（`ssh-keyscan -p <port>
+  <host> >> ~/.cache/kurin/known_hosts`），再运行 kurin。
+- 主机密钥不匹配不会被重试（重试无法自愈），连接直接失败。
 
 ### 节点名
 

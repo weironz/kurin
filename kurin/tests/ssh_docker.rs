@@ -122,6 +122,7 @@ impl TestNode {
                         port: self.port,
                         r#become: kurin_config::BecomeMode::Auto,
                         become_password: None,
+                        known_hosts: kurin_config::HostKeyMode::Tofu,
                         auth,
                     },
                 ),
@@ -325,5 +326,36 @@ async fn connection_reused_across_concurrent_channels() {
     assert_eq!(
         accepted, 1,
         "expected exactly one SSH login, got {accepted}"
+    );
+}
+
+/// `ssh -L`: the local listener must tunnel to the node's loopback. The
+/// container's own sshd gives us a deterministic service to reach.
+#[tokio::test]
+#[ignore = "tier-0: needs a docker daemon"]
+async fn local_forward_reaches_the_node_loopback() {
+    use tokio::io::AsyncReadExt as _;
+
+    let node = TestNode::start();
+    let pool = node.password_pool();
+    let session = pool.session("t0").unwrap();
+
+    let forward = session
+        .forward_local("127.0.0.1:22".parse().unwrap())
+        .await
+        .unwrap();
+
+    let mut stream = tokio::net::TcpStream::connect(forward.local_addr)
+        .await
+        .unwrap();
+    let mut banner = [0u8; 64];
+    let read = tokio::time::timeout(Duration::from_secs(10), stream.read(&mut banner))
+        .await
+        .expect("banner read timed out")
+        .expect("banner read failed");
+    let text = String::from_utf8_lossy(&banner[..read]);
+    assert!(
+        text.starts_with("SSH-2.0-"),
+        "expected sshd's banner through the tunnel, got {text:?}"
     );
 }

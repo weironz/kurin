@@ -40,6 +40,23 @@ All notable changes to kurin. Format follows Keep a Changelog; semver.
   (amd64|arm64) is the `--dry-run` fallback (warned when unset), and
   `kurin artifact --arch amd64,arm64` builds an offline bundle covering
   every architecture.
+- `[ssh] known-hosts = "tofu" | "strict" | "accept-new"` (default `tofu`,
+  node-level override): `strict` refuses unknown hosts instead of trusting
+  them, `accept-new` learns them non-interactively. All modes reject a key
+  that disagrees with the recorded entry, with the known_hosts path in the
+  error. See `docs/configuration.md`.
+- SSH port forwarding primitives: `Session::forward_local` (`ssh -L`,
+  binds `127.0.0.1:0`, one `direct-tcpip` channel per connection, stops on
+  `Drop`) and `Session::forward_remote` (`ssh -R`, returns the assigned
+  port). These are the ClusterApi tunnel building blocks.
+
+### Changed
+- Mutating SSH commands are no longer transparently retried after a
+  transport loss: the remote side may already have executed them. The
+  transport returns a typed `kurin::transport_lost` error and the executor
+  re-probes the node (`Outcome::Unknown`), never blind-retrying. Read-only
+  probes (`Cmd::probe`/`readonly`, `file_sha256`, `service_active`) keep
+  their single retry.
 
 ### Fixed
 - `kurin upgrade`: a failed `kubectl drain` now aborts that node's upgrade
