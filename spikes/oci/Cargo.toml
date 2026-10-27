@@ -1,0 +1,19 @@
+[workspace]
+
+[package]
+name = "kurin-oci-spike"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+oci-client = { version = "0.16", default-features = false, features = ["rustls-tls"] }
+oci-spec = "0.9"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+rusqlite = { version = "0.37", features = ["bundled"] }
+serde_json = "1"
+sha2 = "0.10"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+zstd = "0.13"

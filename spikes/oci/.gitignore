@@ -1,0 +1,5 @@
+/target
+/compose/data/
+/compose/harbor/data/
+/compose/harbor/common/config/
+/compose/harbor/input/

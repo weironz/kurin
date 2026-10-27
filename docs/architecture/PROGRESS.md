@@ -34,7 +34,7 @@
 | WP-26 快速创建参数 | todo | | | `e2e/tier1/quick.sh`、`e2e/tier3/quick-ha.sh` | |
 | WP-27 --set 与 add nodes 快速参数 | todo | | | tier2 `add nodes --worker` | |
 | WP-28 --setup-ssh-key | todo | | | tier1 密码 + setup-key | |
-| WP-30 OCI spike | todo | | | | |
+| WP-30 OCI spike | done | 见提交 | 无 | 无 | 结论见 docs/architecture/spikes/30-oci.md；04 §8/§9 已按实测修正 |
 | WP-31 BlobStore 与 OCI layout | todo | | | | |
 | WP-32 包格式与 package create base | todo | | | | |
 | WP-33 package inspect/verify/push/pull | todo | | | | |

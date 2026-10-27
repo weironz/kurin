@@ -229,11 +229,11 @@ trusted-keys = ["/etc/kurin/cosign.pub"]                   # verify = "signature
 
 | 模块 | 依赖 | 说明 |
 |---|---|---|
-| `kurin-artifact::oci::layout` | `oci-spec` | 自己实现 OCI layout 读写（结构简单，避免引入重依赖） |
-| `kurin-artifact::oci::remote` | `oci-client`（ORAS 维护） | push/pull、分块上传、按 digest 跳过已存在的 blob |
+| `kurin-artifact::oci::layout` | `oci-spec` 0.9.x | 自己实现 OCI layout 读写（结构简单，避免引入重依赖）。版本必须与 `oci-client` 依赖的 `oci-spec` 一致（0.16.1 → 0.9.0），否则依赖图出现两份类型不互通的 crate（WP-30 实测） |
+| `kurin-artifact::oci::remote` | `oci-client`（ORAS 维护） | push/pull、分块上传、按 digest 跳过已存在的 blob。注意 0.16.1 的 `ImageIndexEntry` 没有 `artifactType` 字段：条目级 `artifactType` 必须用 `push_manifest_raw` 自行序列化（WP-30 实测） |
 | `kurin-artifact::store` | — | 内容寻址 blob 缓存，原子写入（`.part` → rename），`prune` |
 | `kurin-artifact::package` | `tar`、`zstd` | 包的创建、打开、校验、复制 |
-| 交叉编译 | — | `zstd-sys` 是 C 代码，需与 SQLite 一起在 x86_64 musl 与 aarch64 zig 下验证（WP-30 spike）；不可行时改用纯 Rust 的 `ruzstd`（只解压）+ gzip |
+| 交叉编译 | — | **已验证**（WP-30）：`zstd-sys`（C+汇编）、bundled SQLite、rustls 的 `aws-lc-rs` 在 `cargo zigbuild` 下 x86_64-musl 与 aarch64-musl 均构建成功，产物为静态 ELF；`ruzstd` + gzip 仅作应急，不需要启用。原生 `cargo build --target x86_64-unknown-linux-musl` 需要 `musl-gcc`（本机缺失时用 zigbuild） |
 
 ---
 
@@ -241,7 +241,7 @@ trusted-keys = ["/etc/kurin/cosign.pub"]                   # verify = "signature
 
 | 风险 | 缓解 |
 |---|---|
-| 部分仓库拒绝“子 manifest 不全”的多架构 index | spike 验证 zot、distribution、harbor；提供 `--full-multiarch`；kurin 管理的 zot/docker-registry 按需放宽校验 |
+| 部分仓库拒绝“子 manifest 不全”的多架构 index | **WP-30 实测**：zot v2.1.22 接受残缺 index；distribution v3.1.2 与 harbor 2.13.0 返回 400 `MANIFEST_BLOB_UNKNOWN`，且均无放宽配置。因此推送前必须补齐 index 引用的全部子 manifest；`--full-multiarch` 的语义是“补齐所有架构”，不是“允许残缺” |
 | 包体积大（多 CNI × 多架构） | `--cni`、`--arch` 裁剪；仓库形态天然去重；`bundle` 默认使用 zstd |
 | 节点没有 `curl` | facts 检测；没有时回退到该节点的 preload |
 | 仓库自签 CA | kurin 签发的 CA 已经分发到节点（0.4.0 已实现）；外部仓库通过 `[registry] ca-file` 提供 |
