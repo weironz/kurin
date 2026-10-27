@@ -1,0 +1,21 @@
+---
+source: kurin/tests/teardown.rs
+expression: render_tree(&plan)
+---
+├── stage: drain (2 tasks)
+│   ├── drain/drain@worker01 :: drain worker01 from the cluster (via master01)
+│   └── drain/delete-node-object@worker01 :: delete node object worker01 (via master01)
+├── stage: reset (2 tasks)
+│   ├── reset/kubeadm-reset@worker01 :: kubeadm reset -f
+│   └── reset/kubeadm-reset@master01 :: kubeadm reset -f
+├── stage: cleanup (8 tasks)
+│   ├── cleanup/stop-services@worker01 :: stop kubelet, containerd
+│   ├── cleanup/wipe-dirs@worker01 :: remove 22 kurin/distribution paths
+│   ├── cleanup/cni-cleanup@worker01 :: remove CNI devices and the 10.233.64.0/18 route
+│   ├── cleanup/iptables-cleanup@worker01 :: remove kube-proxy/CNI iptables chains
+│   ├── cleanup/stop-services@master01 :: stop kubelet, containerd
+│   ├── cleanup/wipe-dirs@master01 :: remove 22 kurin/distribution paths
+│   ├── cleanup/cni-cleanup@master01 :: remove CNI devices and the 10.233.64.0/18 route
+│   └── cleanup/iptables-cleanup@master01 :: remove kube-proxy/CNI iptables chains
+└── stage: local (1 tasks)
+    └── local/local-state-cleanup@local :: remove local state for cluster single

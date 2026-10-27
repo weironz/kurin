@@ -188,11 +188,23 @@ enum DeleteWhat {
         name: String,
         #[arg(short, long)]
         file: PathBuf,
+        /// Print the teardown plan without connecting or changing anything.
+        #[arg(long)]
+        dry_run: bool,
+        /// Additionally probe live nodes, annotating would-change/unchanged.
+        #[arg(long)]
+        check: bool,
     },
     /// Remove every node and destroy the cluster.
     Cluster {
         #[arg(short, long)]
         file: PathBuf,
+        /// Print the teardown plan without connecting or changing anything.
+        #[arg(long)]
+        dry_run: bool,
+        /// Additionally probe live nodes, annotating would-change/unchanged.
+        #[arg(long)]
+        check: bool,
     },
 }
 
@@ -587,8 +599,17 @@ async fn run(cli: Cli) -> Result<()> {
             AddWhat::Nodes { file, offline } => add_nodes(file, out, offline).await,
         },
         Commands::Delete(args) => match args.what {
-            DeleteWhat::Node { name, file } => delete_node_cmd(name, file, out).await,
-            DeleteWhat::Cluster { file } => delete_cluster_cmd(file, out).await,
+            DeleteWhat::Node {
+                name,
+                file,
+                dry_run,
+                check,
+            } => delete_node_cmd(name, file, out, dry_run, check).await,
+            DeleteWhat::Cluster {
+                file,
+                dry_run,
+                check,
+            } => delete_cluster_cmd(file, out, dry_run, check).await,
         },
         Commands::Create(args) => match args.what {
             CreateWhat::Config { print_versions } => {
@@ -986,57 +1007,121 @@ async fn add_nodes(file: PathBuf, out: OutputOpts, offline: Option<PathBuf>) -> 
     result
 }
 
-async fn delete_node_cmd(name: String, file: PathBuf, out: OutputOpts) -> Result<()> {
+/// Run a teardown plan: `--dry-run` prints the tree (after probing live
+/// nodes with `--check`), otherwise the executor runs it and the best-effort
+/// failures are summarized per node.
+///
+/// The tasks already print the historical `[node] ok step` lines through
+/// `tracing`, so the human renderer prints nothing per task: the executor's
+/// `done`/`skip` lines would duplicate the step report, and every teardown
+/// step is best-effort, so a `FAIL` line would claim the operation failed
+/// when it did not (the `warn:` line and the closing summary cover it).
+async fn run_teardown_plan(
+    plan: &mut kurin::Plan,
+    pool: &Arc<dyn kurin::SessionPool>,
+    run: &Arc<RunContext>,
+    out: OutputOpts,
+    dry_run: bool,
+    check: bool,
+) -> Result<()> {
+    if check {
+        kurin::executor::probe(plan, pool).await?;
+    }
+    if dry_run {
+        let tree = kurin::render::render_tree(plan);
+        if out.json_enabled() && !out.v2() {
+            let plan = serde_json::json!({ "plan": tree });
+            println!("{}", serde_json::to_string_pretty(&plan).into_diagnostic()?);
+        } else if !out.v2() {
+            print!("{tree}");
+        }
+        return Ok(());
+    }
+
+    let warnings = kurin::teardown::WarningSummary::new();
+    run.events.add_sink(warnings.clone());
+    let opts = kurin::executor::RunOptions {
+        plan_fingerprint: plan.fingerprint(),
+        ..Default::default()
+    };
+    let mut emit = |event: kurin::Event| {
+        if out.v2() {
+            return;
+        }
+        if out.json_enabled() {
+            println!("{}", kurin::render::event_json_line(&event));
+        }
+    };
+    kurin::executor::run_with_bus(plan, pool, run, &run.events, &mut emit, opts).await?;
+    if let Some(summary) = warnings.render() {
+        eprintln!("{summary}");
+    }
+    Ok(())
+}
+
+async fn delete_node_cmd(
+    name: String,
+    file: PathBuf,
+    out: OutputOpts,
+    dry_run: bool,
+    check: bool,
+) -> Result<()> {
     let cluster = load_config(&file)?;
-    let op_id = events::new_op_id();
-    let _lock = lock_cluster(&cluster, &op_id)?;
     let node = cluster
         .nodes
         .iter()
         .find(|n| n.name == name)
+        .cloned()
         .ok_or_else(|| miette::miette!("node {name:?} is not declared in {}", file.display()))?;
+    let op_id = events::new_op_id();
+    // `--dry-run` only reads; everything else mutates the cluster.
+    let _lock = if dry_run {
+        None
+    } else {
+        Some(lock_cluster(&cluster, &op_id)?)
+    };
     let pool: Arc<dyn kurin::SessionPool> =
         Arc::new(kurin::ssh::SshSessionPool::from_cluster(&cluster)?);
     let run = new_ephemeral_run_with_op_id(&cluster, op_id)?;
     let op = OpSession::start(&run, out)?;
     op.register_cluster(&cluster);
-    op.begin("delete-node", &cluster.name, "");
     let result: Result<()> = async {
-        // API session: first control-plane node that is not the target itself.
-        let api = cluster
-            .control_plane()
-            .find(|n| n.name != name)
-            .map(|n| n.name.clone());
-        let api_session = match api {
-            Some(cp) => match pool.get(&cp).await {
-                Ok(s) => Some(s),
-                Err(e) => {
-                    tracing::warn!(
-                        "warn: control-plane {cp} unreachable ({e}); deleting without drain"
-                    );
-                    None
-                }
-            },
-            None => None,
-        };
-        kurin::teardown::delete_node(&pool, &cluster, node, api_session.as_ref()).await
+        let mut plan = kurin::plan::build_delete(&cluster, &run, Some(&node))?;
+        op.begin("delete-node", &cluster.name, &plan.fingerprint());
+        run_teardown_plan(&mut plan, &pool, &run, out, dry_run, check).await
     }
     .await;
     op.finish(&result);
     result
 }
 
-async fn delete_cluster_cmd(file: PathBuf, out: OutputOpts) -> Result<()> {
+async fn delete_cluster_cmd(
+    file: PathBuf,
+    out: OutputOpts,
+    dry_run: bool,
+    check: bool,
+) -> Result<()> {
     let cluster = load_config(&file)?;
     let op_id = events::new_op_id();
-    let _lock = lock_cluster(&cluster, &op_id)?;
-    let pool: Arc<dyn kurin::SessionPool> =
-        Arc::new(kurin::ssh::SshSessionPool::from_cluster(&cluster)?);
+    let _lock = if dry_run {
+        None
+    } else {
+        Some(lock_cluster(&cluster, &op_id)?)
+    };
+    // The plan ends with a control-machine step; the wrapper answers the
+    // `local` node without an SSH connection.
+    let pool: Arc<dyn kurin::SessionPool> = kurin::teardown::with_local_node(Arc::new(
+        kurin::ssh::SshSessionPool::from_cluster(&cluster)?,
+    ));
     let run = new_ephemeral_run_with_op_id(&cluster, op_id)?;
     let op = OpSession::start(&run, out)?;
     op.register_cluster(&cluster);
-    op.begin("delete-cluster", &cluster.name, "");
-    let result = kurin::teardown::delete_cluster(&pool, &cluster).await;
+    let result: Result<()> = async {
+        let mut plan = kurin::plan::build_delete(&cluster, &run, None)?;
+        op.begin("delete-cluster", &cluster.name, &plan.fingerprint());
+        run_teardown_plan(&mut plan, &pool, &run, out, dry_run, check).await
+    }
+    .await;
     op.finish(&result);
     result
 }

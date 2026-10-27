@@ -1,0 +1,161 @@
+---
+source: kurin/tests/teardown.rs
+expression: "serde_json::to_string_pretty(&plan_matrix(&plan)).unwrap()"
+---
+{
+  "edges": [
+    "drain/drain@agent01 -> reset/k3s-uninstall@agent01",
+    "drain/drain@agent01 -> reset/k3s-uninstall@server01",
+    "drain/delete-node-object@agent01 -> reset/k3s-uninstall@agent01",
+    "drain/delete-node-object@agent01 -> reset/k3s-uninstall@server01",
+    "reset/k3s-uninstall@agent01 -> cleanup/stop-services@agent01",
+    "reset/k3s-uninstall@agent01 -> cleanup/wipe-dirs@agent01",
+    "reset/k3s-uninstall@agent01 -> cleanup/cni-cleanup@agent01",
+    "reset/k3s-uninstall@agent01 -> cleanup/iptables-cleanup@agent01",
+    "reset/k3s-uninstall@agent01 -> cleanup/stop-services@server01",
+    "reset/k3s-uninstall@agent01 -> cleanup/wipe-dirs@server01",
+    "reset/k3s-uninstall@agent01 -> cleanup/cni-cleanup@server01",
+    "reset/k3s-uninstall@agent01 -> cleanup/iptables-cleanup@server01",
+    "reset/k3s-uninstall@server01 -> cleanup/stop-services@agent01",
+    "reset/k3s-uninstall@server01 -> cleanup/wipe-dirs@agent01",
+    "reset/k3s-uninstall@server01 -> cleanup/cni-cleanup@agent01",
+    "reset/k3s-uninstall@server01 -> cleanup/iptables-cleanup@agent01",
+    "reset/k3s-uninstall@server01 -> cleanup/stop-services@server01",
+    "reset/k3s-uninstall@server01 -> cleanup/wipe-dirs@server01",
+    "reset/k3s-uninstall@server01 -> cleanup/cni-cleanup@server01",
+    "reset/k3s-uninstall@server01 -> cleanup/iptables-cleanup@server01",
+    "cleanup/stop-services@agent01 -> local/local-state-cleanup@local",
+    "cleanup/wipe-dirs@agent01 -> local/local-state-cleanup@local",
+    "cleanup/cni-cleanup@agent01 -> local/local-state-cleanup@local",
+    "cleanup/iptables-cleanup@agent01 -> local/local-state-cleanup@local",
+    "cleanup/stop-services@server01 -> local/local-state-cleanup@local",
+    "cleanup/wipe-dirs@server01 -> local/local-state-cleanup@local",
+    "cleanup/cni-cleanup@server01 -> local/local-state-cleanup@local",
+    "cleanup/iptables-cleanup@server01 -> local/local-state-cleanup@local",
+    "drain/drain@agent01 -> drain/delete-node-object@agent01",
+    "reset/k3s-uninstall@agent01 -> reset/k3s-uninstall@server01",
+    "cleanup/stop-services@agent01 -> cleanup/wipe-dirs@agent01",
+    "cleanup/stop-services@agent01 -> cleanup/cni-cleanup@agent01",
+    "cleanup/cni-cleanup@agent01 -> cleanup/iptables-cleanup@agent01",
+    "cleanup/stop-services@server01 -> cleanup/wipe-dirs@server01",
+    "cleanup/stop-services@server01 -> cleanup/cni-cleanup@server01",
+    "cleanup/cni-cleanup@server01 -> cleanup/iptables-cleanup@server01",
+    "cleanup/stop-services@agent01 -> cleanup/stop-services@server01",
+    "cleanup/stop-services@agent01 -> cleanup/wipe-dirs@server01",
+    "cleanup/stop-services@agent01 -> cleanup/cni-cleanup@server01",
+    "cleanup/stop-services@agent01 -> cleanup/iptables-cleanup@server01",
+    "cleanup/wipe-dirs@agent01 -> cleanup/stop-services@server01",
+    "cleanup/wipe-dirs@agent01 -> cleanup/wipe-dirs@server01",
+    "cleanup/wipe-dirs@agent01 -> cleanup/cni-cleanup@server01",
+    "cleanup/wipe-dirs@agent01 -> cleanup/iptables-cleanup@server01",
+    "cleanup/cni-cleanup@agent01 -> cleanup/stop-services@server01",
+    "cleanup/cni-cleanup@agent01 -> cleanup/wipe-dirs@server01",
+    "cleanup/cni-cleanup@agent01 -> cleanup/cni-cleanup@server01",
+    "cleanup/cni-cleanup@agent01 -> cleanup/iptables-cleanup@server01",
+    "cleanup/iptables-cleanup@agent01 -> cleanup/stop-services@server01",
+    "cleanup/iptables-cleanup@agent01 -> cleanup/wipe-dirs@server01",
+    "cleanup/iptables-cleanup@agent01 -> cleanup/cni-cleanup@server01",
+    "cleanup/iptables-cleanup@agent01 -> cleanup/iptables-cleanup@server01"
+  ],
+  "op": "DeleteCluster",
+  "phases": [
+    {
+      "phase": "drain",
+      "tasks": [
+        {
+          "describe": "drain agent01 from the cluster (via server01)",
+          "id": "drain/drain@agent01",
+          "node": "server01",
+          "policy": "BestEffort"
+        },
+        {
+          "describe": "delete node object agent01 (via server01)",
+          "id": "drain/delete-node-object@agent01",
+          "node": "server01",
+          "policy": "BestEffort"
+        }
+      ]
+    },
+    {
+      "phase": "reset",
+      "tasks": [
+        {
+          "describe": "k3s uninstall (script, else stop the unit)",
+          "id": "reset/k3s-uninstall@agent01",
+          "node": "agent01",
+          "policy": "BestEffort"
+        },
+        {
+          "describe": "k3s uninstall (script, else stop the unit)",
+          "id": "reset/k3s-uninstall@server01",
+          "node": "server01",
+          "policy": "BestEffort"
+        }
+      ]
+    },
+    {
+      "phase": "cleanup",
+      "tasks": [
+        {
+          "describe": "stop k3s",
+          "id": "cleanup/stop-services@agent01",
+          "node": "agent01",
+          "policy": "BestEffort"
+        },
+        {
+          "describe": "remove 25 kurin/distribution paths",
+          "id": "cleanup/wipe-dirs@agent01",
+          "node": "agent01",
+          "policy": "BestEffort"
+        },
+        {
+          "describe": "remove CNI devices and the 10.233.64.0/18 route",
+          "id": "cleanup/cni-cleanup@agent01",
+          "node": "agent01",
+          "policy": "BestEffort"
+        },
+        {
+          "describe": "remove kube-proxy/CNI iptables chains",
+          "id": "cleanup/iptables-cleanup@agent01",
+          "node": "agent01",
+          "policy": "BestEffort"
+        },
+        {
+          "describe": "stop k3s",
+          "id": "cleanup/stop-services@server01",
+          "node": "server01",
+          "policy": "BestEffort"
+        },
+        {
+          "describe": "remove 25 kurin/distribution paths",
+          "id": "cleanup/wipe-dirs@server01",
+          "node": "server01",
+          "policy": "BestEffort"
+        },
+        {
+          "describe": "remove CNI devices and the 10.233.64.0/18 route",
+          "id": "cleanup/cni-cleanup@server01",
+          "node": "server01",
+          "policy": "BestEffort"
+        },
+        {
+          "describe": "remove kube-proxy/CNI iptables chains",
+          "id": "cleanup/iptables-cleanup@server01",
+          "node": "server01",
+          "policy": "BestEffort"
+        }
+      ]
+    },
+    {
+      "phase": "local",
+      "tasks": [
+        {
+          "describe": "remove local state for cluster k3s-single",
+          "id": "local/local-state-cleanup@local",
+          "node": "local",
+          "policy": "BestEffort"
+        }
+      ]
+    }
+  ]
+}

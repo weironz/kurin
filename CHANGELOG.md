@@ -148,6 +148,26 @@ All notable changes to kurin. Format follows Keep a Changelog; semver.
   `FailurePolicy::BestEffort` publishes `task-warn` (v2) / `warn:` on the
   terminal and its successors still run. Cancellation stops new tasks,
   lets in-flight ones finish and reports `OpFinished { result: cancelled }`.
+- `delete node` and `delete cluster` run through the planner and executor
+  (WP-12, ADR-02). Every teardown step is a task with a convergence check —
+  `drain`, `delete-node-object`, `kubeadm-reset` / `k3s-uninstall`,
+  `stop-services`, `wipe-dirs`, `cni-cleanup`, `iptables-cleanup` and, for a
+  whole cluster, `local-state-cleanup` — so both commands gain
+  `--dry-run [--check]` (plan tree / drift) and a plan fingerprint.
+  `delete cluster` resets and wipes workers before the control plane
+  (explicit edges); the API-side steps run on the anchor control plane and
+  an unreachable anchor is a warning, not a failure. An unreachable node no
+  longer aborts the whole teardown: its steps warn and the rest of the
+  cluster is still cleaned up.
+- Teardown cleanup failures are explicit instead of silent: the old
+  `; true` steps became `FailurePolicy::BestEffort`, so a failing step
+  publishes `task-warn` (`warn:` on the terminal) and is listed per node in
+  the closing summary, while the command still exits 0. The terminal keeps
+  the historical `[node] ok <step>` lines; the executor's per-task
+  `done`/`skip` lines are not printed for teardown. `delete cluster` now
+  runs k3s's own `/usr/local/bin/k3s-uninstall.sh` when present (falling
+  back to `systemctl disable --now k3s`), and both commands remove leftover
+  CNI devices, the pod-CIDR route and kube-proxy/CNI iptables chains.
 
 ### Fixed
 - `kurin upgrade`: a failed `kubectl drain` now aborts that node's upgrade

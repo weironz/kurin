@@ -1,0 +1,14 @@
+---
+source: kurin/tests/teardown.rs
+expression: render_tree(&plan)
+---
+├── stage: drain (2 tasks)
+│   ├── drain/drain@agent01 :: drain agent01 from the cluster (via server01)
+│   └── drain/delete-node-object@agent01 :: delete node object agent01 (via server01)
+├── stage: reset (1 tasks)
+│   └── reset/k3s-uninstall@agent01 :: k3s uninstall (script, else stop the unit)
+└── stage: cleanup (4 tasks)
+    ├── cleanup/stop-services@agent01 :: stop k3s
+    ├── cleanup/wipe-dirs@agent01 :: remove 25 kurin/distribution paths
+    ├── cleanup/cni-cleanup@agent01 :: remove CNI devices and the 10.233.64.0/18 route
+    └── cleanup/iptables-cleanup@agent01 :: remove kube-proxy/CNI iptables chains

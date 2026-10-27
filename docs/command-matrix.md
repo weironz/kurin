@@ -20,9 +20,15 @@
 | | k8s（kubeadm） | k3s |
 |---|---|---|
 | add nodes | ✅（动态版本贯穿）| ✅ |
-| delete node | ✅（drain + kubeadm reset 清理）| ✅（k3s 语义清理：停服务 + `/var/lib/rancher`、`/etc/rancher`）|
-| delete cluster | ✅ | ✅ |
+| delete node | ✅（计划：drain + delete-node-object + `kubeadm reset` + 清理）| ✅（计划：`k3s-uninstall` + 停服务 + `/var/lib/rancher`、`/etc/rancher`）|
+| delete cluster | ✅（workers 先、control-plane 后）| ✅ |
+| `delete --dry-run [--check]` | ✅（计划树 / 漂移）| ✅ |
 | 单节点挂 node | ✅ | ✅ |
+
+删除的每一步都是计划中的任务，并带收敛判断（例如目录已不存在即
+`unchanged`）。清理步骤是显式的 `BestEffort`：失败会发 `task-warn`
+（终端 `warn:`）并在结尾按节点汇总，命令本身仍以 0 退出。锚点控制面
+不可达时 API 侧步骤（drain / delete node）跳过并告警，节点本身照常清理。
 
 ## upgrade
 

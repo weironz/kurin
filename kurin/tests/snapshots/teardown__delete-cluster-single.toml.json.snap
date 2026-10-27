@@ -1,0 +1,161 @@
+---
+source: kurin/tests/teardown.rs
+expression: "serde_json::to_string_pretty(&plan_matrix(&plan)).unwrap()"
+---
+{
+  "edges": [
+    "drain/drain@worker01 -> reset/kubeadm-reset@worker01",
+    "drain/drain@worker01 -> reset/kubeadm-reset@master01",
+    "drain/delete-node-object@worker01 -> reset/kubeadm-reset@worker01",
+    "drain/delete-node-object@worker01 -> reset/kubeadm-reset@master01",
+    "reset/kubeadm-reset@worker01 -> cleanup/stop-services@worker01",
+    "reset/kubeadm-reset@worker01 -> cleanup/wipe-dirs@worker01",
+    "reset/kubeadm-reset@worker01 -> cleanup/cni-cleanup@worker01",
+    "reset/kubeadm-reset@worker01 -> cleanup/iptables-cleanup@worker01",
+    "reset/kubeadm-reset@worker01 -> cleanup/stop-services@master01",
+    "reset/kubeadm-reset@worker01 -> cleanup/wipe-dirs@master01",
+    "reset/kubeadm-reset@worker01 -> cleanup/cni-cleanup@master01",
+    "reset/kubeadm-reset@worker01 -> cleanup/iptables-cleanup@master01",
+    "reset/kubeadm-reset@master01 -> cleanup/stop-services@worker01",
+    "reset/kubeadm-reset@master01 -> cleanup/wipe-dirs@worker01",
+    "reset/kubeadm-reset@master01 -> cleanup/cni-cleanup@worker01",
+    "reset/kubeadm-reset@master01 -> cleanup/iptables-cleanup@worker01",
+    "reset/kubeadm-reset@master01 -> cleanup/stop-services@master01",
+    "reset/kubeadm-reset@master01 -> cleanup/wipe-dirs@master01",
+    "reset/kubeadm-reset@master01 -> cleanup/cni-cleanup@master01",
+    "reset/kubeadm-reset@master01 -> cleanup/iptables-cleanup@master01",
+    "cleanup/stop-services@worker01 -> local/local-state-cleanup@local",
+    "cleanup/wipe-dirs@worker01 -> local/local-state-cleanup@local",
+    "cleanup/cni-cleanup@worker01 -> local/local-state-cleanup@local",
+    "cleanup/iptables-cleanup@worker01 -> local/local-state-cleanup@local",
+    "cleanup/stop-services@master01 -> local/local-state-cleanup@local",
+    "cleanup/wipe-dirs@master01 -> local/local-state-cleanup@local",
+    "cleanup/cni-cleanup@master01 -> local/local-state-cleanup@local",
+    "cleanup/iptables-cleanup@master01 -> local/local-state-cleanup@local",
+    "drain/drain@worker01 -> drain/delete-node-object@worker01",
+    "reset/kubeadm-reset@worker01 -> reset/kubeadm-reset@master01",
+    "cleanup/stop-services@worker01 -> cleanup/wipe-dirs@worker01",
+    "cleanup/stop-services@worker01 -> cleanup/cni-cleanup@worker01",
+    "cleanup/cni-cleanup@worker01 -> cleanup/iptables-cleanup@worker01",
+    "cleanup/stop-services@master01 -> cleanup/wipe-dirs@master01",
+    "cleanup/stop-services@master01 -> cleanup/cni-cleanup@master01",
+    "cleanup/cni-cleanup@master01 -> cleanup/iptables-cleanup@master01",
+    "cleanup/stop-services@worker01 -> cleanup/stop-services@master01",
+    "cleanup/stop-services@worker01 -> cleanup/wipe-dirs@master01",
+    "cleanup/stop-services@worker01 -> cleanup/cni-cleanup@master01",
+    "cleanup/stop-services@worker01 -> cleanup/iptables-cleanup@master01",
+    "cleanup/wipe-dirs@worker01 -> cleanup/stop-services@master01",
+    "cleanup/wipe-dirs@worker01 -> cleanup/wipe-dirs@master01",
+    "cleanup/wipe-dirs@worker01 -> cleanup/cni-cleanup@master01",
+    "cleanup/wipe-dirs@worker01 -> cleanup/iptables-cleanup@master01",
+    "cleanup/cni-cleanup@worker01 -> cleanup/stop-services@master01",
+    "cleanup/cni-cleanup@worker01 -> cleanup/wipe-dirs@master01",
+    "cleanup/cni-cleanup@worker01 -> cleanup/cni-cleanup@master01",
+    "cleanup/cni-cleanup@worker01 -> cleanup/iptables-cleanup@master01",
+    "cleanup/iptables-cleanup@worker01 -> cleanup/stop-services@master01",
+    "cleanup/iptables-cleanup@worker01 -> cleanup/wipe-dirs@master01",
+    "cleanup/iptables-cleanup@worker01 -> cleanup/cni-cleanup@master01",
+    "cleanup/iptables-cleanup@worker01 -> cleanup/iptables-cleanup@master01"
+  ],
+  "op": "DeleteCluster",
+  "phases": [
+    {
+      "phase": "drain",
+      "tasks": [
+        {
+          "describe": "drain worker01 from the cluster (via master01)",
+          "id": "drain/drain@worker01",
+          "node": "master01",
+          "policy": "BestEffort"
+        },
+        {
+          "describe": "delete node object worker01 (via master01)",
+          "id": "drain/delete-node-object@worker01",
+          "node": "master01",
+          "policy": "BestEffort"
+        }
+      ]
+    },
+    {
+      "phase": "reset",
+      "tasks": [
+        {
+          "describe": "kubeadm reset -f",
+          "id": "reset/kubeadm-reset@worker01",
+          "node": "worker01",
+          "policy": "BestEffort"
+        },
+        {
+          "describe": "kubeadm reset -f",
+          "id": "reset/kubeadm-reset@master01",
+          "node": "master01",
+          "policy": "BestEffort"
+        }
+      ]
+    },
+    {
+      "phase": "cleanup",
+      "tasks": [
+        {
+          "describe": "stop kubelet, containerd",
+          "id": "cleanup/stop-services@worker01",
+          "node": "worker01",
+          "policy": "BestEffort"
+        },
+        {
+          "describe": "remove 22 kurin/distribution paths",
+          "id": "cleanup/wipe-dirs@worker01",
+          "node": "worker01",
+          "policy": "BestEffort"
+        },
+        {
+          "describe": "remove CNI devices and the 10.233.64.0/18 route",
+          "id": "cleanup/cni-cleanup@worker01",
+          "node": "worker01",
+          "policy": "BestEffort"
+        },
+        {
+          "describe": "remove kube-proxy/CNI iptables chains",
+          "id": "cleanup/iptables-cleanup@worker01",
+          "node": "worker01",
+          "policy": "BestEffort"
+        },
+        {
+          "describe": "stop kubelet, containerd",
+          "id": "cleanup/stop-services@master01",
+          "node": "master01",
+          "policy": "BestEffort"
+        },
+        {
+          "describe": "remove 22 kurin/distribution paths",
+          "id": "cleanup/wipe-dirs@master01",
+          "node": "master01",
+          "policy": "BestEffort"
+        },
+        {
+          "describe": "remove CNI devices and the 10.233.64.0/18 route",
+          "id": "cleanup/cni-cleanup@master01",
+          "node": "master01",
+          "policy": "BestEffort"
+        },
+        {
+          "describe": "remove kube-proxy/CNI iptables chains",
+          "id": "cleanup/iptables-cleanup@master01",
+          "node": "master01",
+          "policy": "BestEffort"
+        }
+      ]
+    },
+    {
+      "phase": "local",
+      "tasks": [
+        {
+          "describe": "remove local state for cluster single",
+          "id": "local/local-state-cleanup@local",
+          "node": "local",
+          "policy": "BestEffort"
+        }
+      ]
+    }
+  ]
+}

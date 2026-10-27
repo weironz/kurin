@@ -72,19 +72,20 @@ const CREATE_PHASES: &[Phase] = &[
     Phase::new("post", "post"),
 ];
 
+/// `delete node`: the API-side removal (drain + node object) runs on the
+/// anchor control plane, then the node itself is reset and wiped. There is
+/// no `local` phase: the cluster's local state outlives a single node.
 const DELETE_NODE_PHASES: &[Phase] = &[
-    Phase::new("discover", "discover"),
     Phase::new("drain", "drain"),
     Phase::new("reset", "reset"),
     Phase::new("cleanup", "cleanup"),
-    Phase::new("api-cleanup", "api-cleanup"),
-    Phase::new("local", "local"),
 ];
 
+/// `delete cluster`: workers first, control plane after (explicit edges
+/// inside each phase), then the control machine's local state.
 const DELETE_CLUSTER_PHASES: &[Phase] = &[
-    Phase::new("discover", "discover"),
-    Phase::new("reset-workers", "reset (workers)"),
-    Phase::new("reset-control-plane", "reset (control-plane)"),
+    Phase::new("drain", "drain"),
+    Phase::new("reset", "reset"),
     Phase::new("cleanup", "cleanup"),
     Phase::new("local", "local"),
 ];

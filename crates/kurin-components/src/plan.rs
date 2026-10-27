@@ -71,6 +71,18 @@ pub fn build_with_pool(
     Ok(b.finish())
 }
 
+/// Build the teardown plan: `target = Some(node)` plans `delete node`,
+/// `None` plans `delete cluster`. Teardown needs no facts (nothing is
+/// resolved per arch) and no session pool: the API-side tasks run on the
+/// anchor control plane, which is their [`Task::node`](kurin_core::engine::Task::node).
+pub fn build_delete(
+    cluster: &Cluster,
+    run: &Arc<RunContext>,
+    target: Option<&kurin_config::Node>,
+) -> Result<Plan> {
+    crate::teardown::plan(cluster, run, target)
+}
+
 /// Discover: one display-only task per node recording what the pre-plan
 /// discovery probed (arch/OS/CPU/mem).
 fn plan_discover(b: &mut PlanBuilder<'_>) -> Result<()> {

@@ -196,6 +196,15 @@ pub enum Stage {
     Join,
     Cni,
     Post,
+    /// Teardown: drain and delete the node object through the anchor
+    /// control plane.
+    Drain,
+    /// Teardown: the distribution's reset (`kubeadm reset` / k3s uninstall).
+    Reset,
+    /// Teardown: stop services and remove artifacts, CNI and iptables state.
+    Cleanup,
+    /// Teardown: control-machine state (run state, blackboard, join cache).
+    Local,
 }
 
 impl Stage {
@@ -213,6 +222,10 @@ impl Stage {
             Stage::Join => "join",
             Stage::Cni => "cni",
             Stage::Post => "post",
+            Stage::Drain => "drain",
+            Stage::Reset => "reset",
+            Stage::Cleanup => "cleanup",
+            Stage::Local => "local",
         }
     }
 
@@ -231,6 +244,10 @@ impl Stage {
             "join" => Stage::Join,
             "cni" => Stage::Cni,
             "post" => Stage::Post,
+            "drain" => Stage::Drain,
+            "reset" => Stage::Reset,
+            "cleanup" => Stage::Cleanup,
+            "local" => Stage::Local,
             _ => return None,
         })
     }
