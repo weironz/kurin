@@ -26,6 +26,7 @@ tracing.workspace = true
 
 [dev-dependencies]
 async-trait.workspace = true
+kurin-kube.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 tempfile.workspace = true

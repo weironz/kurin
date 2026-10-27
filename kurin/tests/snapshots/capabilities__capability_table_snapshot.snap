@@ -447,5 +447,26 @@ expression: json
     "ops": [
       "create"
     ]
+  },
+  {
+    "id": "post/state-record",
+    "kind": "post",
+    "distributions": [
+      "k8s",
+      "k3s"
+    ],
+    "archs": [
+      "amd64",
+      "arm64"
+    ],
+    "offline": "bundle",
+    "zones": [
+      "global",
+      "cn"
+    ],
+    "ops": [
+      "create",
+      "add-nodes"
+    ]
   }
 ]

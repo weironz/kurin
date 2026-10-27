@@ -3,6 +3,14 @@
 All notable changes to kurin. Format follows Keep a Changelog; semver.
 
 ### Added
+- The cluster records what kurin installed in
+  `kube-system/ConfigMap kurin-state` (WP-19, ADR-09): `kurin-version`,
+  `op-id`, `op-kind`, `finished-at`, the canonical **redacted** `spec.toml`,
+  `components.json` (enabled component id -> version/source),
+  `addons.json` and `history.json` (last 20 operations). `add nodes` reads
+  the running version from the record instead of probing `/version` (old
+  clusters without a record keep the probe), and `status` prints the
+  expected (record) vs observed (`/version`) version.
 - `kurin capabilities --json` (hidden subcommand): the aggregated
   component capability table (id, kind, distributions, archs, offline,
   zones, ops) — the single source of truth behind `just docs-matrix` and

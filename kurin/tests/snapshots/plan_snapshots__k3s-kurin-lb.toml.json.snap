@@ -212,13 +212,18 @@ expression: plan_matrix(&plan)
     },
     {
       "ids": [
-        "post/k3s-kubeconfig@server01"
+        "post/k3s-kubeconfig@server01",
+        "post/state-record@server01"
       ],
       "stage": "post",
       "tasks": [
         {
           "describe": "record kubeconfig at /root/.kube/config (mode 600)",
           "id": "post/k3s-kubeconfig@server01"
+        },
+        {
+          "describe": "record cluster state in kube-system/kurin-state",
+          "id": "post/state-record@server01"
         }
       ]
     }

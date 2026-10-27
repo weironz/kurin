@@ -37,10 +37,22 @@ pub fn build_with_pool(
     pool: Option<Arc<dyn kurin_core::executor::SessionPool>>,
     run: &Arc<RunContext>,
 ) -> Result<Plan> {
+    build_with_pool_for(OpKind::Create, cluster, pool, run)
+}
+
+/// [`build_with_pool`] with the operation kind made explicit. `add nodes`
+/// shares the create plan shape but records itself as `add-nodes` in
+/// `kurin-state` (ADR-09).
+pub fn build_with_pool_for(
+    op: OpKind,
+    cluster: &Cluster,
+    pool: Option<Arc<dyn kurin_core::executor::SessionPool>>,
+    run: &Arc<RunContext>,
+) -> Result<Plan> {
     // Facts are discovered before planning and live in the run context;
     // snapshot them so the plan build never holds the lock.
     let facts = run.facts_snapshot();
-    let mut b = PlanBuilder::new(OpKind::Create, cluster, facts, run, pool);
+    let mut b = PlanBuilder::new(op, cluster, facts, run, pool);
 
     plan_discover(&mut b)?;
 

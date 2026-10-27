@@ -36,6 +36,13 @@ pub struct StatusReport {
     pub etcd_ok: bool,
     /// Smallest days-left across control-plane certificates (None if unknown).
     pub cert_min_days: Option<i64>,
+    /// Version kurin recorded in `kube-system/kurin-state` at the last
+    /// mutation (`v1.33.2`); `None` on clusters without a record.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expected_version: Option<String>,
+    /// Version the apiserver reports now (`/version` `gitVersion`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub observed_version: Option<String>,
 }
 
 fn parse_nodes(items: &[Value]) -> Vec<NodeStatus> {
@@ -205,6 +212,22 @@ pub async fn collect(
     })?;
     let api = connected.api;
 
+    // Expected vs observed version (ADR-09): the record says what kurin
+    // installed; `/version` says what the apiserver runs now.
+    let expected_version = match crate::tasks::post::read_state(api.as_ref()).await {
+        Ok(Some(record)) => record.kubernetes_version().map(|v| format!("v{v}")),
+        Ok(None) => None,
+        Err(err) => {
+            log(&format!("status: kurin-state record unreadable ({err})"));
+            None
+        }
+    };
+    let observed_version = api
+        .get_raw("/version")
+        .await
+        .ok()
+        .and_then(|body| parse_git_version(&body));
+
     let nodes = parse_nodes(&api.list_json(&Gvk::core("v1", "Node"), None, None).await?);
     let pods_not_running = parse_pods_not_running(
         &api.list_json(&Gvk::core("v1", "Pod"), Some(ALL_NAMESPACES), None)
@@ -248,7 +271,18 @@ pub async fn collect(
         pods_not_running,
         etcd_ok,
         cert_min_days,
+        expected_version,
+        observed_version,
     })
+}
+
+/// `gitVersion` from an apiserver `/version` body (`v1.33.2`).
+fn parse_git_version(body: &str) -> Option<String> {
+    serde_json::from_str::<Value>(body)
+        .ok()?
+        .get("gitVersion")?
+        .as_str()
+        .map(str::to_string)
 }
 
 /// Human-readable summary to stderr (stdout stays machine-clean).
@@ -274,6 +308,17 @@ pub fn render(r: &StatusReport) {
         "\netcd: {}",
         if r.etcd_ok { "healthy" } else { "UNHEALTHY" }
     );
+    match (&r.expected_version, &r.observed_version) {
+        (Some(expected), Some(observed)) if expected != observed => {
+            eprintln!("version: expected {expected} (kurin-state), observed {observed} (MISMATCH)")
+        }
+        (Some(expected), Some(observed)) => {
+            eprintln!("version: {observed} (matches kurin-state {expected})")
+        }
+        (Some(expected), None) => eprintln!("version: expected {expected} (kurin-state)"),
+        (None, Some(observed)) => eprintln!("version: {observed} (no kurin-state record)"),
+        (None, None) => eprintln!("version: unknown (no kurin-state record)"),
+    }
     match r.cert_min_days {
         Some(d) => eprintln!("certificates: earliest expiry in {d} day(s)"),
         None => eprintln!("certificates: expiry unknown"),

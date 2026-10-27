@@ -439,7 +439,7 @@ role = "worker"
         assert_eq!(crate::test_util::phase_ids(&plan, "join"), ["join/k3s@a1"]);
         assert_eq!(
             crate::test_util::phase_ids(&plan, "post"),
-            ["post/k3s-kubeconfig@s1"]
+            ["post/k3s-kubeconfig@s1", "post/state-record@s1"]
         );
         // The k3s track has no image preload.
         assert!(crate::test_util::phase_ids(&plan, "images").is_empty());

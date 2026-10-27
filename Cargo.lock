@@ -1987,6 +1987,7 @@ dependencies = [
  "kurin-components",
  "kurin-config",
  "kurin-core",
+ "kurin-kube",
  "kurin-ops",
  "kurin-ssh",
  "miette",
@@ -2037,7 +2038,9 @@ dependencies = [
  "serde_yml",
  "sha2 0.10.9",
  "tempfile",
+ "time",
  "tokio",
+ "toml",
  "tracing",
 ]
 
@@ -2102,6 +2105,7 @@ dependencies = [
  "kurin-components",
  "kurin-config",
  "kurin-core",
+ "kurin-kube",
  "kurin-ssh",
  "miette",
  "semver",

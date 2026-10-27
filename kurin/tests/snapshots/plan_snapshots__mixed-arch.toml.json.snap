@@ -199,13 +199,18 @@ expression: plan_matrix(&plan)
     },
     {
       "ids": [
-        "post/kubeconfig@cp1"
+        "post/kubeconfig@cp1",
+        "post/state-record@cp1"
       ],
       "stage": "post",
       "tasks": [
         {
           "describe": "fetch admin.conf -> merge local kubeconfig (context cluster-mixedarch)",
           "id": "post/kubeconfig@cp1"
+        },
+        {
+          "describe": "record cluster state in kube-system/kurin-state",
+          "id": "post/state-record@cp1"
         }
       ]
     }

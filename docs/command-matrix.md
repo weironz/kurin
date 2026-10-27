@@ -69,6 +69,19 @@ sha256）。计划变化时拒绝续跑并提示去掉 `--resume`；v1 状态文
 | node / pod 摘要 | ✅ | ✅（`k3s kubectl` + k3s kubeconfig）|
 | etcd 健康 | ✅（pod 计数）| ✅（`/healthz/etcd`）|
 | 证书剩余天数 | ✅（`/etc/kubernetes/pki`）| ✅（`/var/lib/rancher/k3s/server/tls`）|
+| 期望 vs 观测版本 | ✅（`kube-system/kurin-state` 记录的版本 vs `/version`）| ✅ |
+
+## 集群内状态记录 `kube-system/kurin-state`
+
+每次变更操作（`create cluster`、`add nodes`）的 `post` 阶段服务端 apply
+一次 ConfigMap（field manager `kurin`），字段：`kurin-version`、`op-id`、
+`op-kind`、`finished-at`、`spec.toml`（规范化且**已脱敏**）、
+`components.json`、`addons.json`、`history.json`（最近 20 次操作）。
+
+- `add nodes`：优先从记录读取运行中的 Kubernetes 版本；记录缺失（WP-19
+  之前安装的集群）时回退到 `/version` 探测。
+- `status`：显示期望版本（记录）与观测版本（`/version`）的差异。
+- `delete cluster` 不处理记录（集群已销毁）。
 
 ## certs check / renew
 

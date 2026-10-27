@@ -300,6 +300,7 @@ pub fn registry() -> &'static ComponentRegistry {
             Arc::new(post::Kubeconfig),
             Arc::new(post::Summary),
             Arc::new(post::Labels),
+            Arc::new(post::StateRecord),
         ],
     });
     &REGISTRY
@@ -489,6 +490,7 @@ mod tests {
                 "post/kubeconfig",
                 "post/summary",
                 "post/labels",
+                "post/state-record",
             ]
         );
         assert_eq!(

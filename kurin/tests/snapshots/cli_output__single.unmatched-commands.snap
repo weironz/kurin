@@ -2,7 +2,7 @@
 source: kurin/tests/cli_output.rs
 expression: report
 ---
-# master01: 19 command(s) answered by the permissive default
+# master01: 22 command(s) answered by the permissive default
 
     cat /etc/sysctl.d/99-kurin.conf 2>/dev/null || true
 
@@ -13,6 +13,12 @@ expression: report
     kubeadm init phase upload-config all --config /etc/kurin/kubeadm-init.yaml && kubeadm init phase bootstrap-token --config /etc/kurin/kubeadm-init.yaml && kubeadm init phase addon all --config /etc/kurin/kubeadm-init.yaml
 
     kubectl --kubeconfig /etc/kubernetes/admin.conf --server https://192.168.10.11:6443 get --raw /readyz
+
+    kubectl --kubeconfig /etc/kubernetes/admin.conf apply --server-side --field-manager=kurin -f -
+
+    kubectl --kubeconfig /etc/kubernetes/admin.conf get configmaps kurin-state -n kube-system -o json --ignore-not-found
+
+    kubectl --kubeconfig /etc/kubernetes/admin.conf get configmaps kurin-state -n kube-system -o json --ignore-not-found
 
     kubectl --kubeconfig /etc/kubernetes/super-admin.conf --server https://127.0.0.1:6443 get clusterrolebinding kubeadm:cluster-admins >/dev/null 2>&1 || kubectl --kubeconfig /etc/kubernetes/super-admin.conf --server https://127.0.0.1:6443 create clusterrolebinding kubeadm:cluster-admins --clusterrole=cluster-admin --group=kubeadm:cluster-admins
 

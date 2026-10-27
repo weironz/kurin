@@ -153,6 +153,54 @@ impl Component for Labels {
     }
 }
 
+/// `post/state-record`: write `kube-system/ConfigMap kurin-state` (ADR-09)
+/// at the end of every mutation so the cluster remembers what kurin
+/// installed. Runs on both distributions.
+pub struct StateRecord;
+
+impl Component for StateRecord {
+    fn id(&self) -> &'static str {
+        "post/state-record"
+    }
+
+    fn kind(&self) -> ComponentKind {
+        ComponentKind::Post
+    }
+
+    fn enabled(&self, _spec: &Cluster) -> bool {
+        true
+    }
+
+    fn validate(&self, _spec: &Cluster, _d: &mut Diagnostics) {}
+
+    fn capabilities(&self) -> Capabilities {
+        Capabilities {
+            distributions: &[Distribution::K8s, Distribution::K3s],
+            archs: &[Arch::Amd64, Arch::Arm64],
+            offline: Offline::Bundle,
+            zones: ALL_ZONES,
+            ops: &[OpKind::Create, OpKind::AddNodes],
+        }
+    }
+
+    fn artifacts(&self, _spec: &Cluster, _arch: Arch) -> Vec<ArtifactRef> {
+        Vec::new()
+    }
+
+    fn plan(&self, b: &mut PlanBuilder<'_>) -> Result<()> {
+        let phase = b.phase("post");
+        b.add(
+            phase,
+            Arc::new(tasks::post::StateRecord::new(
+                b.cluster(),
+                b.run().op_id.clone(),
+                b.op().as_str(),
+            )),
+        );
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -206,6 +254,11 @@ labels = {{"node-role.kurin.io/pool" = "general"}}
             assert!(component.enabled(&k8s), "{id} on k8s");
             assert!(!component.enabled(&k3s), "{id} on k3s");
         }
+        // The state record is distribution-independent: k3s clusters
+        // remember what kurin installed too.
+        let record = reg.get("post/state-record").expect("post/state-record");
+        assert!(record.enabled(&k8s));
+        assert!(record.enabled(&k3s));
     }
 
     #[test]
@@ -213,7 +266,11 @@ labels = {{"node-role.kurin.io/pool" = "general"}}
         let plan = crate::test_util::plan_for(&cluster(&base("")));
         assert_eq!(
             crate::test_util::phase_ids(&plan, "post"),
-            ["post/kubeconfig@cp1", "post/labels@w1"]
+            [
+                "post/kubeconfig@cp1",
+                "post/labels@w1",
+                "post/state-record@cp1"
+            ]
         );
     }
 }

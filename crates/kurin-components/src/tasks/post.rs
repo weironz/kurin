@@ -552,6 +552,363 @@ impl Task for Summary {
     }
 }
 
+// ---------------------------------------------------------------------------
+// StateRecord: kube-system/ConfigMap kurin-state (ADR-09, WP-19)
+// ---------------------------------------------------------------------------
+
+/// Namespace and name of the in-cluster state record.
+pub const STATE_NAMESPACE: &str = "kube-system";
+/// ConfigMap holding what kurin installed in this cluster.
+pub const STATE_NAME: &str = "kurin-state";
+/// How many operation summaries `history.json` keeps.
+pub const HISTORY_LIMIT: usize = 20;
+
+/// One component entry of `components.json`: the embedded version kurin
+/// installed and where it came from.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ComponentRecord {
+    pub version: String,
+    pub source: String,
+}
+
+/// One operation summary of `history.json`.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct HistoryEntry {
+    #[serde(rename = "op-id")]
+    pub op_id: String,
+    #[serde(rename = "op-kind")]
+    pub op_kind: String,
+    #[serde(rename = "finished-at")]
+    pub finished_at: String,
+    #[serde(rename = "kurin-version")]
+    pub kurin_version: String,
+}
+
+/// The cluster's own memory of what kurin installed (ADR-09).
+///
+/// Serialized into `kube-system/ConfigMap kurin-state` as eight string
+/// keys; the structured fields here are what [`Self::to_configmap_data`]
+/// renders. `spec.toml` is the canonical, **redacted** configuration:
+/// secret values never reach the cluster.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClusterStateRecord {
+    pub kurin_version: String,
+    pub op_id: String,
+    pub op_kind: String,
+    pub finished_at: String,
+    pub spec_toml: String,
+    pub components: std::collections::BTreeMap<String, ComponentRecord>,
+    pub addons: std::collections::BTreeMap<String, serde_json::Value>,
+    pub history: Vec<HistoryEntry>,
+}
+
+/// Keys whose values are secrets and must be replaced before the config is
+/// written into the cluster (R8). Matched case-insensitively.
+const SECRET_KEYS: &[&str] = &[
+    "password",
+    "passphrase",
+    "become-password",
+    "token",
+    "secret",
+    "private-key",
+    "key-data",
+    "registry-password",
+];
+
+fn is_secret_key(key: &str) -> bool {
+    let key = key.to_ascii_lowercase();
+    SECRET_KEYS.contains(&key.as_str())
+}
+
+/// Replace every secret value in a parsed TOML tree.
+fn redact_tree(value: &mut toml::Value) {
+    match value {
+        toml::Value::Table(table) => {
+            for (key, value) in table.iter_mut() {
+                if is_secret_key(key) {
+                    *value = toml::Value::String(kurin_core::events::REDACTED.to_string());
+                } else {
+                    redact_tree(value);
+                }
+            }
+        }
+        toml::Value::Array(items) => {
+            for item in items {
+                redact_tree(item);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Seed a redactor with every secret value the resolved cluster carries, so
+/// a secret under an unexpected key is still scrubbed.
+fn cluster_secrets(cluster: &Cluster) -> kurin_core::events::Redactor {
+    let redactor = kurin_core::events::Redactor::new();
+    for node in &cluster.nodes {
+        match &node.ssh.auth {
+            kurin_config::SshAuth::Password { password } => redactor.register(password.clone()),
+            kurin_config::SshAuth::PrivateKey { passphrase, .. } => {
+                redactor.register_opt(passphrase.clone());
+            }
+        }
+        redactor.register_opt(node.ssh.become_password.clone());
+    }
+    redactor.register_opt(cluster.registry_password.clone());
+    redactor
+}
+
+/// Canonical, redacted TOML for the cluster's source config.
+///
+/// The original text is parsed and re-rendered by `toml` (comments dropped,
+/// keys sorted), secret-valued keys are blanked, and the result is scrubbed
+/// once more through the cluster's actual secret values. An unparseable or
+/// empty source degrades to the redacted raw text rather than failing the
+/// post phase.
+pub fn redacted_spec_toml(cluster: &Cluster) -> String {
+    let redactor = cluster_secrets(cluster);
+    let rendered = match toml::from_str::<toml::Value>(&cluster.source) {
+        Ok(mut value) => {
+            redact_tree(&mut value);
+            toml::to_string_pretty(&value).unwrap_or_else(|_| cluster.source.clone())
+        }
+        Err(_) => cluster.source.clone(),
+    };
+    redactor.redact(&rendered)
+}
+
+/// Kurin version recorded in `kurin-version` (the workspace version).
+pub fn kurin_version() -> &'static str {
+    env!("CARGO_PKG_VERSION")
+}
+
+impl ClusterStateRecord {
+    /// Build the record for `cluster` at the end of `op`.
+    ///
+    /// `previous` supplies the addon inventory (no addon engine yet, so it
+    /// is preserved) and the operation history, which is appended to and
+    /// truncated to the last [`HISTORY_LIMIT`] entries.
+    pub fn build(
+        cluster: &Cluster,
+        op_id: impl Into<String>,
+        op_kind: impl Into<String>,
+        finished_at: impl Into<String>,
+        previous: Option<&ClusterStateRecord>,
+    ) -> Self {
+        let op_id = op_id.into();
+        let op_kind = op_kind.into();
+        let finished_at = finished_at.into();
+        let components = crate::component::registry()
+            .iter()
+            .filter(|c| c.enabled(cluster))
+            .map(|c| {
+                (
+                    c.id().to_string(),
+                    ComponentRecord {
+                        version: kurin_version().to_string(),
+                        source: "embedded".to_string(),
+                    },
+                )
+            })
+            .collect();
+        let mut history = previous.map(|p| p.history.clone()).unwrap_or_default();
+        history.retain(|entry| entry.op_id != op_id);
+        history.push(HistoryEntry {
+            op_id: op_id.clone(),
+            op_kind: op_kind.clone(),
+            finished_at: finished_at.clone(),
+            kurin_version: kurin_version().to_string(),
+        });
+        if history.len() > HISTORY_LIMIT {
+            history.drain(0..history.len() - HISTORY_LIMIT);
+        }
+        Self {
+            kurin_version: kurin_version().to_string(),
+            op_id,
+            op_kind,
+            finished_at,
+            spec_toml: redacted_spec_toml(cluster),
+            components,
+            addons: previous.map(|p| p.addons.clone()).unwrap_or_default(),
+            history,
+        }
+    }
+
+    /// The eight string keys of the ConfigMap's `data`.
+    pub fn to_configmap_data(&self) -> std::collections::BTreeMap<String, String> {
+        let mut data = std::collections::BTreeMap::new();
+        data.insert("kurin-version".into(), self.kurin_version.clone());
+        data.insert("op-id".into(), self.op_id.clone());
+        data.insert("op-kind".into(), self.op_kind.clone());
+        data.insert("finished-at".into(), self.finished_at.clone());
+        data.insert("spec.toml".into(), self.spec_toml.clone());
+        data.insert(
+            "components.json".into(),
+            serde_json::to_string_pretty(&self.components).expect("component records serialize"),
+        );
+        data.insert(
+            "addons.json".into(),
+            serde_json::to_string_pretty(&self.addons).expect("addon records serialize"),
+        );
+        data.insert(
+            "history.json".into(),
+            serde_json::to_string_pretty(&self.history).expect("history serializes"),
+        );
+        data
+    }
+
+    /// Parse a `ConfigMap` object (as returned by `get -o json`).
+    pub fn from_configmap(value: &serde_json::Value) -> Result<Self> {
+        let data = value
+            .get("data")
+            .and_then(|d| d.as_object())
+            .ok_or_else(|| miette::miette!("kurin-state ConfigMap has no data"))?;
+        let text = |key: &str| -> Result<String> {
+            data.get(key)
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+                .ok_or_else(|| miette::miette!("kurin-state is missing {key}"))
+        };
+        let parse = |key: &str| -> Result<serde_json::Value> {
+            serde_json::from_str(&text(key)?)
+                .map_err(|e| miette::miette!("kurin-state {key} is invalid JSON: {e}"))
+        };
+        Ok(Self {
+            kurin_version: text("kurin-version")?,
+            op_id: text("op-id")?,
+            op_kind: text("op-kind")?,
+            finished_at: text("finished-at")?,
+            spec_toml: text("spec.toml")?,
+            components: serde_json::from_value(parse("components.json")?)
+                .map_err(|e| miette::miette!("kurin-state components.json: {e}"))?,
+            addons: serde_json::from_value(parse("addons.json")?)
+                .map_err(|e| miette::miette!("kurin-state addons.json: {e}"))?,
+            history: serde_json::from_value(parse("history.json")?)
+                .map_err(|e| miette::miette!("kurin-state history.json: {e}"))?,
+        })
+    }
+
+    /// The Kubernetes version this cluster was installed/upgraded to,
+    /// read from the recorded `spec.toml`.
+    pub fn kubernetes_version(&self) -> Option<semver::Version> {
+        let value: toml::Value = toml::from_str(&self.spec_toml).ok()?;
+        let version = value
+            .get("kubernetes")?
+            .get("version")?
+            .as_str()?
+            .trim_start_matches('v');
+        semver::Version::parse(version).ok()
+    }
+
+    /// The server-side-apply object for this record.
+    pub fn configmap(&self) -> kurin_kube::DynamicObject {
+        let mut obj = dynamic_object(
+            &Gvk::core("v1", "ConfigMap"),
+            STATE_NAME,
+            Some(STATE_NAMESPACE),
+        );
+        obj.data = serde_json::json!({ "data": self.to_configmap_data() });
+        obj
+    }
+}
+
+/// Read the cluster's state record; `None` when the ConfigMap does not
+/// exist (clusters installed before WP-19).
+pub async fn read_state(api: &dyn ClusterApi) -> Result<Option<ClusterStateRecord>> {
+    let reference = ObjRef::namespaced("v1", "ConfigMap", STATE_NAMESPACE, STATE_NAME);
+    let Some(value) = api.get_json(&reference).await? else {
+        return Ok(None);
+    };
+    ClusterStateRecord::from_configmap(&value).map(Some)
+}
+
+/// Writes `kube-system/ConfigMap kurin-state` at the end of a mutation.
+///
+/// The record is the cluster's own memory of what kurin installed: the
+/// redacted spec, the enabled components, the addon inventory and the last
+/// [`HISTORY_LIMIT`] operations. `add nodes` and `status` read it back
+/// (ADR-09); clusters without one fall back to live probes.
+pub struct StateRecord {
+    node_name: String,
+    cluster: Cluster,
+    op_id: String,
+    op_kind: String,
+    flavor: Flavor,
+}
+
+impl StateRecord {
+    /// Record `op_id`/`op_kind` for `cluster` through its first control
+    /// plane.
+    pub fn new(cluster: &Cluster, op_id: impl Into<String>, op_kind: impl Into<String>) -> Self {
+        Self {
+            node_name: cluster
+                .control_plane()
+                .next()
+                .map(|n| n.name.clone())
+                .or_else(|| cluster.nodes.first().map(|n| n.name.clone()))
+                .unwrap_or_default(),
+            cluster: cluster.clone(),
+            op_id: op_id.into(),
+            op_kind: op_kind.into(),
+            flavor: cluster.distribution.into(),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl Task for StateRecord {
+    fn id(&self) -> String {
+        format!("post/state-record@{}", self.node_name)
+    }
+    fn stage(&self) -> Stage {
+        Stage::Post
+    }
+    fn node(&self) -> &str {
+        &self.node_name
+    }
+    fn describe(&self) -> String {
+        format!("record cluster state in {STATE_NAMESPACE}/{STATE_NAME}")
+    }
+
+    async fn check(&self, session: &dyn Session) -> Result<Drift> {
+        let api = SessionKubectl::new(session, self.flavor);
+        match read_state(&api).await {
+            Ok(Some(record)) if record.op_id == self.op_id => Ok(Drift::InSync),
+            Ok(Some(record)) => Ok(Drift::Drifted(format!(
+                "state record is from op {} ({})",
+                record.op_id, record.op_kind
+            ))),
+            Ok(None) => Ok(Drift::Drifted(format!(
+                "no {STATE_NAMESPACE}/{STATE_NAME} record"
+            ))),
+            Err(e) => Ok(Drift::Drifted(format!("state record unreadable: {e}"))),
+        }
+    }
+
+    async fn apply(&self, session: &dyn Session) -> Result<Outcome> {
+        let api = SessionKubectl::new(session, self.flavor);
+        let previous = match read_state(&api).await {
+            Ok(previous) => previous,
+            Err(e) => {
+                tracing::warn!("state record unreadable, writing a fresh one: {e}");
+                None
+            }
+        };
+        let finished_at = time::OffsetDateTime::now_utc().to_string();
+        let record = ClusterStateRecord::build(
+            &self.cluster,
+            self.op_id.clone(),
+            self.op_kind.clone(),
+            finished_at,
+            previous.as_ref(),
+        );
+        api.apply(&[record.configmap()], ApplyOpts::default())
+            .await
+            .map_err(|e| miette::miette!("write {STATE_NAMESPACE}/{STATE_NAME}: {e}"))?;
+        Ok(Outcome::Verified)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

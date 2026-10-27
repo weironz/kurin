@@ -37,5 +37,6 @@ expression: render_tree(&plan)
 ├── stage: join (0 tasks)
 ├── stage: cni (1 tasks)
 │   └── cni/none@master01 :: no CNI installed (cni = none)
-└── stage: post (1 tasks)
-    └── post/kubeconfig@master01 :: fetch admin.conf -> merge local kubeconfig (context cluster-cni-none)
+└── stage: post (2 tasks)
+    ├── post/kubeconfig@master01 :: fetch admin.conf -> merge local kubeconfig (context cluster-cni-none)
+    └── post/state-record@master01 :: record cluster state in kube-system/kurin-state

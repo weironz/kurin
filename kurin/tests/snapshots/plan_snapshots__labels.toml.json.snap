@@ -201,7 +201,8 @@ expression: plan_matrix(&plan)
       "ids": [
         "post/kubeconfig@master01",
         "post/labels@master01",
-        "post/labels@worker01"
+        "post/labels@worker01",
+        "post/state-record@master01"
       ],
       "stage": "post",
       "tasks": [
@@ -216,6 +217,10 @@ expression: plan_matrix(&plan)
         {
           "describe": "converge 2 node label(s)",
           "id": "post/labels@worker01"
+        },
+        {
+          "describe": "record cluster state in kube-system/kurin-state",
+          "id": "post/state-record@master01"
         }
       ]
     }

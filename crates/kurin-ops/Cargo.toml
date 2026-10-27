@@ -10,6 +10,7 @@ description = "Kurin operations: create, add-nodes, delete, upgrade, certs, stat
 kurin-config.workspace = true
 kurin-core.workspace = true
 kurin-components.workspace = true
+kurin-kube.workspace = true
 kurin-ssh.workspace = true
 kurin-artifact.workspace = true
 serde.workspace = true

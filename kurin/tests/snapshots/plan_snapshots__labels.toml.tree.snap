@@ -37,7 +37,8 @@ expression: render_tree(&plan)
 ├── stage: join (0 tasks)
 ├── stage: cni (1 tasks)
 │   └── cni/calico-operator@master01 :: kubectl apply tigera-operator manifest + Installation CR
-└── stage: post (3 tasks)
+└── stage: post (4 tasks)
     ├── post/kubeconfig@master01 :: fetch admin.conf -> merge local kubeconfig (context cluster-labels)
     ├── post/labels@master01 :: converge 1 node label(s)
-    └── post/labels@worker01 :: converge 2 node label(s)
+    ├── post/labels@worker01 :: converge 2 node label(s)
+    └── post/state-record@master01 :: record cluster state in kube-system/kurin-state

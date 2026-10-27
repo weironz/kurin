@@ -222,6 +222,12 @@ expression: plan_view(&plan)
           "node": "master01",
           "describe": "fetch admin.conf -> merge local kubeconfig (context cluster-single)",
           "drift": null
+        },
+        {
+          "key": "post/state-record@master01",
+          "node": "master01",
+          "describe": "record cluster state in kube-system/kurin-state",
+          "drift": null
         }
       ]
     }

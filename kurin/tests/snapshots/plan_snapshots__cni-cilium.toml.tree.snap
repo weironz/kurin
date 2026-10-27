@@ -37,5 +37,6 @@ expression: render_tree(&plan)
 ├── stage: join (0 tasks)
 ├── stage: cni (1 tasks)
 │   └── cni/cilium@master01 :: cilium CLI install (1.20.4)
-└── stage: post (1 tasks)
-    └── post/kubeconfig@master01 :: fetch admin.conf -> merge local kubeconfig (context cluster-cni-cilium)
+└── stage: post (2 tasks)
+    ├── post/kubeconfig@master01 :: fetch admin.conf -> merge local kubeconfig (context cluster-cni-cilium)
+    └── post/state-record@master01 :: record cluster state in kube-system/kurin-state

@@ -48,6 +48,7 @@ pub use kurin_components::certs::NodeCerts;
 pub use kurin_components::precheck::PrecheckReport;
 pub use kurin_components::status::StatusOpts;
 pub use kurin_components::status::StatusReport;
+pub use kurin_components::tasks::post::ClusterStateRecord;
 pub use logs::LogsRequest;
 pub use output::{JsonMode, OpOutcome, OpResult, OutputOpts};
 pub use plan_view::{plan_view, DriftView, PhaseView, PlanView, TaskView};
@@ -282,9 +283,15 @@ pub async fn plan(prepared: &Prepared) -> Result<kurin_core::plan::Plan> {
     let run = &prepared.run;
     let pool = &prepared.pool;
     match &prepared.params {
-        Params::Create { .. } | Params::AddNodes { .. } => {
+        Params::Create { .. } => {
             kurin_components::plan::build_with_pool(spec, Some(Arc::clone(pool)), run)
         }
+        Params::AddNodes { .. } => kurin_components::plan::build_with_pool_for(
+            OpKind::AddNodes,
+            spec,
+            Some(Arc::clone(pool)),
+            run,
+        ),
         Params::DeleteNode { node, .. } => {
             let target =
                 spec.nodes.iter().find(|n| &n.name == node).ok_or_else(|| {
@@ -341,6 +348,15 @@ pub async fn plan(prepared: &Prepared) -> Result<kurin_core::plan::Plan> {
 /// terminal or `--json` event stream.
 pub async fn execute(prepared: Prepared, plan: kurin_core::plan::Plan) -> Result<OpResult> {
     execute::run(prepared, plan).await
+}
+
+/// Read the cluster's `kube-system/ConfigMap kurin-state` record.
+///
+/// `Ok(None)` means the cluster predates the record (or a non-kurin
+/// cluster): callers fall back to live probes. A malformed record is an
+/// error so `status` can warn instead of silently ignoring it.
+pub async fn read_state(api: &dyn kurin_kube::ClusterApi) -> Result<Option<ClusterStateRecord>> {
+    kurin_components::tasks::post::read_state(api).await
 }
 
 /// `kurin status`: probe the cluster and print the report. Returns the
