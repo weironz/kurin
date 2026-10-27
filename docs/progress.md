@@ -1,3 +1,17 @@
+## WP-66：Web 真实环境 e2e（tier1，2026-10-28）
+
+- **`web/e2e/lifecycle.spec.ts` PASS（3.9m）**：单节点 tier1（multipass Ubuntu 24.04）上通过页面完成创建 → 状态（运行中）→ 加 worker → 删 worker → 销毁；服务端操作全部 `succeeded`。
+- **`web/e2e/resilience.spec.ts`「创建中关闭浏览器」PASS（2.4m）**：关闭浏览器后 create 在服务端继续，重开页面可见操作详情并最终成功。
+- **真实 e2e 暴露并修复的集成问题**：
+  - `GET /clusters/{name}` 缺 `desired_nodes`/`observed_nodes`/`config_summary`，节点 Tab 在真实数据上崩溃（`s is not iterable`）；前端新增 `api/clusters.ts` 适配 snake_case。
+  - `OperationView` 未序列化 `result`，向导 precheck/plan 结果永远为空。
+  - create/add-nodes/delete-cluster 从不更新 lifecycle（永远 draft）；collector 只采集 active，形成死锁。
+  - `ContainerdConfig` 先于 `ContainerdUnit` 执行，新主机上 `systemctl restart containerd` 失败；加 DAG 边。
+  - SPA 回退把带点的 operation id（`…255Z-…`）当资产返回 404，deep link 打不开。
+  - 向导发送 `artifacts.zone = "global"`（只接受 `cn`），render 报错被空文档掩盖成 `missing version`。
+  - precheck 在去抖 render 产出 TOML 前可点，空文档登记失败。
+- **待人工**：`resilience.spec.ts` 的服务重启 retry、CLI 抢锁、密码明文扫描（需 `KURIN_E2E_RESTART_CMD` / `KURIN_E2E_CLI` / `KURIN_E2E_SECRET`）；tier2 升级场景。
+
 ## WP-66：Web 真实环境 e2e 套件（2026-10-28）
 
 - **新增 `web/e2e/`**（独立 Playwright 配置，`pnpm test:e2e:real`）：创建→状态→加 worker→删 worker→销毁、创建中关闭浏览器、重启 serve 后 interrupted→retry、CLI 抢锁、密码明文扫描（DB/事件/日志/API）。未设置 `KURIN_E2E_URL` 时全部 skip；环境变量见 `web/e2e/README.md`。

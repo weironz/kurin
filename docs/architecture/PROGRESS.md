@@ -66,7 +66,7 @@
 | WP-63 操作详情与日志控制台 | done | 见提交 | 无 | tier1 真实 create 中刷新页面，日志从断点继续 | 阶段×节点网格；资源表；日志控制台（筛选/搜索/跟随/虚拟滚动/下载）；取消/重试；91 Vitest + 1 Playwright |
 | WP-64 Addon 页面与危险操作 | todo | | | tier1 metrics-server | |
 | WP-65 包页面/升级/证书/TOML 编辑器 | todo | | | tier2 页面升级 | |
-| WP-66 前端端到端验收 | done（代码）/待人工 | 见提交 | 无 | 维护者按 `web/e2e/README.md` 在 tier1/tier2 执行 | `web/e2e/` 5 个场景（创建→加/删节点→销毁、关浏览器、重启 retry、CLI 抢锁、密码扫描）；加节点 UI |
+| WP-66 前端端到端验收 | done | 见提交 | 无 | tier1 实跑：lifecycle（创建→加/删 worker→销毁）PASS；关浏览器 PASS；重启/CLI/密码扫描待人工 | `web/e2e/` 5 个场景 + 加节点 UI；tier1 两次实跑通过 |
 | WP-70 etcd 备份/恢复 | todo | | | | |
 | WP-71 证书自动续期 | todo | | | | |
 | WP-72 k3s 升级 | todo | | | | |
@@ -139,10 +139,11 @@
 - WP-39：签名包校验、篡改 blob 拒绝、未签名包在 signature 模式拒绝（`cargo test -p kurin-artifact --test transfer`）；CI 工作流需在 tag 上人工验证。
 - WP-49：`just tier3-registry zot`、`docker-registry`、`external`（external 指向 zot）。
 - WP-63：tier1 真实 create 过程中刷新页面，确认日志从断点继续；`pnpm --dir web test:e2e`。
-- WP-66：`cd web && KURIN_E2E_URL=… KURIN_E2E_TOKEN=… pnpm test:e2e:real`（tier1/tier2，见 `web/e2e/README.md`）；结果写入 `docs/progress.md`。
+- WP-66：tier1 已实跑 `lifecycle.spec.ts`（3.9m PASS）与「创建中关闭浏览器」（2.4m PASS）；`resilience.spec.ts` 的重启 retry、CLI 抢锁、密码扫描需 `KURIN_E2E_RESTART_CMD` / `KURIN_E2E_CLI` / `KURIN_E2E_SECRET`，待维护者执行。
 - WP-65：Playwright `packages.spec.ts` 覆盖包导入/校验/推送/制作 base、升级预览+执行、证书续期、TOML 编辑保存；tier2 页面升级一个小版本。
 - WP-64：Playwright `addons.spec.ts` 覆盖安装/卸载与三个危险操作；tier1 页面安装/卸载 metrics-server。
 - WP-62：Playwright `wizard.spec.ts` 在 mock 后端走完 9 步并提交；tier1 真实创建。
+- WP-66：真实 e2e 暴露并修复：`GET /clusters/{name}` 缺 `desired_nodes`/`observed_nodes`/`config_summary`；`OperationView` 未序列化 `result`；create/add-nodes/delete-cluster 不更新 lifecycle；containerd config 先于 unit 安装；SPA 回退把带点 operation id 当资产 404；wizard 发送 `artifacts.zone=global`；precheck 在 TOML 未就绪时可点。
 - WP-64：addon 操作的 `values` 由服务端写入 `[addons.<name>.values]`（WP-54 遗漏）；`POST /clusters/{name}/archive` 为 WP-54 遗漏的端点，WP-64 补齐。
 - WP-55：`just release-musl` 后 `kurin serve` 打开页面；`just ts-bindings` 漂移测试。
 - WP-54：tier1 上 `/nodes/probe` 真实节点、`/addons` 安装后采集、`/packages/create-base` → push 到本地 zot。
@@ -165,10 +166,11 @@
 - WP-39：签名包校验、篡改 blob 拒绝、未签名包在 signature 模式拒绝（`cargo test -p kurin-artifact --test transfer`）；CI 工作流需在 tag 上人工验证。
 - WP-49：`just tier3-registry zot`、`docker-registry`、`external`（external 指向 zot）。
 - WP-63：tier1 真实 create 过程中刷新页面，确认日志从断点继续；`pnpm --dir web test:e2e`。
-- WP-66：`cd web && KURIN_E2E_URL=… KURIN_E2E_TOKEN=… pnpm test:e2e:real`（tier1/tier2，见 `web/e2e/README.md`）；结果写入 `docs/progress.md`。
+- WP-66：tier1 已实跑 `lifecycle.spec.ts`（3.9m PASS）与「创建中关闭浏览器」（2.4m PASS）；`resilience.spec.ts` 的重启 retry、CLI 抢锁、密码扫描需 `KURIN_E2E_RESTART_CMD` / `KURIN_E2E_CLI` / `KURIN_E2E_SECRET`，待维护者执行。
 - WP-65：Playwright `packages.spec.ts` 覆盖包导入/校验/推送/制作 base、升级预览+执行、证书续期、TOML 编辑保存；tier2 页面升级一个小版本。
 - WP-64：Playwright `addons.spec.ts` 覆盖安装/卸载与三个危险操作；tier1 页面安装/卸载 metrics-server。
 - WP-62：Playwright `wizard.spec.ts` 在 mock 后端走完 9 步并提交；tier1 真实创建。
+- WP-66：真实 e2e 暴露并修复：`GET /clusters/{name}` 缺 `desired_nodes`/`observed_nodes`/`config_summary`；`OperationView` 未序列化 `result`；create/add-nodes/delete-cluster 不更新 lifecycle；containerd config 先于 unit 安装；SPA 回退把带点 operation id 当资产 404；wizard 发送 `artifacts.zone=global`；precheck 在 TOML 未就绪时可点。
 - WP-64：addon 操作的 `values` 由服务端写入 `[addons.<name>.values]`（WP-54 遗漏）；`POST /clusters/{name}/archive` 为 WP-54 遗漏的端点，WP-64 补齐。
 - WP-55：`just release-musl` 后 `kurin serve` 打开页面；`just ts-bindings` 漂移测试。
 - WP-54：tier1 上 `/nodes/probe` 真实节点、`/addons` 安装后采集、`/packages/create-base` → push 到本地 zot。
