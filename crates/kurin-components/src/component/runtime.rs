@@ -57,7 +57,7 @@ impl Component for Containerd {
     fn plan(&self, b: &mut PlanBuilder<'_>) -> Result<()> {
         let prepare = b.phase("prepare");
         for node in b.nodes().k8s().collect::<Vec<_>>() {
-            b.add_track(
+            let config = b.add_track(
                 prepare,
                 Arc::new(tasks::prepare::ContainerdConfig::new(
                     node,
@@ -65,11 +65,14 @@ impl Component for Containerd {
                 )),
                 tracks::OS_K8S_MEMBER,
             );
-            b.add_track(
+            let unit = b.add_track(
                 prepare,
                 Arc::new(tasks::prepare::ContainerdUnit::new(node)),
                 tracks::OS_K8S_MEMBER,
             );
+            // The config task restarts containerd; the unit must exist first
+            // (a fresh host has no containerd.service until this task runs).
+            b.after(config, unit);
         }
         Ok(())
     }
