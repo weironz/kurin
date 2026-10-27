@@ -47,7 +47,7 @@
 | WP-40 addon.yaml 规范 | done | 见提交 | 无 | 无 | 41 个 addon 专项测试；schema 漂移测试；目录/内嵌/包三种加载；修复 package 文件集两级索引 bug |
 | WP-41 addon 渲染 | done | 见提交 | 新增 4 个渲染快照 | 无（纯本地渲染） | 03 §4.4 上下文；values 合并/校验；秘密脱敏；未声明镜像拒绝 |
 | WP-42 helm 执行器 | done | 见提交 | 无 | tier1 安装测试 chart | helm 3.19.0 制品（官方 sha256）；HelmRunner + manifests SSA；渲染镜像检查；返回对象列表 |
-| WP-43 addon-engine 组件 | todo | | | | |
+| WP-43 addon-engine 组件 | done | 见提交 | 计划新增 addons 阶段（全部计划快照）；能力表新增 addon/engine | tier1 带 `[addons.x]` 创建并观察 hooks | requires/conflicts/环/compat 校验；check 读 kurin-state+helm；apply render→apply→track→hooks→record；remove |
 | WP-44 kurin addon 命令族 | todo | | | tier1 metrics-server 生命周期 | |
 | WP-45 addon 打包与离线 | todo | | | 离线 tier1 ingress-nginx | |
 | WP-46 首批内置 addon | todo | | | `e2e/tier1/addons.sh` | |
@@ -92,6 +92,7 @@
 - WP-32：`kurin artifact` 现在产出 OCI layout（旧目录树由 WP-34 兼容读取）；镜像按所选架构携带子 manifest，上游 index 原样保留；修复 busybox URL 模板（Docker Hub tag 无 `v` 前缀）。
 - WP-52：schema V3 让 `one_active_op` 排除 precheck/status（只读操作不加锁）；操作 ID 用时间戳+随机后缀；EventBus 丢弃事件时以 seq 跳变等价实现 Lagged 断开；新增 `serve --max-concurrent-ops`。
 - WP-51：本 WP 只提供 Rust store API，未接入 HTTP/AppState（WP-52 集成）；`ApiError::Internal` 为增量变体。
+- WP-43：内置 addon 目录为空（WP-46），已知内置名在 `resolve_selection` 中延后并告警；`ApplyRequest.helm` 改为 Option；`CONTROL_ARTIFACTS` 特例移除，helm 由引擎 `artifacts()` 声明。
 - WP-42：helm 制品标 `optional`（旧 bundle 仍兼容，缺 helm 时明确报错）；`oci://` chart 由锚点 helm 拉取；集群级 kind 用内建清单判定。
 - WP-41：「内置推荐值」实现为 `values.yaml.j2` 按集群上下文渲染；`kubernetes.distribution` 暴露 kubeadm/k3s；`registry.mirror` 未配置为 null。
 - WP-40：`BUILTIN_ADDONS` 与内嵌目录接线留给 WP-43/46（目录暂空）；`oci://` 源明确报错，依赖 WP-33 的 pull。
@@ -142,6 +143,7 @@
 - WP-32：`kurin package create base --arch amd64,arm64 -o file:///tmp/base.tar.zst`，再 `kurin package inspect file:///tmp/base.tar.zst`（真实网络下载约 10 分钟；本地假上游测试已覆盖校验路径）。
 - WP-52：`cargo build -p kurin --features ui && scripts/api-smoke.sh <tier1-config.toml>`（导入 → precheck → create → SSE 日志 → status → delete）。
 - WP-51：`cargo test -p kurin-server --test store`；`rusqlite bundled` 的 musl/zig 交叉编译需在发布机验证。
+- WP-43：tier1 带 `[addons.x]` 创建，观察 addons 阶段任务与 hooks；`kurin addon remove`（WP-44 CLI 落地后）。
 - WP-42：tier1 安装测试 chart（`helm upgrade --install ... --wait=false`），确认 `helm status` 与对象列表，再卸载。
 - WP-41：纯本地渲染/校验，无需远端 e2e；13 个集成 + 5 个单测。
 - WP-40：纯本地解析/校验，无需远端 e2e；`just addon-schema` 与漂移测试。

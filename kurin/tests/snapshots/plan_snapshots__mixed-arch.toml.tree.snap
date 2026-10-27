@@ -37,6 +37,7 @@ expression: render_tree(&plan)
 ├── stage: join (0 tasks)
 ├── stage: cni (1 tasks)
 │   └── cni/calico-operator@cp1 :: kubectl apply tigera-operator manifest + Installation CR
+├── stage: addons (0 tasks)
 └── stage: post (2 tasks)
     ├── post/kubeconfig@cp1 :: fetch admin.conf -> merge local kubeconfig (context cluster-mixedarch)
     └── post/state-record@cp1 :: record cluster state in kube-system/kurin-state

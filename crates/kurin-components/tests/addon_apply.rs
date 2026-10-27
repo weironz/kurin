@@ -368,7 +368,7 @@ async fn helm_apply_uploads_payloads_templates_checks_images_then_installs() {
         session: &session,
         api: &api,
         flavor: Flavor::Kubeadm,
-        helm: &helm,
+        helm: Some(&helm),
         redactor: &redactor,
     })
     .await
@@ -434,7 +434,7 @@ async fn helm_apply_rejects_an_undeclared_rendered_image_before_installing() {
         session: &session,
         api: &api,
         flavor: Flavor::Kubeadm,
-        helm: &helm,
+        helm: Some(&helm),
         redactor: &redactor,
     })
     .await
@@ -470,7 +470,7 @@ async fn manifests_apply_returns_the_applied_object_list() {
         session: &session,
         api: &api,
         flavor: Flavor::Kubeadm,
-        helm: &helm,
+        helm: Some(&helm),
         redactor: &redactor,
     })
     .await

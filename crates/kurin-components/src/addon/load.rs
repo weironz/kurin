@@ -197,6 +197,14 @@ impl Catalog {
         self.addons.iter().find(|a| a.name() == name)
     }
 
+    /// Remove and return one addon by name. The engine resolves each
+    /// config entry to exactly one source, so it takes the embedded
+    /// entry out instead of cloning the file access.
+    pub fn take(&mut self, name: &str) -> Option<Addon> {
+        let idx = self.addons.iter().position(|a| a.name() == name)?;
+        Some(self.addons.remove(idx))
+    }
+
     /// Every addon name, in insertion order.
     pub fn names(&self) -> Vec<&str> {
         self.addons.iter().map(|a| a.name()).collect()

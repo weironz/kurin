@@ -412,6 +412,28 @@ expression: json
     ]
   },
   {
+    "id": "addon/engine",
+    "kind": "addon-engine",
+    "distributions": [
+      "k8s",
+      "k3s"
+    ],
+    "archs": [
+      "amd64",
+      "arm64"
+    ],
+    "offline": "bundle",
+    "zones": [
+      "global",
+      "cn"
+    ],
+    "ops": [
+      "create",
+      "addon-install",
+      "addon-remove"
+    ]
+  },
+  {
     "id": "post/kubeconfig",
     "kind": "post",
     "distributions": [

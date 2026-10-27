@@ -37,6 +37,7 @@ expression: render_tree(&plan)
 ├── stage: join (0 tasks)
 ├── stage: cni (1 tasks)
 │   └── cni/flannel@master01 :: kubectl apply kube-flannel.yml (CIDR-patched)
+├── stage: addons (0 tasks)
 └── stage: post (2 tasks)
     ├── post/kubeconfig@master01 :: fetch admin.conf -> merge local kubeconfig (context cluster-cni-flannel)
     └── post/state-record@master01 :: record cluster state in kube-system/kurin-state

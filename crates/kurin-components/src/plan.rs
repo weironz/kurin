@@ -82,7 +82,7 @@ pub fn build_delete(
 
 /// Discover: one display-only task per node recording what the pre-plan
 /// discovery probed (arch/OS/CPU/mem).
-fn plan_discover(b: &mut PlanBuilder<'_>) -> Result<()> {
+pub(crate) fn plan_discover(b: &mut PlanBuilder<'_>) -> Result<()> {
     let phase = b.phase("discover");
     for node in &b.cluster().nodes {
         let task = {

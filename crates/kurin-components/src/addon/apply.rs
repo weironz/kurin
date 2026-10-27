@@ -92,8 +92,9 @@ pub struct ApplyRequest<'a> {
     pub api: &'a dyn ClusterApi,
     /// Distribution, which selects the admin kubeconfig.
     pub flavor: Flavor,
-    /// The pinned helm archive.
-    pub helm: &'a HelmPayload,
+    /// The pinned helm archive; required by the helm path, unused by
+    /// the manifests path.
+    pub helm: Option<&'a HelmPayload>,
     /// Secrets to scrub from error messages (R8).
     pub redactor: &'a Redactor,
 }
@@ -202,6 +203,12 @@ async fn apply_helm(request: &ApplyRequest<'_>) -> Result<AddonApply, AddonError
             "spec.install.helm.chart is missing",
         )
     })?;
+    let helm = request.helm.ok_or_else(|| {
+        AddonError::apply(
+            &release,
+            "the helm payload was not resolved (required by the helm install path)",
+        )
+    })?;
     let chart = chart_payload(request.addon, chart_ref)?;
 
     let mut runner = HelmRunner::new(
@@ -211,11 +218,7 @@ async fn apply_helm(request: &ApplyRequest<'_>) -> Result<AddonApply, AddonError
         &rendered.namespace,
     );
     runner
-        .install_helm(
-            &request.helm.bytes,
-            &request.helm.file_name,
-            &request.helm.member,
-        )
+        .install_helm(&helm.bytes, &helm.file_name, &helm.member)
         .await
         .map_err(|e| apply_error(&release, e, request.redactor))?;
     match chart {
@@ -333,7 +336,7 @@ fn applied_objects(objects: &[DynamicObject], namespace: &str) -> Vec<AppliedObj
 /// Cluster-scoped built-in kinds (the ones addons commonly ship). A
 /// namespaced object must not be tracked in the addon namespace when it
 /// has none of its own.
-fn is_cluster_scoped(kind: &str) -> bool {
+pub(crate) fn is_cluster_scoped(kind: &str) -> bool {
     matches!(
         kind,
         "Namespace"

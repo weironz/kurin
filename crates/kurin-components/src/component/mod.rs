@@ -144,7 +144,7 @@ pub struct ArtifactRef {
 
 impl ArtifactRef {
     /// Resolve `name` for `arch` from the embedded manifest.
-    fn of(name: &str, arch: Arch) -> ArtifactRef {
+    pub(crate) fn of(name: &str, arch: Arch) -> ArtifactRef {
         let entry = embedded_manifest()
             .get(name)
             .unwrap_or_else(|| panic!("artifact {name:?} is not in the embedded manifest"));
@@ -299,6 +299,7 @@ pub fn registry() -> &'static ComponentRegistry {
             Arc::new(registry::External),
             Arc::new(storage::LocalPath),
             Arc::new(storage::Nfs),
+            Arc::new(crate::addon::engine::AddonEngine),
             Arc::new(post::Kubeconfig),
             Arc::new(post::Summary),
             Arc::new(post::Labels),
@@ -429,27 +430,7 @@ pub fn bundle_artifacts(arch: Arch) -> Vec<ArtifactRef> {
             }
         }
     }
-    push_control_artifacts(&mut out, arch);
     out
-}
-
-/// Artifacts the base package carries for the control machine rather
-/// than for a node component (04 §3.4 lists `helm` among the base
-/// layers). The addon engine executes them (WP-42/03 §4.5); it is not a
-/// registered component yet (WP-43), so the bundle and the base package
-/// append them explicitly under the engine's id.
-pub const CONTROL_ARTIFACTS: &[&str] = &["helm"];
-
-/// The component id the control artifacts are attributed to in package
-/// metadata (03 §4.5's `addon-engine`).
-pub const CONTROL_COMPONENT: &str = "addon/engine";
-
-fn push_control_artifacts(out: &mut Vec<ArtifactRef>, arch: Arch) {
-    for name in CONTROL_ARTIFACTS {
-        if !out.iter().any(|e| e.name == *name) {
-            out.push(ArtifactRef::of(name, arch));
-        }
-    }
 }
 
 /// Image artifacts the bootstrap track must preload on every member:
@@ -580,14 +561,6 @@ pub fn base_components(
             artifacts: artifacts.into_iter().map(|r| r.name).collect(),
         });
     }
-    // The control-machine payloads (`helm`, 04 §3.4) belong to the addon
-    // engine, which is not a registered component yet (WP-43).
-    if !CONTROL_ARTIFACTS.is_empty() {
-        out.push(PackageComponentSpec {
-            id: CONTROL_COMPONENT.to_string(),
-            artifacts: CONTROL_ARTIFACTS.iter().map(|n| n.to_string()).collect(),
-        });
-    }
     out
 }
 
@@ -637,6 +610,7 @@ mod tests {
                 "registry/external",
                 "storage/local-path",
                 "storage/nfs",
+                "addon/engine",
                 "post/kubeconfig",
                 "post/summary",
                 "post/labels",
@@ -824,18 +798,18 @@ mod tests {
 
     #[test]
     fn the_base_package_carries_the_helm_payload_for_both_distributions() {
-        // WP-42: helm is a control-machine payload, not a node component,
-        // so it is appended to the package under the addon engine's id.
+        // WP-43: helm is the addon engine's control-machine payload —
+        // the engine declares it like any other component's artifact.
         for distribution in [
             kurin_config::Distribution::K8s,
             kurin_config::Distribution::K3s,
         ] {
             let components = base_components(distribution, &CniSelection::All);
-            let control = components
+            let engine = components
                 .iter()
-                .find(|c| c.id == CONTROL_COMPONENT)
-                .unwrap_or_else(|| panic!("{distribution:?} package lacks {CONTROL_COMPONENT}"));
-            assert_eq!(control.artifacts, vec!["helm".to_string()]);
+                .find(|c| c.id == "addon/engine")
+                .unwrap_or_else(|| panic!("{distribution:?} package lacks addon/engine"));
+            assert_eq!(engine.artifacts, vec!["helm".to_string()]);
         }
         for arch in [Arch::Amd64, Arch::Arm64] {
             assert!(

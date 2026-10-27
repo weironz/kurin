@@ -195,6 +195,9 @@ pub enum Stage {
     ApiReady,
     Join,
     Cni,
+    /// Declarative addons (WP-43): one `addons/<name>` task per enabled
+    /// addon, converged by the addon engine.
+    Addons,
     Post,
     /// Teardown: drain and delete the node object through the anchor
     /// control plane.
@@ -242,6 +245,7 @@ impl Stage {
             Stage::ApiReady => "api-ready",
             Stage::Join => "join",
             Stage::Cni => "cni",
+            Stage::Addons => "addons",
             Stage::Post => "post",
             Stage::Drain => "drain",
             Stage::Reset => "reset",
@@ -274,6 +278,7 @@ impl Stage {
             "api-ready" => Stage::ApiReady,
             "join" => Stage::Join,
             "cni" => Stage::Cni,
+            "addons" => Stage::Addons,
             "post" => Stage::Post,
             "drain" => Stage::Drain,
             "reset" => Stage::Reset,

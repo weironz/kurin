@@ -40,6 +40,7 @@ expression: render_tree(&plan)
 │   ├── join/k3s@agent01 :: k3s agent join -> https://192.168.10.100:6443
 │   └── join/k3s@server02 :: k3s server join -> https://192.168.10.100:6443
 ├── stage: cni (0 tasks)
+├── stage: addons (0 tasks)
 └── stage: post (2 tasks)
     ├── post/k3s-kubeconfig@server01 :: record kubeconfig at /root/.kube/config (mode 600)
     └── post/state-record@server01 :: record cluster state in kube-system/kurin-state

@@ -91,6 +91,7 @@ const CREATE_PHASES: &[Phase] = &[
     Phase::new("api-ready", "api-ready"),
     Phase::new("join", "join"),
     Phase::new("cni", "cni"),
+    Phase::new("addons", "addons"),
     Phase::new("post", "post"),
 ];
 
@@ -740,6 +741,7 @@ role = "registry"
                 "api-ready",
                 "join",
                 "cni",
+                "addons",
                 "post",
             ]
         );

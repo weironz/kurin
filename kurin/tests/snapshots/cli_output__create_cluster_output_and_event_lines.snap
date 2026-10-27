@@ -37,6 +37,7 @@ ok    join/kubeadm@worker01 (reconciled)
 -- stage join complete
 skip  cni/calico-operator@master01
 -- stage cni complete
+-- stage addons complete
 done  post/kubeconfig@master01 (Nms)
 done  post/state-record@master01 (Nms)
 done  post/summary@master01 (Nms)

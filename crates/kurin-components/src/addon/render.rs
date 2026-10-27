@@ -434,6 +434,25 @@ impl Addon {
         let bytes = self.files().read(rel)?;
         String::from_utf8(bytes).map_err(|e| AddonError::io(self.files().path_for(rel), e))
     }
+
+    /// Render one package-relative manifest file against the same context
+    /// the install manifests see: the cluster (03 §4.4) plus `values` —
+    /// the merged values of a finished [`Addon::render`] (secrets already
+    /// resolved). Hook `apply` payloads (WP-43) render through this; the
+    /// caller applies the returned documents and runs the image-integrity
+    /// check (03 §4.2 rule 1).
+    pub fn render_file(
+        &self,
+        request: &RenderRequest<'_>,
+        redactor: &Redactor,
+        path: &str,
+        values: &Value,
+    ) -> Result<Vec<Value>, AddonError> {
+        let source = self.read_text(path)?;
+        let context = self.context(request, values);
+        let text = render_template(path, &source, &context, redactor)?;
+        parse_documents(&text, path, redactor)
+    }
 }
 
 // ---------------------------------------------------------------------------

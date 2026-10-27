@@ -16,8 +16,9 @@
 //!   image check, `upgrade --install`), or server-side apply of the
 //!   rendered manifests. Both report the object list the readiness
 //!   tracker follows.
-//! - The `addon-engine` component and install-time compat matching
-//!   against a real cluster (WP-43) are deliberately out of scope.
+//! - [`engine`] (WP-43) is the `addon-engine` first-layer component:
+//!   the selection/dependency validation, the `addons/<name>` install
+//!   and remove tasks, and the addon operation plans.
 //!
 //! ```no_run
 //! use kurin_components::addon::{Addon, Catalog};
@@ -32,6 +33,7 @@
 //! ```
 
 pub mod apply;
+pub mod engine;
 pub mod error;
 pub mod load;
 pub mod render;
@@ -43,6 +45,11 @@ pub mod validate;
 pub use apply::{
     apply_addon, release_status, uninstall_addon, AddonApply, ApplyRequest, HelmPayload,
 };
+pub use engine::{
+    build_addon_plan, resolve_selection, AddonEngine, AddonInstallTask, AddonRecord,
+    AddonRemoveTask, RecordedObject, SelectedAddon,
+};
+
 pub use error::AddonError;
 pub use load::{embedded_from, Addon, Catalog};
 pub use render::{RenderRequest, RenderedAddon, RenderedManifest, RenderedValues};

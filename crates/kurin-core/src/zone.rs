@@ -29,6 +29,15 @@ impl Zone {
             _ => None,
         }
     }
+
+    /// Stable lowercase name — the value addon values templates and the
+    /// render context expect (`global` / `cn`, 03 §4.4).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Zone::Global => "global",
+            Zone::Cn => "cn",
+        }
+    }
 }
 
 /// One verified mirror: upstream prefix -> domestic replacement.

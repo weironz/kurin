@@ -168,6 +168,17 @@ pub enum Arch {
     Arm64,
 }
 
+impl Arch {
+    /// Stable lowercase name, comparable with
+    /// [`kurin_core::arch::Arch::as_str`].
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Arch::Amd64 => "amd64",
+            Arch::Arm64 => "arm64",
+        }
+    }
+}
+
 /// How an addon is applied (03 §4.1): exactly one variant is set.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]

@@ -38,6 +38,7 @@ expression: render_tree(&plan)
 ├── stage: cni (2 tasks)
 │   ├── cni/calico-operator@master01 :: kubectl apply tigera-operator manifest + Installation CR
 │   └── storage/install@master01 :: deploy Nfs provisioner (StorageClass kurin-nfs)
+├── stage: addons (0 tasks)
 └── stage: post (2 tasks)
     ├── post/kubeconfig@master01 :: fetch admin.conf -> merge local kubeconfig (context cluster-storage-nfs)
     └── post/state-record@master01 :: record cluster state in kube-system/kurin-state

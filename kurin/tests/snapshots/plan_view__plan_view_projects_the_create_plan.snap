@@ -214,6 +214,11 @@ expression: plan_view(&plan)
       ]
     },
     {
+      "id": "addons",
+      "label": "addons",
+      "tasks": []
+    },
+    {
       "id": "post",
       "label": "post",
       "tasks": [
