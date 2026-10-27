@@ -208,6 +208,34 @@ impl BlobStore {
         Ok(report)
     }
 
+    /// Every stored blob with its size. `.part-*` scratch files are
+    /// not included. A missing store directory reads as empty.
+    pub fn list(&self) -> Result<Vec<(Digest, u64)>, StoreError> {
+        let dir = self.root.join("sha256");
+        let entries = match fs::read_dir(&dir) {
+            Ok(entries) => entries,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(e) => return Err(io_err(&dir, e)),
+        };
+        let mut out = Vec::new();
+        for entry in entries {
+            let entry = entry.map_err(|e| io_err(&dir, e))?;
+            let path = entry.path();
+            let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+                continue;
+            };
+            if !is_sha256_hex(name) {
+                continue;
+            }
+            let meta = entry.metadata().map_err(|e| io_err(&path, e))?;
+            if !meta.is_file() {
+                continue;
+            }
+            out.push((digest_from_hex(name)?, meta.len()));
+        }
+        Ok(out)
+    }
+
     /// Write `reader` to `part` while hashing; fsync before returning.
     fn write_part(&self, part: &Path, reader: &mut impl Read) -> Result<Digest, StoreError> {
         let mut file = OpenOptions::new()

@@ -137,15 +137,23 @@ spec:
 ```bash
 kurin package create base  [--kubernetes 1.33.1] [--distribution kubeadm|k3s] [--arch amd64,arm64]
                            [--cni all|calico,cilium] [--with-os ubuntu-24.04,rocky-9] [--addons ingress-nginx,…]
-                           -o oci-layout://DIR | file://X.tar.zst | oci://REG/NS/NAME:TAG
+                           -o oci-layout://DIR | file://X.tar.zst
 kurin package create -f kurin-package.yaml -o …
 kurin package create bundle --from <src>… -o file://X.tar.zst
-kurin package inspect <src> [--json] [--sbom]
-kurin package verify  <src> [--key cosign.pub]
-kurin package push    <src> <dst>
+kurin package inspect <src> [--manifest] [--sbom]     # 摘要 / 完整 kurin-package.json / SPDX 文档
+kurin package verify  <src> [--key cosign.pub]        # digest 闭包全量校验（--key 签名校验在 WP-39）
+kurin package push    <src> <dst>                     # 任意两种形态间复制，只传缺失 blob
+kurin package pull    <src> <dst>                      # push 的本地目标别名（oci-layout:// / file://）
 kurin package mirror  <src> --registry REG [--ca FILE] [--user U --password-env V]   # 按 §5.2 的布局预先推入外部仓库
-kurin package list | prune                                                             # 本机内容寻址缓存
+kurin package list [--format text|json] | prune [--dry-run]                            # 本机内容寻址缓存
 ```
+
+`push` / `pull` / `verify` / registry 来源的 `inspect` 接受 `--user` +
+`--password-env`（缺省读 `~/.docker/config.json`，再缺省匿名）。`oci://`
+引用：远程仓库默认 HTTPS，回环地址默认 HTTP（同 Docker 的 insecure
+localhost 规则），`oci://http://` / `oci://https://` 前缀可显式覆盖。
+子命令里的 JSON 输出用 `--manifest` / `--format json` 而不是 `--json`：
+全局 `--json` 归事件流所有，clap 要求同一命令下长选项唯一。
 
 ```toml
 [packages]

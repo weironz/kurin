@@ -30,6 +30,7 @@ toml_edit.workspace = true
 rpassword.workspace = true
 semver.workspace = true
 tracing.workspace = true
+tempfile.workspace = true
 oci-spec = { version = "0.9", default-features = false, features = ["image"] }
 
 [dev-dependencies]

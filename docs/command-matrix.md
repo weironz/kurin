@@ -124,18 +124,26 @@ sha256）。计划变化时拒绝续跑并提示去掉 `--resume`；v1 状态文
 
 `kurin package create base` 生成 04 §3 的 OCI 包（一个 image index：
 `kurin-package.json` 元数据、每个架构一个文件集 manifest、全部镜像按上游
-原 digest 保存）；`inspect` 打印包内容。输出支持 `oci-layout://DIR`、
-`file://X.tar`、`file://X.tar.zst` 三种形态（`oci://` 推送在 WP-33）。
+原 digest 保存）。`push` / `pull` 在任意两种形态间复制，只传目标端缺失的
+blob（registry 目标先 HEAD，本地目标按 digest 判断）；`verify` 对 digest
+闭包全量重哈希；`list` / `prune` 维护本机内容寻址缓存。包引用支持
+`oci://REG/NS/NAME[:TAG]`、`oci-layout://DIR`、`file://X.tar`、
+`file://X.tar.zst`（本地裸 tar 路径也接受）。
 
 `--arch` 接受逗号分隔列表（如 `--arch amd64,arm64`）：混合架构集群的
 离线包需要覆盖全部涉及架构；缺省为控制机架构。`--cni all|none|calico,cilium`
 裁剪 CNI 载荷；`--kubernetes vX.Y.Z` 走动态清单固定非内嵌版本；
-`--distribution kubeadm|k3s` 选择发行版。
+`--distribution kubeadm|k3s` 选择发行版。registry 认证用 `--user` +
+`--password-env`（或 `~/.docker/config.json`）；`oci://` 里回环地址默认
+HTTP，远程仓库默认 HTTPS，`oci://http://…` 可显式指定。
 
 | | amd64 | arm64 |
 |---|---|---|
 | `package create base -o …` | ✅ | `--arch arm64` |
-| `package inspect <src>` | ✅ | ✅ |
+| `package inspect <src> [--manifest] [--sbom]` | ✅ | ✅ |
+| `package verify <src>` | ✅ | ✅ |
+| `package push <src> <dst>` / `package pull` | ✅ | ✅ |
+| `package list` / `package prune` | ✅ | ✅ |
 | `artifact --out <dir>`（弃用别名）| ✅ | `--arch arm64` |
 
 ## logs

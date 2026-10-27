@@ -2,6 +2,50 @@
 
 All notable changes to kurin. Format follows Keep a Changelog; semver.
 
+### Fixed (WP-33)
+- `kurin package inspect <src>` panicked on every invocation since
+  WP-32: the global event-stream `--json` (`Option<JsonArg>`) and the
+  subcommand's `--json: bool` shared the arg id `json`, and clap's
+  derive resolved the root field against the subcommand's value
+  ("Could not downcast to bool"). The subcommand flag is now
+  `--manifest` (print `kurin-package.json`); the global `--json`
+  keeps its meaning and spelling. New subcommands use `--format json`
+  for the same reason — clap requires long names to be unique per
+  command, so any subcommand-level `--json` would collide.
+- `PackageBuilder::build` never transferred the image's own index
+  document (`image.digest`), only its sub-manifest and blobs, leaving a
+  dangling descriptor in the layout: `package verify`/`push` on such a
+  package failed with `NotFound`. The index document is now part of
+  every built package.
+
+### Added (WP-33)
+- `kurin package push <src> <dst>` / `pull <src> <dst>`: copy a
+  package between any two of the three transport forms
+  (`oci://REG/NS/NAME[:TAG]`, `oci-layout://DIR`, `file://X.tar`,
+  `file://X.tar.zst`), sending only what the destination is missing
+  (registry: HEAD first; local: digest lookup). Registry auth via
+  `--user` + `--password-env`, else `~/.docker/config.json`, else
+  anonymous. `oci://` loopback registries default to plain HTTP like
+  Docker's insecure-localhost rule; `oci://http://`/`oci://https://`
+  override. Child manifests are pushed before the index (WP-30 spike:
+  distribution/harbor reject an index whose children are missing).
+- `kurin package verify <src>`: full digest verification — re-hash
+  every blob and manifest in the package's closure, in any form.
+  Signature verification stays WP-39.
+- `kurin package inspect [--manifest] [--sbom]`: summary (default),
+  full `kurin-package.json` (`--manifest`), or the SPDX document
+  (`--sbom`, rendered from the verified metadata; referrer
+  attachment is WP-39). Registry sources are pulled into a scratch
+  layout (verified on arrival) and inspected from there.
+- `kurin package list [--format text|json]` / `prune [--dry-run]`:
+  maintain the local content-addressed cache
+  (`~/.cache/kurin/blobs`); prune removes blobs no artifact cache
+  entry references.
+- New deps in `kurin-artifact`: `oci-client` 0.16.1 (rustls, no
+  default features), `http` 1, `base64` 0.22, `futures-util` 0.3,
+  `tokio-util` (io); dev `bcrypt`. Cross-compilation of the same set
+  was verified for x86_64-musl and aarch64-musl by the WP-30 spike.
+
 ### Changed
 - `kurin artifact --out DIR` now builds the OCI package via
   `kurin package create base -o oci-layout://DIR` and prints a

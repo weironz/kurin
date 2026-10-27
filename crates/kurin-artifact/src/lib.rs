@@ -9,5 +9,6 @@ pub mod dynamic_manifest;
 pub mod oci;
 pub mod package;
 pub mod store;
+pub mod transfer;
 pub mod version;
 pub mod zone;

@@ -179,10 +179,69 @@ enum PackageWhat {
     /// Print a package's metadata (name, version, components, artifacts,
     /// images).
     Inspect {
-        /// Package source: `oci-layout://DIR`, `file://X.tar` or
-        /// `file://X.tar.zst`.
+        /// Package source: `oci://REG/NS/NAME[:TAG]`, `oci-layout://DIR`,
+        /// `file://X.tar` or `file://X.tar.zst`.
         source: String,
-        // Full `kurin-package.json` output is selected by the global `--json`.
+        /// Print the full `kurin-package.json` document instead of the
+        /// summary. (Named `--manifest`, not `--json`: the global
+        /// `--json` owns the event-stream flag and clap requires long
+        /// names to be unique per command.)
+        #[arg(long)]
+        manifest: bool,
+        /// Print the package's SPDX SBOM document instead of the summary.
+        #[arg(long)]
+        sbom: bool,
+    },
+    /// Re-hash every blob in the package's digest closure (04 §6).
+    Verify {
+        /// Package source: any of the three transport forms.
+        source: String,
+        /// Registry user (registry sources only).
+        #[arg(long)]
+        user: Option<String>,
+        /// Environment variable holding the registry password.
+        #[arg(long)]
+        password_env: Option<String>,
+    },
+    /// Copy a package to an `oci://` registry, sending only the blobs
+    /// the registry is missing (04 §3.3).
+    Push {
+        /// Source: `oci-layout://DIR`, `file://X.tar[.zst]` or `oci://…`.
+        source: String,
+        /// Destination: `oci://REG/NS/NAME:TAG`.
+        destination: String,
+        #[arg(long)]
+        user: Option<String>,
+        #[arg(long)]
+        password_env: Option<String>,
+    },
+    /// Copy a package from any source to a local destination
+    /// (`oci-layout://` or `file://`); the same transfer as `push`.
+    Pull {
+        /// Source: any of the three transport forms.
+        source: String,
+        /// Destination: `oci-layout://DIR`, `file://X.tar` or
+        /// `file://X.tar.zst`.
+        destination: String,
+        #[arg(long)]
+        user: Option<String>,
+        #[arg(long)]
+        password_env: Option<String>,
+    },
+    /// List the local content-addressed cache (`~/.cache/kurin/blobs`).
+    List {
+        /// Print a JSON array of `{digest, size}` objects instead of
+        /// the summary. (`--format`, not `--json`: the global `--json`
+        /// owns the event-stream flag and clap requires long names to
+        /// be unique per command.)
+        #[arg(long, value_enum, default_value_t = ListFormat::Text)]
+        format: ListFormat,
+    },
+    /// Delete cache blobs no artifact currently references.
+    Prune {
+        /// Print what would be removed without deleting anything.
+        #[arg(long)]
+        dry_run: bool,
     },
 }
 
@@ -211,6 +270,15 @@ enum PackageCreateWhat {
         #[arg(short, long)]
         output: String,
     },
+}
+
+/// Output format of `kurin package list`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum ListFormat {
+    /// One `sha256:<digest> <size>` line per blob, with a summary head.
+    Text,
+    /// A JSON array of `{digest, size}` objects with a `total`.
+    Json,
 }
 
 #[derive(clap::Args)]
@@ -500,16 +568,46 @@ async fn run(cli: Cli) -> Result<()> {
                     output,
                 } => package_create_base(kubernetes, distribution, arch, cni, output).await,
             },
-            PackageWhat::Inspect { source } => {
-                let handle = kurin::package::PackageSource::open(&source)?;
-                if out.json_enabled() {
-                    let meta = handle.manifest()?;
-                    println!("{}", serde_json::to_string_pretty(&meta).into_diagnostic()?);
-                } else {
-                    print!("{}", kurin::package::inspect_summary(&handle)?);
-                }
+            PackageWhat::Inspect {
+                source,
+                manifest,
+                sbom,
+            } => package_inspect(&source, manifest, sbom).await,
+            PackageWhat::Verify {
+                source,
+                user,
+                password_env,
+            } => {
+                let source = kurin::transfer::PackageRef::parse(&source)?;
+                let opts = transfer_options(user, password_env);
+                let report = kurin::transfer::verify_package(&source, &opts)
+                    .await
+                    .map_err(|e| miette::miette!("{e:?}"))?;
+                println!(
+                    "verified {} ({})",
+                    report.index,
+                    report.tag.as_deref().unwrap_or("no tag")
+                );
+                println!(
+                    "  {} manifest(s), {} blob(s), {} bytes re-hashed",
+                    report.manifests, report.blobs, report.bytes
+                );
                 Ok(())
             }
+            PackageWhat::Push {
+                source,
+                destination,
+                user,
+                password_env,
+            } => package_transfer(&source, &destination, user, password_env, "push").await,
+            PackageWhat::Pull {
+                source,
+                destination,
+                user,
+                password_env,
+            } => package_transfer(&source, &destination, user, password_env, "pull").await,
+            PackageWhat::List { format } => package_list(format),
+            PackageWhat::Prune { dry_run } => package_prune(dry_run),
         },
         Commands::Capabilities => {
             println!("{}", ops::capabilities()?);
@@ -949,6 +1047,174 @@ async fn package_create_base(
     eprintln!("index: {}", report.index);
     eprintln!("sbom:  {}", report.sbom.display());
     Ok(())
+}
+
+/// Shared credentials for `push` / `pull` / `verify` / registry
+/// `inspect` (04 §4: `--user` + `--password-env`, else the Docker
+/// config, else anonymous).
+fn transfer_options(
+    user: Option<String>,
+    password_env: Option<String>,
+) -> kurin::transfer::TransferOptions {
+    kurin::transfer::TransferOptions { user, password_env }
+}
+
+/// `kurin package push/pull src dst` — one transfer, one report
+/// (04 §3.3). The two verbs are spelling: any source may copy to any
+/// destination the CLI accepts.
+async fn package_transfer(
+    source: &str,
+    destination: &str,
+    user: Option<String>,
+    password_env: Option<String>,
+    verb: &str,
+) -> Result<()> {
+    let source = kurin::transfer::PackageRef::parse(source)?;
+    let destination = kurin::transfer::PackageRef::parse(destination)?;
+    if matches!(destination, kurin::transfer::PackageRef::Registry(_)) && verb == "pull" {
+        return Err(miette::miette!(
+            "`pull` writes to a local destination (oci-layout:// or file://); use `push` to upload"
+        ));
+    }
+    let opts = transfer_options(user, password_env);
+    let report = kurin::transfer::transfer(&source, &destination, &opts)
+        .await
+        .map_err(|e| miette::miette!("{e:?}"))?;
+    let tag = report.tag.as_deref().unwrap_or("-");
+    match &report.output {
+        Some(output) => println!(
+            "package {verb} [{tag}] -> {} ({} of {} blob(s), {} sent; {} of {} manifest(s) sent)",
+            output.display(),
+            report.counts.blobs_moved,
+            report.counts.blobs_total(),
+            humansize(report.counts.bytes_moved),
+            report.counts.manifests_moved,
+            report.counts.manifests_total(),
+        ),
+        None => println!(
+            "package {verb} to {destination} [{tag}]: {} of {} blob(s) already present, \
+             {} sent ({}); {} of {} manifest(s) sent",
+            report.counts.blobs_present,
+            report.counts.blobs_total(),
+            report.counts.blobs_moved,
+            humansize(report.counts.bytes_moved),
+            report.counts.manifests_moved,
+            report.counts.manifests_total(),
+        ),
+    }
+    println!("index: {}", report.index);
+    Ok(())
+}
+
+/// `kurin package inspect [--manifest] [--sbom]`. Registry sources are
+/// pulled (and thereby verified) into a scratch layout first.
+async fn package_inspect(source: &str, manifest: bool, sbom: bool) -> Result<()> {
+    let parsed = kurin::transfer::PackageRef::parse(source)?;
+    let (tag, handle) = match &parsed {
+        kurin::transfer::PackageRef::Registry(reg) => {
+            let auth = kurin::oci::resolve_registry_auth(None, None, reg.registry())
+                .map_err(|e| miette::miette!("{e:?}"))?;
+            let temp = tempfile::TempDir::new().into_diagnostic()?;
+            let layout = kurin_artifact::oci::Layout::create(temp.path())
+                .map_err(|e| miette::miette!("{e:?}"))?;
+            let outcome = kurin_artifact::oci::remote::pull_package(reg, &layout, &auth)
+                .await
+                .map_err(|e| miette::miette!("{e:?}"))?;
+            let handle = kurin::package::PackageSource::from_layout(layout, Some(temp));
+            (outcome.tag, handle)
+        }
+        _ => (None, kurin::package::PackageSource::open(source)?),
+    };
+    if let Some(tag) = &tag {
+        println!("tag: {tag}");
+    }
+    if sbom {
+        // The package's SPDX document (04 §6). In-package referrer
+        // attachment is WP-39; the document is rendered from the
+        // verified metadata either way.
+        let meta = handle.manifest()?;
+        let index = handle.index_digest()?;
+        let document = kurin::package::spdx::Document::from_package(
+            &meta,
+            &index,
+            &format!("kurin-{}", env!("CARGO_PKG_VERSION")),
+        );
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&document).into_diagnostic()?
+        );
+    } else if manifest {
+        let meta = handle.manifest()?;
+        println!("{}", serde_json::to_string_pretty(&meta).into_diagnostic()?);
+    } else {
+        print!("{}", kurin::package::inspect_summary(&handle)?);
+    }
+    Ok(())
+}
+
+/// `kurin package list [--format text|json]`.
+fn package_list(format: ListFormat) -> Result<()> {
+    let store = kurin::artifact::ArtifactStore::open_default()?;
+    let entries = kurin::transfer::list_cache(&store).map_err(|e| miette::miette!("{e:?}"))?;
+    let bytes: u64 = entries.iter().map(|e| e.size).sum();
+    if format == ListFormat::Json {
+        let value = serde_json::json!({
+            "blobs": entries
+                .iter()
+                .map(|e| serde_json::json!({ "digest": e.digest, "size": e.size }))
+                .collect::<Vec<_>>(),
+            "total": bytes,
+        });
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&value).into_diagnostic()?
+        );
+    } else {
+        println!(
+            "{} blob(s), {} in {}",
+            entries.len(),
+            humansize(bytes),
+            store.blob_store().root().display()
+        );
+        for entry in &entries {
+            println!("{} {}", entry.digest, humansize(entry.size));
+        }
+    }
+    Ok(())
+}
+
+/// `kurin package prune [--dry-run]`.
+fn package_prune(dry_run: bool) -> Result<()> {
+    let store = kurin::artifact::ArtifactStore::open_default()?;
+    let report = kurin::transfer::prune_cache(&store).map_err(|e| miette::miette!("{e:?}"))?;
+    let head = if dry_run {
+        "prune --dry-run: would "
+    } else {
+        "prune: "
+    };
+    println!(
+        "{head}kept {} blob(s), removed {} blob(s) ({})",
+        report.kept,
+        report.removed,
+        humansize(report.bytes_removed)
+    );
+    Ok(())
+}
+
+/// Human-readable byte counts for CLI reports.
+fn humansize(bytes: u64) -> String {
+    const UNITS: [&str; 5] = ["B", "KiB", "MiB", "GiB", "TiB"];
+    let mut value = bytes as f64;
+    let mut unit = 0;
+    while value >= 1024.0 && unit < UNITS.len() - 1 {
+        value /= 1024.0;
+        unit += 1;
+    }
+    if unit == 0 {
+        format!("{bytes} B")
+    } else {
+        format!("{value:.1} {}", UNITS[unit])
+    }
 }
 
 const EXAMPLE_CONFIG_V1ALPHA1: &str = include_str!("../examples/cluster.example.toml");

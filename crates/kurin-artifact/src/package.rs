@@ -18,10 +18,10 @@
 //!
 //! Images keep their **upstream digests**: the runtime resolves them by
 //! original reference through the registry mirror, so the index digest
-//! must not change. Multi-arch images carry the selected platforms'
 //! sub-manifests and blobs; the upstream index document itself is stored
-//! verbatim (per the WP-30 spike a layout may reference sub-manifests it
-//! does not carry, and `--full-multiarch` on push is a WP-33 concern).
+//! verbatim, so it may reference platforms the package does not carry —
+//! registries that validate index children on upload (distribution,
+//! harbor) reject such packages; see `oci::remote` and the WP-30 spike.
 //!
 //! All JSON this module writes goes through [`canonical_json`]:
 //! `serde_json`'s map type is sorted, so the bytes — and therefore every
@@ -400,6 +400,9 @@ impl PackageBuilder {
             transfer_blob(cache, layout.blobs(), &file.digest)?;
         }
         for image in &self.images {
+            // the upstream index document itself (04 §3.1: images keep
+            // their original digest); `blobs` carries only its children
+            transfer_blob(cache, layout.blobs(), &image.digest)?;
             for blob in &image.blobs {
                 transfer_blob(cache, layout.blobs(), blob)?;
             }
@@ -869,8 +872,8 @@ pub enum PackageOutput {
 impl PackageOutput {
     /// Parse a `-o` target. Accepted forms: `oci-layout://DIR`,
     /// `file://X.tar`, `file://X.tar.zst` (a bare path with a tar
-    /// extension is tolerated for convenience). `oci://` targets need
-    /// `kurin package push` (WP-33).
+    /// extension is tolerated for convenience). `oci://` targets are
+    /// the job of `kurin package push`.
     pub fn parse(target: &str) -> Result<Self, PackageError> {
         let target = target.trim();
         if let Some(rest) = target.strip_prefix("oci-layout://") {
@@ -948,8 +951,7 @@ impl Staging {
     }
 }
 
-// ---------------------------------------------------------------------------
-// reading a package back (inspect; push/pull land in WP-33)
+// reading a package back (inspect; verify/push/pull live in transfer.rs)
 // ---------------------------------------------------------------------------
 
 /// A package opened for reading: an OCI layout, either a directory or a
@@ -961,40 +963,41 @@ pub struct PackageSource {
 
 impl PackageSource {
     /// Open `oci-layout://DIR`, `file://X.tar` or `file://X.tar.zst`.
-    /// `oci://` sources need `kurin package pull` (WP-33).
+    /// `oci://` sources must be fetched first — `kurin package pull`,
+    /// `inspect` and `verify` do that through
+    /// [`crate::transfer::materialize`].
     pub fn open(source: &str) -> Result<Self, PackageError> {
-        let source = source.trim();
-        if let Some(rest) = source.strip_prefix("oci-layout://") {
-            return Ok(PackageSource {
-                layout: Layout::open(rest)?,
-                _temp: None,
-            });
+        match crate::transfer::PackageRef::parse(source)? {
+            crate::transfer::PackageRef::Layout(dir) => {
+                Ok(PackageSource::from_layout(Layout::open(dir)?, None))
+            }
+            crate::transfer::PackageRef::Tar(path) => {
+                let temp = tempfile::TempDir::new()?;
+                let file = File::open(&path)?;
+                let layout = Layout::unpack_tar(file, temp.path())?;
+                Ok(PackageSource::from_layout(layout, Some(temp)))
+            }
+            crate::transfer::PackageRef::TarZstd(path) => {
+                let temp = tempfile::TempDir::new()?;
+                let file = File::open(&path)?;
+                let layout = Layout::unpack_tar_zstd(file, temp.path())?;
+                Ok(PackageSource::from_layout(layout, Some(temp)))
+            }
+            crate::transfer::PackageRef::Registry(_) => {
+                Err(PackageError::RegistrySourceUnsupported)
+            }
         }
-        if source.starts_with("oci://") {
-            return Err(PackageError::RegistrySourceUnsupported);
+    }
+
+    /// Wrap an already-opened layout (for example one `transfer`
+    /// pulled from a registry) as a package source. `temp`, when set,
+    /// keeps the layout's scratch directory alive as long as the
+    /// source.
+    pub fn from_layout(layout: Layout, temp: Option<tempfile::TempDir>) -> Self {
+        PackageSource {
+            layout,
+            _temp: temp,
         }
-        let path = source.strip_prefix("file://").unwrap_or(source);
-        if path.ends_with(".tar.zst") {
-            let temp = tempfile::TempDir::new()?;
-            let file = File::open(path)?;
-            let layout = Layout::unpack_tar_zstd(file, temp.path())?;
-            return Ok(PackageSource {
-                layout,
-                _temp: Some(temp),
-            });
-        }
-        if path.ends_with(".tar") {
-            let temp = tempfile::TempDir::new()?;
-            let file = File::open(path)?;
-            let layout = Layout::unpack_tar(file, temp.path())?;
-            return Ok(PackageSource {
-                layout,
-                _temp: Some(temp),
-            });
-        }
-        Err(PackageError::InvalidSource {
-            input: source.to_string(),
-        })
     }
 
     /// The backing layout.
@@ -1490,13 +1493,33 @@ pub enum PackageError {
     #[error("unsupported package source `{input}` (expected oci-layout://DIR, file://X.tar or file://X.tar.zst)")]
     InvalidSource { input: String },
 
-    #[error(
-        "oci:// targets need `kurin package push` (WP-33); build to oci-layout:// or file:// first"
-    )]
+    #[error("oci:// targets need `kurin package push`; build to oci-layout:// or file:// first")]
     RegistryOutputUnsupported,
 
     #[error(
-        "oci:// sources need `kurin package pull` (WP-33); open oci-layout:// or file:// sources"
+        "unsupported package reference `{input}` (expected oci://host/repo[:tag], oci-layout://DIR, file://X.tar or file://X.tar.zst)"
+    )]
+    InvalidRef { input: String },
+
+    #[error("registry transport: {detail}")]
+    Remote {
+        detail: String,
+        #[source]
+        source: crate::oci::remote::RemoteError,
+    },
+
+    #[error("manifest {digest} is {expected} bytes but stores {actual}")]
+    ManifestSizeMismatch {
+        digest: String,
+        expected: u64,
+        actual: u64,
+    },
+
+    #[error("package verification failed:\n{}", failures.join("\n"))]
+    Verification { failures: Vec<String> },
+
+    #[error(
+        "oci:// sources must be fetched through the registry client: use `kurin package pull/inspect/verify`"
     )]
     RegistrySourceUnsupported,
 

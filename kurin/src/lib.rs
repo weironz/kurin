@@ -66,6 +66,12 @@ pub mod precheck {
 pub mod package {
     pub use kurin_artifact::package::*;
 }
+pub mod oci {
+    pub use kurin_artifact::oci::*;
+}
+pub mod transfer {
+    pub use kurin_artifact::transfer::*;
+}
 pub mod render {
     pub use kurin_core::render::*;
 }
