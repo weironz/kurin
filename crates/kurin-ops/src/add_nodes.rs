@@ -58,7 +58,7 @@ pub(crate) async fn prepare(
     // Resolve the payload source first (WP-34): `add nodes` is always a
     // mutating run, so a base package stops here — before any session is
     // opened or the join token refreshed — instead of half-running.
-    let payload = crate::packages::resolve_payload(&mut spec)?;
+    let payload = crate::packages::resolve_payload(&mut spec).await?;
     if let crate::packages::Payload::Package { uri, .. } = &payload {
         return Err(miette::miette!(
             "add nodes from the base package {uri} is not implemented yet (package delivery \

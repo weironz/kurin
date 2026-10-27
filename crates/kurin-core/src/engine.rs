@@ -340,6 +340,45 @@ pub enum UploadSource {
     File(PathBuf),
     /// An in-memory payload (small configs, rendered manifests).
     Bytes(Vec<u8>),
+    /// A content-addressed payload from the local cache or a package
+    /// (WP-35, 04 §5.1): [`BlobSource::path`] is streamed in bounded
+    /// chunks by the real transport, never read whole into memory, and
+    /// the transfer is checked against [`BlobSource::digest`].
+    Blob(BlobSource),
+}
+
+/// One verified payload blob a node needs.
+///
+/// The path points at a file in the local content-addressed store (or a
+/// file inside an opened package layout); `digest` and `size` come from
+/// that store's verified metadata, so the transport can check the streamed
+/// bytes against the pin and a corrupted cache is caught before the bytes
+/// reach a node.
+#[derive(Debug, Clone)]
+pub struct BlobSource {
+    /// Local file holding the payload.
+    pub path: PathBuf,
+    /// Expected payload digest, `sha256:<hex>` (a bare hex digest is
+    /// accepted too).
+    pub digest: String,
+    /// Payload size in bytes.
+    pub size: u64,
+}
+
+impl BlobSource {
+    /// A blob reference from a local path and its `sha256:<hex>` digest.
+    pub fn new(path: impl Into<PathBuf>, digest: impl Into<String>, size: u64) -> Self {
+        Self {
+            path: path.into(),
+            digest: digest.into(),
+            size,
+        }
+    }
+
+    /// The digest as bare lowercase hex (the form `sha256sum` prints).
+    pub fn hex(&self) -> &str {
+        self.digest.rsplit(':').next().unwrap_or(&self.digest)
+    }
 }
 
 /// What an upload actually transferred, for logging and verification.
@@ -420,7 +459,9 @@ pub trait Session: Send + Sync {
     /// The default reads the whole source into memory and defers to
     /// `write_file_mode`, so mock transports keep working; the real SSH
     /// transport streams files in 64 KiB chunks and checks `sha256sum`
-    /// on the remote side before installing.
+    /// on the remote side before installing. A [`UploadSource::Blob`]
+    /// carries its digest and size, which are verified here (mock path)
+    /// before anything is written.
     async fn upload(&self, src: UploadSource, dst: &str, mode: u32) -> Result<UploadReport> {
         let started = Instant::now();
         let bytes = match src {
@@ -428,6 +469,28 @@ pub trait Session: Send + Sync {
                 .await
                 .map_err(|e| miette::miette!("read upload source {}: {e}", path.display()))?,
             UploadSource::Bytes(bytes) => bytes,
+            UploadSource::Blob(blob) => {
+                let bytes = tokio::fs::read(&blob.path).await.map_err(|e| {
+                    miette::miette!("read upload source {}: {e}", blob.path.display())
+                })?;
+                if bytes.len() as u64 != blob.size {
+                    return Err(miette::miette!(
+                        "blob {} is {} bytes, metadata says {}",
+                        blob.path.display(),
+                        bytes.len(),
+                        blob.size
+                    ));
+                }
+                let actual = sha256_hex(&bytes);
+                if actual != blob.hex() {
+                    return Err(miette::miette!(
+                        "blob {} digest mismatch: expected sha256:{}, got sha256:{actual}",
+                        blob.path.display(),
+                        blob.hex()
+                    ));
+                }
+                bytes
+            }
         };
         let sha256 = sha256_hex(&bytes);
         self.write_file_mode(dst, &bytes, mode).await?;

@@ -1,0 +1,42 @@
+---
+source: kurin/tests/plan_snapshots.rs
+expression: render_tree(&plan)
+---
+├── stage: discover (2 tasks)
+│   ├── discover/facts@master01 :: arch=amd64 os=? cpu=0 mem=0MiB
+│   └── discover/facts@worker01 :: arch=amd64 os=? cpu=0 mem=0MiB
+├── stage: preflight (2 tasks)
+│   ├── preflight/master01 :: probe swap / selinux / time-sync / kernel modules
+│   └── preflight/worker01 :: probe swap / selinux / time-sync / kernel modules
+├── stage: artifacts (2 tasks)
+│   ├── artifacts/install@master01 :: fetch+install pinned binaries (amd64)
+│   └── artifacts/install@worker01 :: fetch+install pinned binaries (amd64)
+├── stage: prepare (12 tasks)
+│   ├── prepare/os-baseline@master01 :: disable swap / firewalld, SELinux permissive
+│   ├── prepare/sysctl@master01 :: modprobe br_netfilter; persist net.bridge.bridge-nf-call-iptables net.bridge.bridge-nf-call-ip6tables net.ipv4.ip_forward
+│   ├── prepare/kernel-deps@master01 :: ensure conntrack/socat (+recommended ebtables ipset ipvsadm)
+│   ├── prepare/containerd-config@master01 :: render + install /etc/containerd/config.toml
+│   ├── prepare/containerd-unit@master01 :: render + install /etc/systemd/system/containerd.service, enable --now
+│   ├── prepare/kubelet-unit@master01 :: render + install /etc/systemd/system/kubelet.service, enable (start deferred to kubeadm)
+│   ├── prepare/os-baseline@worker01 :: disable swap / firewalld, SELinux permissive
+│   ├── prepare/sysctl@worker01 :: modprobe br_netfilter; persist net.bridge.bridge-nf-call-iptables net.bridge.bridge-nf-call-ip6tables net.ipv4.ip_forward
+│   ├── prepare/kernel-deps@worker01 :: ensure conntrack/socat (+recommended ebtables ipset ipvsadm)
+│   ├── prepare/containerd-config@worker01 :: render + install /etc/containerd/config.toml
+│   ├── prepare/containerd-unit@worker01 :: render + install /etc/systemd/system/containerd.service, enable --now
+│   └── prepare/kubelet-unit@worker01 :: render + install /etc/systemd/system/kubelet.service, enable (start deferred to kubeadm)
+├── stage: registry (0 tasks)
+├── stage: images (2 tasks)
+│   ├── images/import@master01 :: import pinned images into containerd k8s.io (amd64)
+│   └── images/import@worker01 :: import pinned images into containerd k8s.io (amd64)
+├── stage: vip (1 tasks)
+│   └── bootstrap/kubeadm-init@master01 :: kubeadm init --config /etc/kurin/kubeadm-init.yaml on master01
+├── stage: bootstrap (1 tasks)
+│   └── bootstrap/api-ready@master01 :: wait until 192.168.10.11:6443 serves the API (VIP backend up)
+├── stage: api-ready (1 tasks)
+│   └── join/kubeadm@worker01 :: kubeadm join (worker) -> 192.168.10.11:6443
+├── stage: join (0 tasks)
+├── stage: cni (1 tasks)
+│   └── cni/calico-operator@master01 :: kubectl apply tigera-operator manifest + Installation CR
+└── stage: post (2 tasks)
+    ├── post/kubeconfig@master01 :: fetch admin.conf -> merge local kubeconfig (context cluster-package-base)
+    └── post/state-record@master01 :: record cluster state in kube-system/kurin-state

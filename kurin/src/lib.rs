@@ -69,6 +69,9 @@ pub mod precheck {
 pub mod package {
     pub use kurin_artifact::package::*;
 }
+pub mod preload {
+    pub use kurin_artifact::preload::*;
+}
 pub mod oci {
     pub use kurin_artifact::oci::*;
 }

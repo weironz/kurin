@@ -101,6 +101,10 @@ pub struct RunSettings {
     /// Wrap privileged commands in `sudo` even when the login user is not
     /// root (the transport's `become` default).
     pub r#become: bool,
+    /// Cap on concurrent payload uploads (`--max-upload-parallel`, WP-35);
+    /// `None` uses the executor default. The ops layer hands it to
+    /// [`RunContext::set_max_upload_parallel`] before the executor starts.
+    pub max_upload_parallel: Option<usize>,
 }
 
 /// Everything one operation (CLI invocation or Web request) owns.
@@ -124,6 +128,11 @@ pub struct RunContext {
     pub facts: RwLock<FactsTable>,
     /// Concurrency/timeout/become knobs.
     pub settings: RunSettings,
+    /// Cap on concurrent payload uploads across the whole run
+    /// (`--max-upload-parallel`, WP-35 / 04 §5.1). Interior-mutable
+    /// because the CLI layer applies it after the context exists and
+    /// before the executor starts.
+    max_upload_parallel: RwLock<Option<usize>>,
     /// Secrets resolved once by `kurin-ops::prepare` (empty for read-only
     /// or `--dry-run` runs that never touch credentials).
     secrets: RwLock<Arc<kurin_config::ResolvedSecrets>>,
@@ -148,6 +157,7 @@ impl RunContext {
             events,
             facts: RwLock::new(FactsTable::default()),
             settings: RunSettings::default(),
+            max_upload_parallel: RwLock::new(None),
             secrets: RwLock::new(Arc::new(kurin_config::ResolvedSecrets::default())),
         }
     }
@@ -186,6 +196,23 @@ impl RunContext {
     /// Snapshot of the discovered facts.
     pub fn facts_snapshot(&self) -> FactsTable {
         self.facts.read().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    /// Cap concurrent payload uploads for this run (`--max-upload-parallel`).
+    /// `None` leaves the executor default.
+    pub fn set_max_upload_parallel(&self, limit: Option<usize>) {
+        *self
+            .max_upload_parallel
+            .write()
+            .unwrap_or_else(|e| e.into_inner()) = limit;
+    }
+
+    /// The configured upload cap, if any.
+    pub fn max_upload_parallel(&self) -> Option<usize> {
+        *self
+            .max_upload_parallel
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
     }
 
     /// Install the operation's resolved secrets (called once by

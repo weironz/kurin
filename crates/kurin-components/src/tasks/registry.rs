@@ -20,8 +20,9 @@ use secrecy::{ExposeSecret, SecretString};
 use kurin_config::{Cluster, Node, RegistryKind};
 use miette::Result;
 
-use kurin_artifact::artifact::{Arch, ArtifactManifest, ArtifactStore};
-use kurin_core::engine::{Drift, Outcome, Session, Stage, Task, UploadSource};
+use kurin_artifact::artifact::{install_manifest, Arch};
+use kurin_artifact::preload::PayloadSet;
+use kurin_core::engine::{Drift, Outcome, Session, Stage, Task};
 use kurin_core::run::RunContext;
 
 /// Where the generated PKI lives on the registry node.
@@ -323,34 +324,16 @@ impl Task for RegistryInstall {
             .exec(&format!("chmod 0600 {PKI_DIR}/registry.key"))
             .await?;
 
-        // 2. Payload
-        let manifest = kurin_artifact::artifact::install_manifest(&self.run.sources)?;
+        // 2. Payload: the registry node gets its own binary through the
+        //    same preload source as every other node (04 §5.2 step 1).
+        let manifest = install_manifest(&self.run.sources)?;
         let spec = manifest.spec(self.artifact(), self.arch)?;
-        let local: PathBuf = match &self.run.sources.offline_dir {
-            Some(dir) => {
-                let dm = ArtifactManifest::from_dir_with(dir, &manifest)?;
-                dm.find(spec.name.as_str(), self.arch)
-                    .ok_or_else(|| {
-                        miette::miette!(
-                            "offline bundle lacks {} (build it with `kurin artifact`)",
-                            spec.name
-                        )
-                    })?
-                    .file
-                    .clone()
-            }
-            None => {
-                ArtifactStore::open_default()?
-                    .fetch(&spec, self.run.sources.zone)
-                    .await?
-            }
-        };
+        let payloads = PayloadSet::open(&self.run.sources).await?;
+        let local = payloads.file(&spec).await?;
         match self.kind {
             RegistryKind::Zot => {
                 let tmp = format!("{ZOT_BIN}.kurin-new");
-                session
-                    .upload(UploadSource::File(local.clone()), &tmp, 0o755)
-                    .await?;
+                session.upload(local.upload_source(), &tmp, 0o755).await?;
                 session.exec(&format!("mv -f {tmp} {ZOT_BIN}")).await?;
                 session
                     .write_file(
@@ -382,7 +365,7 @@ impl Task for RegistryInstall {
             RegistryKind::DockerRegistry => {
                 let remote_tgz = "/tmp/kurin-registry.tgz";
                 session
-                    .upload(UploadSource::File(local.clone()), remote_tgz, 0o600)
+                    .upload(local.upload_source(), remote_tgz, 0o600)
                     .await?;
                 session
                     .exec(&format!(
@@ -431,7 +414,7 @@ impl Task for RegistryInstall {
                 // from its final location (compose binds relative paths).
                 let remote_tgz = "/tmp/kurin-harbor.tgz";
                 session
-                    .upload(UploadSource::File(local.clone()), remote_tgz, 0o600)
+                    .upload(local.upload_source(), remote_tgz, 0o600)
                     .await?;
                 let prep = session
                     .exec(&format!(
@@ -796,29 +779,6 @@ impl RegistrySeed {
         }
         Ok(out)
     }
-
-    /// Build the docker archive per image (only in apply — check stays cheap).
-    async fn seed_payload(&self, name: &str) -> Result<PathBuf> {
-        let manifest = kurin_artifact::artifact::install_manifest(&self.run.sources)?;
-        let spec = manifest.spec(name, self.arch)?;
-        let oci_dir: PathBuf = match &self.run.sources.offline_dir {
-            Some(dir) => {
-                let dm = ArtifactManifest::from_dir_with(dir, &manifest)?;
-                dm.find(spec.name.as_str(), self.arch)
-                    .ok_or_else(|| miette::miette!("offline bundle lacks {}", spec.name))?
-                    .file
-                    .parent()
-                    .unwrap_or(std::path::Path::new(""))
-                    .to_path_buf()
-            }
-            None => {
-                let store = ArtifactStore::open_default()?;
-                store.fetch(&spec, self.run.sources.zone).await?;
-                store.artifact_dir(&spec)
-            }
-        };
-        crate::tasks::images::docker_archive(&oci_dir, &spec)
-    }
 }
 
 #[async_trait::async_trait]
@@ -921,22 +881,26 @@ impl Task for RegistrySeed {
         // the large payload writes that follow.
         session.exec("true").await?;
 
-        // 2. Per image: load the bundle tar into containerd, retag under the
-        //    internal registry **preserving the upstream repo path** (that is
-        //    the path containerd requests when the mirror is consulted), push
-        //    with the curl pair baked to --user, then drop the local copy.
+        // 2. Per image: load the single-image OCI layout tar into containerd,
+        //    retag under the internal registry **preserving the upstream repo
+        //    path** (that is the path containerd requests when the mirror is
+        //    consulted), push with the curl pair baked to --user, then drop
+        //    the local copy.
+        let manifest = install_manifest(&self.run.sources)?;
+        let payloads = PayloadSet::open(&self.run.sources).await?;
         let mut names = Vec::new();
         for (name, reference) in self.seed_names().await? {
-            let path = self.seed_payload(&name).await?;
+            let spec = manifest.spec(&name, self.arch)?;
+            let tar = payloads.image(&spec).await?.to_temp_tar()?;
             // repo path: everything after the first '/' ("org/repo:tag").
             let repo = reference
                 .split_once('/')
                 .map(|(_, rest)| rest)
                 .ok_or_else(|| miette::miette!("cannot split image reference {reference}"))?;
             let remote = format!("/tmp/kurin-seed-{name}.tar");
-            session
-                .upload(UploadSource::File(path), &remote, 0o600)
-                .await?;
+            let uploaded = session.upload(tar.upload_source(), &remote, 0o600).await;
+            let _ = std::fs::remove_file(&tar.path);
+            uploaded?;
             // Local ref is the full upstream reference (the docker
             // archive's RepoTags); the pushed ref keeps only the repo
             // path — that is what containerd requests from a mirror.

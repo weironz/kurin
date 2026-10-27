@@ -26,11 +26,11 @@ pub(crate) enum Payload {
     /// unchanged behaviour (the canonical `packages.offline-dir`
     /// carries the directory).
     Legacy,
-    /// A kurin package (`oci-layout://` / `file://`), opened and
-    /// digest-verified.
+    /// A kurin package (`oci://`, `oci-layout://`, `file://`), opened and
+    /// digest-verified once per process.
     Package {
         uri: String,
-        package: kurin_artifact::package::PackageSource,
+        package: std::sync::Arc<kurin_artifact::package::PackageSource>,
     },
 }
 
@@ -56,7 +56,11 @@ impl std::fmt::Debug for Payload {
 ///
 /// `spec` is canonicalised in place so [`crate::sources_for`] sees one
 /// of `offline_dir` (legacy) or `base` (package), never both.
-pub(crate) fn resolve_payload(spec: &mut Cluster) -> Result<Payload> {
+///
+/// `oci://` sources are pulled through the shared package opener (WP-35),
+/// so the registry is read once per run and the install tasks stream from
+/// the verified local copy.
+pub(crate) async fn resolve_payload(spec: &mut Cluster) -> Result<Payload> {
     let offline = spec.packages.offline_dir.clone();
     let base = spec.packages.base.clone();
     let input = match (offline, base) {
@@ -70,18 +74,38 @@ pub(crate) fn resolve_payload(spec: &mut Cluster) -> Result<Payload> {
         (None, Some(uri)) => uri,
         (None, None) => return Ok(Payload::Online),
     };
-    match open_payload_source(&input).map_err(|e| miette::miette!("{e}"))? {
-        PayloadSource::LegacyBundle { dir } => {
-            spec.packages.offline_dir = Some(dir.clone());
-            spec.packages.base = None;
-            Ok(Payload::Legacy)
-        }
-        PayloadSource::Package { uri, package } => {
-            spec.packages.offline_dir = None;
-            spec.packages.base = Some(uri.clone());
-            Ok(Payload::Package { uri, package })
+    // A bare directory is the only input the compatibility reader has to
+    // classify (legacy bundle vs layout); everything else — `oci://`,
+    // `oci-layout://`, `file://X.tar[.zst]`, a bare archive path — opens
+    // through the shared package cache, so the install tasks reuse this
+    // exact package instead of unpacking or pulling it per node.
+    let is_dir = !input.contains("://") && std::path::Path::new(input.trim()).is_dir();
+    if is_dir {
+        match open_payload_source(&input).map_err(|e| miette::miette!("{e}"))? {
+            PayloadSource::LegacyBundle { dir } => {
+                spec.packages.offline_dir = Some(dir.clone());
+                spec.packages.base = None;
+                return Ok(Payload::Legacy);
+            }
+            PayloadSource::Package { uri, .. } => {
+                let package = kurin_artifact::preload::open_package(&uri)
+                    .await
+                    .map_err(|e| miette::miette!("{e}"))?;
+                spec.packages.offline_dir = None;
+                spec.packages.base = Some(uri.clone());
+                return Ok(Payload::Package { uri, package });
+            }
         }
     }
+    let package = kurin_artifact::preload::open_package(&input)
+        .await
+        .map_err(|e| miette::miette!("{e}"))?;
+    spec.packages.offline_dir = None;
+    spec.packages.base = Some(input.clone());
+    Ok(Payload::Package {
+        uri: input,
+        package,
+    })
 }
 
 /// Apply `--offline DIR|URI` (WP-34 step 4): equivalent to `--package`.
@@ -108,10 +132,33 @@ pub(crate) fn apply_offline_override(spec: &mut Cluster, value: &str) {
     }
 }
 
+/// The delivery strategy this run would use (04 §5.5): an explicit
+/// `[packages] delivery` wins, `auto` picks `registry` when the cluster
+/// configures one (a `role = "registry"` node or `kind = "external"`) and
+/// `preload` otherwise.
+pub(crate) fn effective_delivery(spec: &Cluster) -> kurin_config::v1alpha2::Delivery {
+    use kurin_config::v1alpha2::Delivery;
+    match spec.packages.delivery {
+        Delivery::Auto => {
+            let registry = spec.registry.kind.is_some()
+                || spec
+                    .nodes
+                    .iter()
+                    .any(|n| n.role == kurin_config::NodeRole::Registry);
+            if registry {
+                Delivery::Registry
+            } else {
+                Delivery::Preload
+            }
+        }
+        other => other,
+    }
+}
+
 /// Validate the base package against the cluster it is about to install
-/// (WP-34 step 3), then enforce the delivery boundary: this build has
-/// no package distribution yet, so a run that would *execute* refuses
-/// instead of silently fetching online.
+/// (WP-34 step 3), then enforce the delivery boundary: preload delivery
+/// (WP-35) executes from the package, registry delivery still refuses
+/// instead of silently fetching online (WP-36).
 ///
 /// `mutating` is false for `--dry-run` runs, which plan and validate
 /// without touching a node.
@@ -132,11 +179,11 @@ pub(crate) fn validate_payload(
         let report = kurin_components::component::coverage::render_gaps(uri, &meta, &gaps);
         return Err(miette::miette!("{}", report.trim_end()));
     }
-    if mutating {
+    if mutating && effective_delivery(spec) == kurin_config::v1alpha2::Delivery::Registry {
         return Err(miette::miette!(
-            "the base package {uri} covers this cluster, but this build cannot distribute \
-             payloads from packages yet (preload delivery lands in WP-35); install from a \
-             legacy offline bundle directory or without a package"
+            "the base package {uri} covers this cluster, but registry delivery is not \
+             implemented yet (WP-36); set [packages] delivery = \"preload\" to stream \
+             payloads to the nodes"
         ));
     }
     Ok(())
@@ -179,13 +226,13 @@ role = "control-plane"
         .unwrap();
     }
 
-    #[test]
-    fn a_legacy_bundle_stays_on_the_bundle_path() {
+    #[tokio::test]
+    async fn a_legacy_bundle_stays_on_the_bundle_path() {
         let tmp = tempfile::tempdir().unwrap();
         bundle(tmp.path());
         let mut spec = spec();
         spec.packages.offline_dir = Some(tmp.path().to_path_buf());
-        match resolve_payload(&mut spec).unwrap() {
+        match resolve_payload(&mut spec).await.unwrap() {
             Payload::Legacy => {}
             other => panic!("expected the legacy path, got {other:?}"),
         }
@@ -194,29 +241,29 @@ role = "control-plane"
         assert!(spec.packages.base.is_none());
     }
 
-    #[test]
-    fn a_bare_bundle_path_via_base_is_adapted_to_the_bundle_path() {
+    #[tokio::test]
+    async fn a_bare_bundle_path_via_base_is_adapted_to_the_bundle_path() {
         // `--package <legacy dir>`: the compatibility reader adapts the
         // old layout to the same interface.
         let tmp = tempfile::tempdir().unwrap();
         bundle(tmp.path());
         let mut spec = spec();
         spec.packages.base = Some(tmp.path().display().to_string());
-        match resolve_payload(&mut spec).unwrap() {
+        match resolve_payload(&mut spec).await.unwrap() {
             Payload::Legacy => {}
             other => panic!("expected the legacy path, got {other:?}"),
         }
         assert!(spec.packages.base.is_none());
     }
 
-    #[test]
-    fn a_bundle_and_a_package_at_once_is_rejected() {
+    #[tokio::test]
+    async fn a_bundle_and_a_package_at_once_is_rejected() {
         let tmp = tempfile::tempdir().unwrap();
         bundle(tmp.path());
         let mut spec = spec();
         spec.packages.offline_dir = Some(tmp.path().to_path_buf());
         spec.packages.base = Some("file:///media/pkg.tar.zst".to_string());
-        let err = resolve_payload(&mut spec).unwrap_err();
+        let err = resolve_payload(&mut spec).await.unwrap_err();
         assert!(
             err.to_string().contains("exactly one payload source"),
             "{err}"
@@ -246,8 +293,8 @@ role = "control-plane"
         assert!(spec.packages.offline_dir.is_none());
     }
 
-    #[test]
-    fn a_bare_offline_path_replaces_a_config_base() {
+    #[tokio::test]
+    async fn a_bare_offline_path_replaces_a_config_base() {
         let tmp = tempfile::tempdir().unwrap();
         bundle(tmp.path());
         let mut spec = spec();
@@ -256,7 +303,7 @@ role = "control-plane"
         assert!(spec.packages.base.is_none());
         assert_eq!(spec.packages.offline_dir.as_deref(), Some(tmp.path()));
         // And it resolves to the legacy path.
-        match resolve_payload(&mut spec).unwrap() {
+        match resolve_payload(&mut spec).await.unwrap() {
             Payload::Legacy => {}
             other => panic!("expected the legacy path, got {other:?}"),
         }

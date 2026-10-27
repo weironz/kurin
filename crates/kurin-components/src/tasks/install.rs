@@ -7,15 +7,15 @@
 //! the binaries to exist.
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
 use std::sync::{Arc, LazyLock};
 use tokio::sync::Mutex;
 
 use kurin_config::Node;
 use miette::Result;
 
-use kurin_artifact::artifact::{Arch, ArtifactKind, ArtifactManifest, ArtifactSpec, ArtifactStore};
-use kurin_core::engine::{Drift, Outcome, Session, Stage, Task, UploadSource};
+use kurin_artifact::artifact::{install_manifest, Arch, ArtifactKind};
+use kurin_artifact::preload::PayloadSet;
+use kurin_core::engine::{Drift, Outcome, Session, Stage, Task};
 use kurin_core::run::RunContext;
 
 /// name -> (install method, remote target path)
@@ -101,23 +101,6 @@ impl ArtifactsInstall {
         }
     }
 
-    /// Resolve the local payload for one artifact, online or offline.
-    async fn payload(&self, spec: &ArtifactSpec) -> miette::Result<PathBuf> {
-        match &self.run.sources.offline_dir {
-            Some(dir) => {
-                let dm = ArtifactManifest::from_dir(dir)?;
-                let found = dm.find(&spec.name, self.arch).ok_or_else(|| {
-                    miette::miette!("offline bundle lacks {} ({})", spec.name, self.arch)
-                })?;
-                Ok(found.file.clone())
-            }
-            None => {
-                let store = ArtifactStore::open_default()?;
-                Ok(store.fetch(spec, self.run.sources.zone).await?)
-            }
-        }
-    }
-
     async fn marker(&self, session: &dyn Session) -> Result<BTreeMap<String, String>> {
         let out = session
             .exec("cat /etc/kurin/artifacts.marker 2>/dev/null || true")
@@ -148,7 +131,9 @@ impl Task for ArtifactsInstall {
     }
 
     async fn check(&self, session: &dyn Session) -> Result<Drift> {
-        let manifest = kurin_artifact::artifact::ArtifactManifest::embedded()?;
+        // The run's manifest, not the embedded table: `add nodes`/`upgrade`
+        // install the cluster's version, and a package may pin another one.
+        let manifest = install_manifest(&self.run.sources)?;
         let marker = self.marker(session).await?;
         for entry in manifest.artifacts() {
             if install_for_runtime(&entry.name, self.runtime).is_none() {
@@ -174,12 +159,15 @@ impl Task for ArtifactsInstall {
         static FETCH_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
         // Offline installs never touch the network: the fetch lock only
         // matters for online downloads.
-        let _guard = if self.run.sources.offline_dir.is_none() {
-            Some(FETCH_LOCK.lock().await)
-        } else {
+        let _guard = if self.run.sources.is_offline() {
             None
+        } else {
+            Some(FETCH_LOCK.lock().await)
         };
-        let manifest = kurin_artifact::artifact::install_manifest(&self.run.sources)?;
+        let manifest = install_manifest(&self.run.sources)?;
+        // One payload source per task: a legacy bundle is verified once
+        // here instead of once per artifact, and a package is opened once.
+        let payloads = PayloadSet::open(&self.run.sources).await?;
 
         session
             .exec("mkdir -p /usr/local/bin /opt/cni/bin /etc/kurin")
@@ -190,7 +178,7 @@ impl Task for ArtifactsInstall {
                 continue;
             };
             let spec = manifest.spec(&entry.name, self.arch)?;
-            let local: PathBuf = self.payload(&spec).await?;
+            let blob = payloads.file(&spec).await?;
 
             match install {
                 Install::Direct(dest) => {
@@ -198,9 +186,7 @@ impl Task for ArtifactsInstall {
                     // currently executing (ETXTBSY), and keep replacement
                     // atomic for concurrent readers.
                     let tmp = format!("{dest}.kurin-new");
-                    session
-                        .upload(UploadSource::File(local), &tmp, 0o755)
-                        .await?;
+                    session.upload(blob.upload_source(), &tmp, 0o755).await?;
                     let out = session
                         .exec(&format!("mv -f {tmp} {dest} && echo installed"))
                         .await?;
@@ -216,7 +202,7 @@ impl Task for ArtifactsInstall {
                 Install::Tar { dir, strip } => {
                     let remote_tmp = format!("/tmp/kurin-{}.tgz", spec.name);
                     session
-                        .upload(UploadSource::File(local), &remote_tmp, 0o600)
+                        .upload(blob.upload_source(), &remote_tmp, 0o600)
                         .await?;
                     let strip_flag = if strip > 0 {
                         format!("--strip-components={strip}")

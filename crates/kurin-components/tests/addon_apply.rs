@@ -252,6 +252,7 @@ impl Session for ScriptedSession {
         let bytes = match &src {
             UploadSource::Bytes(bytes) => bytes.len(),
             UploadSource::File(path) => fs::read(path).map(|b| b.len()).unwrap_or(0),
+            UploadSource::Blob(blob) => fs::read(&blob.path).map(|b| b.len()).unwrap_or(0),
         };
         self.uploads.lock().unwrap().push((dst.to_string(), bytes));
         Ok(kurin_core::engine::UploadReport {

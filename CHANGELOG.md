@@ -2,6 +2,28 @@
 
 All notable changes to kurin. Format follows Keep a Changelog; semver.
 
+### Added (WP-35)
+- package-based preload distribution (04 §5.1): `ArtifactsInstall`,
+  `ImagesImport` and the registry node's own binary now take their
+  payloads from the run's `ArtifactSources` — a base package
+  (`oci-layout://`, `file://X.tar[.zst]`), a legacy offline bundle, or
+  the online cache — and select the blob by the node's `facts.arch`.
+  Payloads stream through `UploadSource::Blob` (path + pinned digest +
+  size) in 64 KiB chunks, so a multi-hundred-MB binary or layer no
+  longer sits in memory on the control host.
+- images are re-hosted as a **single-image OCI layout tar** generated on
+  the fly (`oci-layout` + `index.json` naming the selected platform's
+  manifest + its blobs, deterministic headers) and streamed to the node:
+  `ctr -n k8s.io images import` on kubeadm, the k3s agent images
+  directory (`/var/lib/rancher/k3s/agent/images/`) on k3s. Only the
+  requested architecture is carried.
+- `--max-upload-parallel N` caps concurrent payload uploads across one
+  operation (default 4), independently of task concurrency: uploads
+  share the control host's uplink.
+- a base package now executes with preload delivery instead of being
+  refused at the delivery boundary; `registry` delivery still refuses
+  until WP-36.
+
 ### Added (WP-42)
 - helm-based addon execution: the pinned `helm` 3.19.0 binary (official
   sha256 for amd64/arm64) enters the artifact manifest and the base

@@ -39,12 +39,17 @@ const FIXTURES: &[&str] = &[
     "storage-local-path.toml",
     "storage-nfs.toml",
     "offline.toml",
+    "package-base.toml",
     "zone-cn.toml",
     "labels.toml",
 ];
 
 /// Placeholder in `offline.toml`; replaced before parsing.
 const OFFLINE_DIR_PLACEHOLDER: &str = "@OFFLINE_DIR@";
+/// Placeholder in `package-base.toml`: a committed, empty OCI layout
+/// (`oci-layout` + `index.json`) — planning records the source, it never
+/// reads package contents.
+const PACKAGE_LAYOUT_PLACEHOLDER: &str = "@PACKAGE_LAYOUT@";
 
 fn fixture_path(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -56,6 +61,10 @@ fn offline_bundle_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/offline-bundle")
 }
 
+fn package_layout_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/package-layout")
+}
+
 /// Load a fixture through the same pipeline the CLI runs: kurin-config's
 /// structural checks (`parse_str` is the in-memory twin of its `load`)
 /// plus the component validation pass, injecting the offline-dir
@@ -64,10 +73,15 @@ fn load_fixture(name: &str) -> kurin_config::Cluster {
     let path = fixture_path(name);
     let raw = std::fs::read_to_string(&path)
         .unwrap_or_else(|e| panic!("read fixture {}: {e}", path.display()));
-    let src = raw.replace(
-        OFFLINE_DIR_PLACEHOLDER,
-        &offline_bundle_dir().display().to_string(),
-    );
+    let src = raw
+        .replace(
+            OFFLINE_DIR_PLACEHOLDER,
+            &offline_bundle_dir().display().to_string(),
+        )
+        .replace(
+            PACKAGE_LAYOUT_PLACEHOLDER,
+            &package_layout_dir().display().to_string(),
+        );
     let cluster = kurin_config::parse_str(&path, &src)
         .unwrap_or_else(|e| panic!("fixture {name} must load through kurin_config: {e:?}"));
     kurin::components::validate(&cluster)
@@ -106,14 +120,15 @@ fn plan_snapshots_for_the_config_fixture_matrix() {
         let cluster = load_fixture(name);
         let facts = kurin::facts::FactsTable::synthetic(&cluster)
             .expect("synthetic facts build for every fixture");
+        // The run records the same payload source the CLI would resolve:
+        // a legacy bundle directory, or a base package (WP-35).
+        let mut sources = kurin::run::ArtifactSources::embedded()
+            .with_offline_dir(cluster.offline_dir().map(|p| p.to_path_buf()));
+        if let Some(base) = &cluster.packages.base {
+            sources = sources.with_base_package(base.clone());
+        }
         let run = Arc::new(
-            kurin::run::RunContext::new(
-                "test-op",
-                &cluster.name,
-                kurin::run::ArtifactSources::embedded()
-                    .with_offline_dir(cluster.offline_dir().map(|p| p.to_path_buf())),
-            )
-            .with_facts(facts),
+            kurin::run::RunContext::new("test-op", &cluster.name, sources).with_facts(facts),
         );
         let plan = plan::build(&cluster, &run)
             .unwrap_or_else(|e| panic!("fixture {name} must build a plan: {e:?}"));

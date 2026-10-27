@@ -38,7 +38,7 @@ pub(crate) async fn prepare(
     // Resolve the payload source before the run context is built: its
     // artifact sources record the outcome (WP-34). A legacy bundle
     // keeps its behaviour; a base package is opened for validation.
-    let payload = crate::packages::resolve_payload(&mut spec)?;
+    let payload = crate::packages::resolve_payload(&mut spec).await?;
     let run = crate::run_with_blackboard(&spec, resume, op_id)?;
     let session = OpSession::start(&run, out)?;
     session.register_cluster(&spec);

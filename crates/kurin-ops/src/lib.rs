@@ -41,7 +41,7 @@ use kurin_core::executor::SessionPool;
 use kurin_core::facts::FactsTable;
 use kurin_core::lock::{ClusterLock, ClusterLockGuard};
 use kurin_core::plan::OpKind;
-use kurin_core::run::{ArtifactSources, RunContext};
+use kurin_core::run::{ArtifactSources, RunContext, RunSettings};
 use miette::{IntoDiagnostic, Result};
 use semver::Version;
 
@@ -61,6 +61,8 @@ pub struct OpRequest {
     pub kind: OpKind,
     pub spec: Cluster,
     pub params: Params,
+    /// Run knobs from global CLI flags (concurrency, upload cap).
+    pub settings: RunSettings,
 }
 
 /// Operation-specific parameters. The variant must match [`OpRequest::kind`].
@@ -252,6 +254,7 @@ pub async fn prepare(req: OpRequest, out: OutputOpts) -> Result<Prepared> {
         kind,
         mut spec,
         params,
+        settings,
     } = req;
     // `create`/`add nodes` accept `--offline DIR|URI` — the same
     // classification `--package` performs (WP-34); `upgrade` passes its
@@ -293,7 +296,7 @@ pub async fn prepare(req: OpRequest, out: OutputOpts) -> Result<Prepared> {
         _ => Arc::new(kurin_ssh::SshSessionPool::from_cluster(&spec, &secrets)?),
     };
 
-    match kind {
+    let prepared = match kind {
         OpKind::Create => create::prepare(spec, params, pool, op_id, out, lock, secrets).await,
         OpKind::AddNodes => add_nodes::prepare(spec, params, pool, op_id, out, lock, secrets).await,
         OpKind::DeleteNode | OpKind::DeleteCluster => {
@@ -304,7 +307,13 @@ pub async fn prepare(req: OpRequest, out: OutputOpts) -> Result<Prepared> {
         other => Err(miette::miette!(
             "operation {other:?} is not implemented by this build"
         )),
-    }
+    }?;
+    // Global run knobs are applied once the context exists; the executor
+    // reads them when it builds its upload gate.
+    prepared
+        .run
+        .set_max_upload_parallel(settings.max_upload_parallel);
+    Ok(prepared)
 }
 
 /// Build the operation's plan. Zero or more round trips: `upgrade` resolves

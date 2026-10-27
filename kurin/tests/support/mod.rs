@@ -24,7 +24,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
-use kurin::engine::{ExecOutput, Session};
+use kurin::engine::{ExecOutput, Session, UploadSource};
 use kurin::executor::SessionPool;
 use miette::Result;
 use regex::Regex;
@@ -111,6 +111,20 @@ pub struct WriteRecord {
     pub sha256: String,
 }
 
+/// A recorded `upload`: destination, source kind and the shipped bytes'
+/// digest. `source` is `"file"`, `"bytes"` or `"blob"` — the last one is
+/// the streaming preload path (WP-35).
+#[derive(Clone)]
+#[allow(dead_code)] // only the preload test binary reads every field
+pub struct UploadRecord {
+    pub path: String,
+    pub source: &'static str,
+    pub bytes: usize,
+    pub sha256: String,
+    /// The digest the caller declared (`blob` sources only).
+    pub declared: Option<String>,
+}
+
 /// A node's scripted remote state.
 pub struct ScriptedSession {
     node: String,
@@ -124,6 +138,8 @@ pub struct ScriptedSession {
     files: Mutex<HashMap<String, Vec<u8>>>,
     /// Every `write_file`, in call order.
     writes: Mutex<Vec<WriteRecord>>,
+    /// Every `upload`, in call order.
+    uploads: Mutex<Vec<UploadRecord>>,
     /// Commands answered by the default reply, in call order.
     unmatched: Mutex<Vec<String>>,
     /// `systemctl is-active` answers; missing names fall back to
@@ -144,6 +160,7 @@ impl ScriptedSession {
             disconnect_on: None,
             files: Mutex::new(HashMap::new()),
             writes: Mutex::new(Vec::new()),
+            uploads: Mutex::new(Vec::new()),
             unmatched: Mutex::new(Vec::new()),
             services: Mutex::new(HashMap::new()),
             services_default: true,
@@ -193,6 +210,18 @@ impl ScriptedSession {
     /// Every `write_file`, in call order.
     pub fn writes(&self) -> Vec<WriteRecord> {
         self.writes.lock().unwrap().clone()
+    }
+
+    /// Every `upload`, in call order (what the preload path streams).
+    #[allow(dead_code)] // only the preload test binary asserts uploads
+    pub fn uploads(&self) -> Vec<UploadRecord> {
+        self.uploads.lock().unwrap().clone()
+    }
+
+    /// The bytes of one remote file (written, uploaded or seeded).
+    #[allow(dead_code)] // only the preload test binary reads uploaded bytes
+    pub fn file(&self, path: &str) -> Option<Vec<u8>> {
+        self.files.lock().unwrap().get(path).cloned()
     }
 
     /// Total `exec` calls made (including scripted disconnects).
@@ -245,6 +274,43 @@ impl Session for ScriptedSession {
             exit_code: reply.exit_code,
             stdout: reply.stdout,
             stderr: reply.stderr,
+        })
+    }
+
+    async fn upload(
+        &self,
+        src: UploadSource,
+        dst: &str,
+        _mode: u32,
+    ) -> Result<kurin::engine::UploadReport> {
+        let (source, bytes, declared) = match &src {
+            UploadSource::File(path) => (
+                "file",
+                std::fs::read(path).map_err(|e| miette::miette!("read {}: {e}", path.display()))?,
+                None,
+            ),
+            UploadSource::Bytes(bytes) => ("bytes", bytes.clone(), None),
+            UploadSource::Blob(blob) => (
+                "blob",
+                std::fs::read(&blob.path)
+                    .map_err(|e| miette::miette!("read {}: {e}", blob.path.display()))?,
+                Some(blob.digest.clone()),
+            ),
+        };
+        let sha256 = Self::sha256_hex(&bytes);
+        let size = bytes.len() as u64;
+        self.uploads.lock().unwrap().push(UploadRecord {
+            path: dst.to_string(),
+            source,
+            bytes: bytes.len(),
+            sha256: sha256.clone(),
+            declared,
+        });
+        self.files.lock().unwrap().insert(dst.to_string(), bytes);
+        Ok(kurin::engine::UploadReport {
+            bytes: size,
+            sha256,
+            ms: 0,
         })
     }
 

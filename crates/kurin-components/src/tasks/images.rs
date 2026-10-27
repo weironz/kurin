@@ -1,27 +1,46 @@
-//! images/import: seed the containerd `k8s.io` namespace from the artifact
-//! payloads (OCI index+manifest+blobs downloaded/verified by the artifact
-//! store). Offline installs require this before kubelet starts anything;
-//! online installs skip (kubelet pulls from registries).
+//! images/import: seed the node's image store from the run's payload
+//! source (WP-35, 04 §5.1).
+//!
+//! Each selected image is re-hosted as a **single-image OCI layout tar**
+//! for this node's architecture and streamed to the node:
+//!
+//! - kubeadm/containerd: `ctr -n k8s.io images import`;
+//! - k3s: the tar lands in the agent images directory
+//!   (`/var/lib/rancher/k3s/agent/images/`), which k3s imports when its
+//!   service starts. The images phase runs before bootstrap, so the file
+//!   is always in place first.
+//!
+//! Online runs without a package skip the task (kubelet pulls from
+//! registries); a package or legacy bundle always imports.
 
-use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use kurin_config::{Cluster, Node};
+use kurin_config::{Cluster, Distribution, Node};
 use miette::Result;
 
-use kurin_artifact::artifact::{Arch, ArtifactKind, ArtifactManifest, ArtifactSpec, ArtifactStore};
-use kurin_core::engine::{Drift, Outcome, Session, Stage, Task, UploadSource};
+use kurin_artifact::artifact::{
+    install_manifest, Arch, ArtifactKind, ArtifactManifest, ArtifactSpec,
+};
+use kurin_artifact::preload::PayloadSet;
+use kurin_core::engine::{Drift, Outcome, Session, Stage, Task};
 use kurin_core::run::RunContext;
+
+/// k3s's drop-in image directory: tarballs here are imported into the
+/// k3s containerd store when the service starts.
+const K3S_IMAGES_DIR: &str = "/var/lib/rancher/k3s/agent/images";
 
 pub struct ImagesImport {
     node: Node,
     arch: Arch,
+    /// Distribution decides where the tar goes (containerd import vs the
+    /// k3s agent images directory).
+    distribution: Distribution,
     /// Image artifact names to import — the bootstrap set the enabled
     /// runtime/distribution/CNI components declare (see
     /// [`crate::component::bootstrap_images`]; storage and post apply
     /// after the cluster is up and pull on demand).
     images: Vec<String>,
-    /// Run sources: offline dir, manifest override and mirror zone.
+    /// Run sources: package, offline dir, manifest override and zone.
     run: Arc<RunContext>,
 }
 
@@ -30,6 +49,7 @@ impl ImagesImport {
         Self {
             node: node.clone(),
             arch,
+            distribution: cluster.distribution,
             images: crate::component::bootstrap_images(cluster, arch)
                 .into_iter()
                 .map(|r| r.name)
@@ -51,30 +71,28 @@ impl ImagesImport {
             .collect()
     }
 
+    /// Import when the payloads come from a package/bundle, and for the
+    /// domestic mirror zone (its images are fetched through the mirror
+    /// before the cluster starts).
     fn needs_import(&self) -> bool {
-        self.run.sources.offline_dir.is_some()
-            || self.run.sources.zone == kurin_core::zone::Zone::Cn
+        self.run.sources.is_offline() || self.run.sources.zone == kurin_core::zone::Zone::Cn
     }
 
-    /// Where this node's payload directory lives.
-    async fn payload_dir(&self, spec: &ArtifactSpec) -> miette::Result<PathBuf> {
-        match &self.run.sources.offline_dir {
-            Some(dir) => {
-                let dm = ArtifactManifest::from_dir(dir)?;
-                let found = dm.find(&spec.name, self.arch).ok_or_else(|| {
-                    miette::miette!("offline bundle lacks {} ({})", spec.name, self.arch)
-                })?;
-                // DirArtifact.file is the primary payload (index.json);
-                // the blobs live next to it.
-                Ok(found.file.parent().unwrap_or(Path::new("")).to_path_buf())
+    /// Where this node's image tar lands. The k3s name carries the pinned
+    /// index digest, so a package bump lands a new file and `check` sees
+    /// the drift (k3s itself only reads the directory at service start).
+    fn remote_tar(&self, spec: &ArtifactSpec) -> String {
+        match self.distribution {
+            Distribution::K3s => {
+                let digest = spec.expected_sha256().unwrap_or_default();
+                let short = &digest[..digest.len().min(12)];
+                format!(
+                    "{K3S_IMAGES_DIR}/kurin-{}-{}-{short}.tar",
+                    spec.name,
+                    self.arch.as_str()
+                )
             }
-            None => {
-                // Online (zone=cn imports too): make sure the payload is
-                // fetched through the zone-aware store before importing.
-                let store = ArtifactStore::open_default()?;
-                store.fetch(spec, self.run.sources.zone).await?;
-                Ok(store.artifact_dir(spec))
-            }
+            Distribution::K8s => format!("/tmp/kurin-img-{}.tar", spec.name),
         }
     }
 }
@@ -105,29 +123,56 @@ impl Task for ImagesImport {
         if !self.needs_import() {
             return Ok(Drift::InSync);
         }
-        // Every expected reference must be present: counting alone can't
-        // tell which one is missing, and ctr lists registry pulls too.
-        let manifest = kurin_artifact::artifact::install_manifest(&self.run.sources)?;
-        let mut refs = Vec::new();
-        for name in self.selected_images(&manifest) {
-            let spec = manifest.spec(&name, self.arch)?;
-            refs.push(spec.url());
-        }
-        let probe = format!(
-            "refs=$(ctr -n k8s.io images list 2>/dev/null | awk 'NR>1{{print $1}}'); \
-             for r in {}; do echo \"$refs\" | grep -qFx \"$r\" || echo \"$r\"; done",
-            refs.join(" ")
-        );
-        let out = session.exec(&probe).await?;
-        let missing: Vec<&str> = out.stdout.lines().collect();
-        if missing.is_empty() {
-            Ok(Drift::InSync)
-        } else {
-            Ok(Drift::Drifted(format!(
-                "containerd missing {} imported image(s): {}",
-                missing.len(),
-                missing.join(", ")
-            )))
+        let manifest = install_manifest(&self.run.sources)?;
+        match self.distribution {
+            Distribution::K3s => {
+                // k3s imports the agent images directory at service start;
+                // the tar's presence is the whole contract.
+                let mut probe = String::from("for f in");
+                for name in self.selected_images(&manifest) {
+                    let spec = manifest.spec(&name, self.arch)?;
+                    probe.push(' ');
+                    probe.push_str(&self.remote_tar(&spec));
+                }
+                probe.push_str("; do test -f \"$f\" || echo \"$f\"; done");
+                let out = session.exec(&probe).await?;
+                let missing: Vec<&str> = out.stdout.lines().collect();
+                if missing.is_empty() {
+                    Ok(Drift::InSync)
+                } else {
+                    Ok(Drift::Drifted(format!(
+                        "k3s image directory missing {} tar(s): {}",
+                        missing.len(),
+                        missing.join(", ")
+                    )))
+                }
+            }
+            Distribution::K8s => {
+                // Every expected reference must be present: counting alone
+                // can't tell which one is missing, and ctr lists registry
+                // pulls too.
+                let mut refs = Vec::new();
+                for name in self.selected_images(&manifest) {
+                    let spec = manifest.spec(&name, self.arch)?;
+                    refs.push(spec.url());
+                }
+                let probe = format!(
+                    "refs=$(ctr -n k8s.io images list 2>/dev/null | awk 'NR>1{{print $1}}'); \
+                     for r in {}; do echo \"$refs\" | grep -qFx \"$r\" || echo \"$r\"; done",
+                    refs.join(" ")
+                );
+                let out = session.exec(&probe).await?;
+                let missing: Vec<&str> = out.stdout.lines().collect();
+                if missing.is_empty() {
+                    Ok(Drift::InSync)
+                } else {
+                    Ok(Drift::Drifted(format!(
+                        "containerd missing {} imported image(s): {}",
+                        missing.len(),
+                        missing.join(", ")
+                    )))
+                }
+            }
         }
     }
 
@@ -135,16 +180,22 @@ impl Task for ImagesImport {
         if !self.needs_import() {
             return Ok(Outcome::Verified);
         }
-        let manifest = kurin_artifact::artifact::install_manifest(&self.run.sources)?;
+        let manifest = install_manifest(&self.run.sources)?;
+        let payloads = PayloadSet::open(&self.run.sources).await?;
         for name in self.selected_images(&manifest) {
             let spec = manifest.spec(&name, self.arch)?;
-            let dir = self.payload_dir(&spec).await?;
-            let tarball = docker_archive(&dir, &spec)?;
-            let remote = format!("/tmp/kurin-img-{}.tar", spec.name);
-            session
-                .upload(UploadSource::File(tarball.clone()), &remote, 0o600)
-                .await?;
-            let _ = std::fs::remove_file(&tarball);
+            let image = payloads.image(&spec).await?;
+            // Stream the layout tar into a temp file (never into memory),
+            // then stream that file to the node.
+            let tar = image.to_temp_tar()?;
+            let remote = self.remote_tar(&spec);
+            let uploaded = session.upload(tar.upload_source(), &remote, 0o600).await;
+            let _ = std::fs::remove_file(&tar.path);
+            uploaded?;
+            if self.distribution == Distribution::K3s {
+                // k3s imports the directory at start; nothing to run now.
+                continue;
+            }
             let out = session
                 .exec(&format!(
                     "ctr -n k8s.io images import {remote} 2>&1 && rm -f {remote}"
@@ -161,120 +212,4 @@ impl Task for ImagesImport {
         }
         Ok(Outcome::Verified)
     }
-}
-
-/// OCI manifest shape (config + layers).
-#[derive(serde::Deserialize)]
-struct OciManifest {
-    #[serde(alias = "config")]
-    config: Descriptor,
-    #[serde(default)]
-    layers: Vec<Descriptor>,
-}
-
-#[derive(serde::Deserialize)]
-struct Descriptor {
-    digest: String,
-}
-
-/// Minimal ustar writer: regular files only, no directories, no links.
-struct Ustar {
-    data: Vec<u8>,
-}
-
-impl Ustar {
-    fn new() -> Self {
-        Ustar { data: Vec::new() }
-    }
-
-    fn add(&mut self, name: &str, content: &[u8]) {
-        let mut header = [0u8; 512];
-        let name_bytes = name.as_bytes();
-        let n = name_bytes.len().min(100);
-        header[..n].copy_from_slice(&name_bytes[..n]);
-        header.write_str_at(100, "0000644\0"); // mode
-        header.write_str_at(108, "0000000\0"); // uid
-        header.write_str_at(116, "0000000\0"); // gid
-        let size_field = format!("{:011o}\0", content.len());
-        header[124..124 + 12].copy_from_slice(size_field.as_bytes());
-        header.write_str_at(136, "00000000000\0"); // mtime
-        header[148..156].copy_from_slice(b"        "); // checksum spaces
-        header[156] = b'0'; // regular file
-        header.write_str_at(257, "ustar\0");
-        header.write_str_at(263, "00");
-        let checksum: u32 = header.iter().map(|b| *b as u32).sum();
-        let chk = format!("{:06o}\0 ", checksum);
-        header[148..156].copy_from_slice(chk.as_bytes());
-        self.data.extend_from_slice(&header);
-        self.data.extend_from_slice(content);
-        let pad = (512 - content.len() % 512) % 512;
-        self.data.extend(std::iter::repeat_n(0u8, pad));
-    }
-
-    fn finish(mut self) -> Vec<u8> {
-        self.data.extend(std::iter::repeat_n(0u8, 1024));
-        self.data
-    }
-}
-
-trait WriteStr {
-    fn write_str_at(&mut self, off: usize, s: &str);
-}
-
-impl WriteStr for [u8; 512] {
-    fn write_str_at(&mut self, off: usize, s: &str) {
-        let b = s.as_bytes();
-        self[off..off + b.len()].copy_from_slice(b);
-    }
-}
-
-fn hex(digest: &str) -> &str {
-    digest.rsplit(':').next().unwrap_or(digest)
-}
-
-/// Build a docker-archive tar from an OCI layout directory (index.json +
-/// manifest.json + hex-named blobs). Written next to the payload dir.
-pub(crate) fn docker_archive(oci_dir: &Path, spec: &ArtifactSpec) -> miette::Result<PathBuf> {
-    let manifest: OciManifest =
-        serde_json::from_slice(&std::fs::read(oci_dir.join("manifest.json")).map_err(|e| {
-            miette::miette!("read {}: {e}", oci_dir.join("manifest.json").display())
-        })?)
-        .map_err(|e| miette::miette!("parse image manifest: {e}"))?;
-
-    let blob = |d: &str| oci_dir.join(hex(d));
-    let config_digest = manifest.config.digest.clone();
-
-    // docker-archive manifest: repo tag + layer paths.
-    let layer_paths: Vec<String> = manifest
-        .layers
-        .iter()
-        .map(|l| format!("{}.tar", hex(&l.digest)))
-        .collect();
-    let archive_manifest = serde_json::json!([{
-        "Config": format!("{}.json", hex(&config_digest)),
-        "RepoTags": [spec.url()],
-        "Layers": layer_paths,
-    }])
-    .to_string();
-
-    let mut tar = Ustar::new();
-    tar.add(
-        &format!("{}.json", hex(&config_digest)),
-        &std::fs::read(blob(&config_digest))
-            .map_err(|e| miette::miette!("read config blob: {e}"))?,
-    );
-    tar.add("manifest.json", archive_manifest.as_bytes());
-    for l in &manifest.layers {
-        let content = std::fs::read(blob(&l.digest))
-            .map_err(|e| miette::miette!("read layer {}: {e}", hex(&l.digest)))?;
-        tar.add(&format!("{}.tar", hex(&l.digest)), &content);
-    }
-    let out = std::env::temp_dir().join(format!(
-        "kurin-{}-{}.docker.tar",
-        spec.name,
-        spec.arch.as_str()
-    ));
-    std::fs::write(&out, tar.finish())
-        .map_err(|e| miette::miette!("write {}: {e}", out.display()))?;
-    Ok(out)
 }

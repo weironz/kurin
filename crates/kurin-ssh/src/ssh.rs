@@ -713,6 +713,13 @@ impl Session for SshSession {
     /// before anything is installed and names both digests.
     async fn upload(&self, src: UploadSource, dst: &str, mode: u32) -> Result<UploadReport> {
         let started = std::time::Instant::now();
+        // A content-addressed blob declares its digest (WP-35): comparing
+        // the streamed hash against it catches a corrupted local cache,
+        // which the local-vs-remote check alone cannot see.
+        let declared = match &src {
+            UploadSource::Blob(blob) => Some(blob.hex().to_string()),
+            _ => None,
+        };
         let tmp = stage_path();
         let (bytes, local_sha) = self.stage_source(&tmp, src).await?;
         let remote_sha = self.file_sha256(&tmp).await?.ok_or_else(|| {
@@ -720,6 +727,14 @@ impl Session for SshSession {
         })?;
         verify_digest(&local_sha, &remote_sha)
             .map_err(|e| miette!("ssh: upload to {dst} failed: {e}"))?;
+        if let Some(expected) = declared {
+            if local_sha != expected {
+                return Err(miette!(
+                    "ssh: payload digest mismatch before installing {dst}: \
+                     expected sha256:{expected}, read sha256:{local_sha}"
+                ));
+            }
+        }
         let install = Cmd::new(format!(
             "install -D -m {:o} -- {} {} && rm -f -- {}",
             mode,
@@ -968,7 +983,11 @@ enum UploadReader {
 impl UploadReader {
     async fn new(src: UploadSource) -> Result<Self> {
         Ok(match src {
-            UploadSource::File(path) => Self::File {
+            // A content-addressed blob (WP-35) is a local file too: the
+            // remote `sha256sum` check already verifies the digest, and
+            // streaming keeps the payload flat in memory.
+            UploadSource::File(path)
+            | UploadSource::Blob(kurin_core::engine::BlobSource { path, .. }) => Self::File {
                 file: tokio::fs::File::open(&path).await.map_err(|e| {
                     miette!("ssh: cannot open upload source {}: {e}", path.display())
                 })?,

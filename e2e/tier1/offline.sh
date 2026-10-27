@@ -1,15 +1,26 @@
 #!/usr/bin/env bash
 # tier-1 offline: single-node install from the prebuilt bundle with the VM's
 # egress blocked — proves the bundle is self-contained (no registry, no
-# dl.k8s.io, no github). Usage: e2e/tier1/offline.sh [bundle-dir]
+# dl.k8s.io, no github).
+#
+# Usage: e2e/tier1/offline.sh [bundle-dir] [package-uri]
+#
+# The optional second argument selects a package source instead of the
+# legacy bundle directory (WP-35 preload delivery):
+#   oci-layout:///tmp/kurin-pkg
+#   file:///tmp/kurin-base.tar.zst
+#   oci://127.0.0.1:5000/kurin/base:v1.33.1-kubeadm   (local zot)
 set -euo pipefail
 
 BUNDLE=${1:-/tmp/kurin-bundle}
+SOURCE=${2:-}
 NAME=kurin-tier1
 CFG=e2e/tier1/config.toml
 OFFCFG=e2e/tier1/config-offline.toml
 
-[ -d "$BUNDLE" ] || { echo "bundle $BUNDLE missing (kurin artifact --out)" >&2; exit 1; }
+if [ -z "$SOURCE" ]; then
+    [ -d "$BUNDLE" ] || { echo "bundle $BUNDLE missing (kurin artifact --out)" >&2; exit 1; }
+fi
 
 # fresh VM via the normal tier1 setup
 e2e/tier1/up.sh
@@ -25,13 +36,26 @@ multipass exec "$NAME" -- sudo bash -c '
   done
   echo "[offline] egress to artifact hosts blocked"'
 
-sed "s|^name = \"tier1\"|name = \"tier1\"|" "$CFG" > "$OFFCFG"
-cat >> "$OFFCFG" <<EOF
+if [ -n "$SOURCE" ]; then
+    # Package sources are a v1alpha2 feature; the rest of the tier1 config
+    # is version-neutral.
+    sed 's|^version = "v1alpha1"$|version = "v1alpha2"|' "$CFG" > "$OFFCFG"
+    cat >> "$OFFCFG" <<EOF
+
+[packages]
+base = "$SOURCE"
+delivery = "preload"
+EOF
+    echo "[offline] config: $OFFCFG (package: $SOURCE)"
+else
+    sed "s|^name = \"tier1\"|name = \"tier1\"|" "$CFG" > "$OFFCFG"
+    cat >> "$OFFCFG" <<EOF
 
 [artifacts]
 offline-dir = "$BUNDLE"
 EOF
-echo "[offline] config: $OFFCFG (offline-dir: $BUNDLE)"
+    echo "[offline] config: $OFFCFG (offline-dir: $BUNDLE)"
+fi
 
 BIN=target/tier1off/debug/kurin
 CARGO_TARGET_DIR=target/tier1off cargo build -p kurin

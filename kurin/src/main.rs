@@ -38,6 +38,11 @@ struct Cli {
     /// summary; `-vv` also streams every remote stdout/stderr line.
     #[arg(short = 'v', long = "verbose", global = true, action = ArgAction::Count)]
     verbose: u8,
+    /// Cap concurrent payload uploads per operation (default 4). Uploads
+    /// share the control host's uplink, so they are gated independently
+    /// of task concurrency.
+    #[arg(long = "max-upload-parallel", global = true, value_name = "N")]
+    max_upload_parallel: Option<usize>,
     #[command(subcommand)]
     command: Commands,
 }
@@ -498,6 +503,10 @@ async fn run(cli: Cli) -> Result<()> {
         timestamps: cli.timestamps,
         verbose: cli.verbose,
     };
+    let settings = kurin::run::RunSettings {
+        max_upload_parallel: cli.max_upload_parallel,
+        ..Default::default()
+    };
     match cli.command {
         Commands::Logs(args) => {
             ops::logs(
@@ -530,6 +539,7 @@ async fn run(cli: Cli) -> Result<()> {
                 .map_err(|e| miette::miette!("invalid --with-kubernetes: {e}"))?;
             run_op(
                 OpRequest {
+                    settings: settings.clone(),
                     kind: kurin::plan::OpKind::Upgrade,
                     spec,
                     params: Params::Upgrade {
@@ -628,6 +638,7 @@ async fn run(cli: Cli) -> Result<()> {
                 let spec = ops::load_config(&file)?;
                 run_op(
                     OpRequest {
+                        settings: settings.clone(),
                         kind: kurin::plan::OpKind::CertsRenew,
                         spec,
                         params: Params::CertsRenew { force },
@@ -673,6 +684,7 @@ async fn run(cli: Cli) -> Result<()> {
                 };
                 run_op(
                     OpRequest {
+                        settings: settings.clone(),
                         kind: kurin::plan::OpKind::AddNodes,
                         spec,
                         params: Params::AddNodes { offline },
@@ -692,6 +704,7 @@ async fn run(cli: Cli) -> Result<()> {
                 let spec = ops::load_config(&file)?;
                 run_op(
                     OpRequest {
+                        settings: settings.clone(),
                         kind: kurin::plan::OpKind::DeleteNode,
                         spec,
                         params: Params::DeleteNode {
@@ -712,6 +725,7 @@ async fn run(cli: Cli) -> Result<()> {
                 let spec = ops::load_config(&file)?;
                 run_op(
                     OpRequest {
+                        settings: settings.clone(),
                         kind: kurin::plan::OpKind::DeleteCluster,
                         spec,
                         params: Params::DeleteCluster { dry_run, check },
@@ -797,6 +811,7 @@ async fn run(cli: Cli) -> Result<()> {
                     let spec = ops::load_config(&file)?;
                     return run_op(
                         OpRequest {
+                            settings: settings.clone(),
                             kind: kurin::plan::OpKind::Create,
                             spec,
                             params: Params::Create {
@@ -820,6 +835,7 @@ async fn run(cli: Cli) -> Result<()> {
                 }
                 run_quick(
                     OpRequest {
+                        settings: settings.clone(),
                         kind: kurin::plan::OpKind::Create,
                         spec: config.spec.clone(),
                         params: Params::Create {

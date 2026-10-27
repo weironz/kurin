@@ -56,6 +56,10 @@ use crate::state::RunState;
 pub const DEFAULT_MAX_PARALLEL: usize = 32;
 /// Default per-node task concurrency cap (one per SSH channel).
 pub const DEFAULT_PER_NODE: usize = 4;
+/// Default cap on concurrent payload uploads across one run (WP-35,
+/// 04 §5.1): the control host's uplink is the shared bottleneck, so
+/// uploads are gated independently of task concurrency.
+pub const DEFAULT_MAX_UPLOAD_PARALLEL: usize = 4;
 
 /// The run stopped because [`RunContext::cancel`] was triggered. Callers
 /// map this to `OpFinished { result: cancelled }`.
@@ -240,6 +244,9 @@ struct Executor<'a> {
 
     max_parallel: usize,
     per_node: usize,
+    /// Shared gate for payload uploads: at most `--max-upload-parallel`
+    /// blobs are in flight across every task and node of the run.
+    upload_gate: Arc<tokio::sync::Semaphore>,
 
     /// Unsatisfied dependency count per task.
     indegree: Vec<usize>,
@@ -368,6 +375,11 @@ impl<'a> Executor<'a> {
                 .unwrap_or(DEFAULT_MAX_PARALLEL)
                 .max(1),
             per_node: run.settings.per_node.unwrap_or(DEFAULT_PER_NODE).max(1),
+            upload_gate: Arc::new(tokio::sync::Semaphore::new(
+                run.max_upload_parallel()
+                    .unwrap_or(DEFAULT_MAX_UPLOAD_PARALLEL)
+                    .max(1),
+            )),
             indegree,
             succ,
             task_state: vec![TaskState::Pending; n],
@@ -591,8 +603,9 @@ impl<'a> Executor<'a> {
         let planned = self.plan.tasks[idx].clone();
         let pool = Arc::clone(&self.pool);
         let bus = Arc::clone(&self.bus);
+        let gate = Arc::clone(&self.upload_gate);
         self.set.spawn(async move {
-            let result = execute_one(planned, pool, bus).await;
+            let result = execute_one(planned, pool, bus, gate).await;
             (idx, result)
         });
     }
@@ -915,15 +928,24 @@ struct LoggingSession {
     bus: Arc<EventBus>,
     node: String,
     task: String,
+    /// Run-wide upload gate (`--max-upload-parallel`, WP-35).
+    upload_gate: Arc<tokio::sync::Semaphore>,
 }
 
 impl LoggingSession {
-    fn new(inner: Arc<dyn Session>, bus: Arc<EventBus>, node: String, task: String) -> Self {
+    fn new(
+        inner: Arc<dyn Session>,
+        bus: Arc<EventBus>,
+        node: String,
+        task: String,
+        upload_gate: Arc<tokio::sync::Semaphore>,
+    ) -> Self {
         Self {
             inner,
             bus,
             node,
             task,
+            upload_gate,
         }
     }
 
@@ -1051,6 +1073,13 @@ impl Session for LoggingSession {
     }
 
     async fn upload(&self, src: UploadSource, dst: &str, mode: u32) -> Result<UploadReport> {
+        // Payload uploads are the run's shared uplink bottleneck: hold a
+        // slot for the whole transfer (04 §5.1).
+        let _slot = self
+            .upload_gate
+            .acquire()
+            .await
+            .map_err(|_| miette::miette!("upload gate closed"))?;
         self.inner.upload(src, dst, mode).await
     }
 
@@ -1075,6 +1104,7 @@ async fn execute_one(
     planned: PlannedTask,
     pool: Arc<dyn SessionPool>,
     bus: Arc<EventBus>,
+    upload_gate: Arc<tokio::sync::Semaphore>,
 ) -> Result<()> {
     let task = planned.task;
     let id = task.id();
@@ -1103,7 +1133,13 @@ async fn execute_one(
 
         let result: Result<()> = async {
             let session = pool.get(&node).await?;
-            let session = LoggingSession::new(session, Arc::clone(&bus), node.clone(), id.clone());
+            let session = LoggingSession::new(
+                session,
+                Arc::clone(&bus),
+                node.clone(),
+                id.clone(),
+                Arc::clone(&upload_gate),
+            );
 
             match task.check(&session).await? {
                 Drift::InSync => {
@@ -1315,6 +1351,7 @@ mod tests {
             Arc::clone(&bus),
             "n1".into(),
             "bootstrap/kubeadm@n1".into(),
+            Arc::new(tokio::sync::Semaphore::new(4)),
         );
         let out = session.exec("run").await.unwrap();
         assert_eq!(out.stdout, "one\ntwo\n");
@@ -1358,6 +1395,7 @@ mod tests {
             Arc::clone(&bus),
             "n1".into(),
             "task@n1".into(),
+            Arc::new(tokio::sync::Semaphore::new(4)),
         );
         session
             .exec_cmd(&Cmd::new("run").redact(SECRET))

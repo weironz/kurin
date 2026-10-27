@@ -241,6 +241,7 @@ trusted-keys = ["/etc/kurin/cosign.pub"]                   # verify = "signature
 | `kurin-artifact::oci::remote` | `oci-client`（ORAS 维护） | push/pull、分块上传、按 digest 跳过已存在的 blob。注意 0.16.1 的 `ImageIndexEntry` 没有 `artifactType` 字段：条目级 `artifactType` 必须用 `push_manifest_raw` 自行序列化（WP-30 实测） |
 | `kurin-artifact::store` | — | 内容寻址 blob 缓存，原子写入（`.part` → rename），`prune` |
 | `kurin-artifact::package` | `tar`、`zstd` | 包的创建、打开、校验、复制 |
+| `kurin-artifact::preload` | — | WP-35：按 `ArtifactSources` 解析节点载荷（包 / 旧 bundle / 在线缓存），按 `facts.arch` 选 blob；镜像流式生成单镜像 OCI layout tar。包按 URI 进程内只打开一次（`oci://` 只拉一次） |
 | 交叉编译 | — | **已验证**（WP-30）：`zstd-sys`（C+汇编）、bundled SQLite、rustls 的 `aws-lc-rs` 在 `cargo zigbuild` 下 x86_64-musl 与 aarch64-musl 均构建成功，产物为静态 ELF；`ruzstd` + gzip 仅作应急，不需要启用。原生 `cargo build --target x86_64-unknown-linux-musl` 需要 `musl-gcc`（本机缺失时用 zigbuild） |
 
 ---

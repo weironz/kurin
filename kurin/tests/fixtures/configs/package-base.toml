@@ -1,0 +1,37 @@
+# WP-35: a v1alpha2 cluster whose payloads come from a base package.
+# The layout path is a placeholder replaced at load time with a real
+# (empty) OCI layout created by the test — planning never reads package
+# contents, it only records the source the install tasks will stream from.
+version = "v1alpha2"
+name = "package-base"
+
+[kubernetes]
+version = "1.33.1"
+
+[network]
+pod-cidr = "10.233.64.0/18"
+service-cidr = "10.233.0.0/18"
+dns-domain = "cluster.local"
+
+[network.cni]
+kind = "calico"
+
+[ssh]
+user = "root"
+port = 22
+
+[ssh.auth]
+method = "private_key"
+key-path = "/root/.ssh/id_ed25519"
+
+[packages]
+base = "oci-layout://@PACKAGE_LAYOUT@"
+delivery = "preload"
+
+[nodes.master01]
+address = "192.168.10.11"
+role = "control-plane"
+
+[nodes.worker01]
+address = "192.168.10.21"
+role = "worker"

@@ -88,8 +88,9 @@ tier1-test:
     CARGO_TARGET_DIR=target/tier1 cargo build -p kurin
     e2e/tier1/assert.sh target/tier1/debug/kurin e2e/tier1/config.toml
 
-tier1-offline:
-    e2e/tier1/offline.sh /tmp/kurin-bundle
+# optional arg: a package source (oci-layout://DIR, file://X.tar[.zst], oci://REG/...)
+tier1-offline src="":
+    e2e/tier1/offline.sh /tmp/kurin-bundle {{src}}
 
 tier1-down:
     e2e/tier1/down.sh
