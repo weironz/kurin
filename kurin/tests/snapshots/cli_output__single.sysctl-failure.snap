@@ -8,6 +8,7 @@ skip  discover/facts@worker01
 skip  preflight/master01
 skip  preflight/worker01
 -- stage preflight complete
+-- stage registry complete
 skip  artifacts/install@master01
 skip  artifacts/install@worker01
 -- stage artifacts complete

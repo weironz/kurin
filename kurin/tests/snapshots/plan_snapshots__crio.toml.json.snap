@@ -39,6 +39,11 @@ expression: plan_matrix(&plan)
       ]
     },
     {
+      "ids": [],
+      "stage": "registry",
+      "tasks": []
+    },
+    {
       "ids": [
         "artifacts/install@master01",
         "artifacts/install@worker01"
@@ -131,11 +136,6 @@ expression: plan_matrix(&plan)
           "id": "prepare/crio-unit@worker01"
         }
       ]
-    },
-    {
-      "ids": [],
-      "stage": "registry",
-      "tasks": []
     },
     {
       "ids": [

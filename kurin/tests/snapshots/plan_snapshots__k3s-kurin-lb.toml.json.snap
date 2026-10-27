@@ -54,6 +54,11 @@ expression: plan_matrix(&plan)
       ]
     },
     {
+      "ids": [],
+      "stage": "registry",
+      "tasks": []
+    },
+    {
       "ids": [
         "artifacts/install@agent01",
         "artifacts/install@server01",
@@ -141,11 +146,6 @@ expression: plan_matrix(&plan)
           "id": "prepare/k3s-unit@server02"
         }
       ]
-    },
-    {
-      "ids": [],
-      "stage": "registry",
-      "tasks": []
     },
     {
       "ids": [],

@@ -89,12 +89,19 @@ impl fmt::Debug for ResolvedSsh {
     }
 }
 
+/// Default repository namespace for an external registry.
+pub const DEFAULT_REGISTRY_NAMESPACE: &str = "kurin";
+
 /// Private registry on `role = "registry"` nodes (component-owned section).
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct RegistrySpec {
     pub kind: Option<RegistryKind>,
-    /// Endpoint of an external registry (`kind = "external"`, reserved).
+    /// Endpoint of an external registry (`kind = "external"`).
     pub address: Option<String>,
+    /// CA bundle for an external registry (`kind = "external"`).
+    pub ca_file: Option<PathBuf>,
+    /// Repository namespace for an external registry.
+    pub namespace: String,
     pub port: u16,
     pub username: Option<String>,
     pub password: Option<SecretRef>,
@@ -106,11 +113,33 @@ impl Default for RegistrySpec {
         Self {
             kind: None,
             address: None,
+            ca_file: None,
+            namespace: DEFAULT_REGISTRY_NAMESPACE.to_string(),
             port: 5000,
             username: None,
             password: None,
             data_dir: PathBuf::from("/var/lib/kurin/registry"),
         }
+    }
+}
+
+/// Normalize an external registry address to `host:port`: strips a
+/// scheme, a trailing slash and a `/v2` suffix, and appends `default_port`
+/// when the address carries none.
+fn normalize_endpoint(address: &str, default_port: u16) -> String {
+    let mut value = address.trim();
+    for scheme in ["https://", "http://"] {
+        if let Some(rest) = value.strip_prefix(scheme) {
+            value = rest;
+            break;
+        }
+    }
+    let value = value.trim_end_matches('/');
+    let value = value.strip_suffix("/v2").unwrap_or(value);
+    if value.contains(':') && !value.starts_with('[') {
+        value.to_string()
+    } else {
+        format!("{value}:{default_port}")
     }
 }
 
@@ -295,6 +324,43 @@ impl ClusterSpec {
     pub fn registry_kind(&self) -> Option<RegistryKind> {
         self.registry.kind
     }
+    /// True for an operator-managed registry (`kind = "external"`).
+    pub fn registry_is_external(&self) -> bool {
+        self.registry.kind == Some(RegistryKind::External)
+    }
+    /// External registry endpoint as configured (`host[:port]`).
+    pub fn registry_address(&self) -> Option<&str> {
+        self.registry.address.as_deref()
+    }
+    /// External registry CA bundle path (control machine).
+    pub fn registry_ca_file(&self) -> Option<&Path> {
+        self.registry.ca_file.as_deref()
+    }
+    /// Repository namespace used for an external registry.
+    pub fn registry_namespace(&self) -> &str {
+        &self.registry.namespace
+    }
+    /// The registry endpoint tasks talk to: the external address, or the
+    /// `role = "registry"` node's internal address plus the listen port.
+    pub fn registry_endpoint(&self) -> Option<String> {
+        if let Some(address) = self.registry_address() {
+            return Some(normalize_endpoint(address, self.registry.port));
+        }
+        self.nodes
+            .iter()
+            .find(|n| n.role == NodeRole::Registry)
+            .map(|n| format!("{}:{}", n.internal_address, self.registry.port))
+    }
+    /// Repository prefix for kurin's mirror tree. An external registry is
+    /// shared, so everything lands under `<namespace>/`; a dedicated
+    /// registry node has the whole instance.
+    pub fn registry_repo_prefix(&self) -> String {
+        if self.registry_is_external() {
+            format!("{}/", self.registry.namespace.trim_end_matches('/'))
+        } else {
+            String::new()
+        }
+    }
     /// Registry listen port.
     pub fn registry_port(&self) -> u16 {
         self.registry.port
@@ -423,6 +489,8 @@ impl ClusterSpec {
             registry: RegistrySpec {
                 kind: registry_kind,
                 address: None,
+                ca_file: None,
+                namespace: DEFAULT_REGISTRY_NAMESPACE.to_string(),
                 port: registry_port,
                 username: cfg.registry.username,
                 password: cfg.registry.password,

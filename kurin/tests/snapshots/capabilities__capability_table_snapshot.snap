@@ -354,6 +354,26 @@ expression: json
     ]
   },
   {
+    "id": "registry/external",
+    "kind": "registry",
+    "distributions": [
+      "k8s",
+      "k3s"
+    ],
+    "archs": [
+      "amd64",
+      "arm64"
+    ],
+    "offline": "bundle",
+    "zones": [
+      "global",
+      "cn"
+    ],
+    "ops": [
+      "create"
+    ]
+  },
+  {
     "id": "storage/local-path",
     "kind": "storage",
     "distributions": [

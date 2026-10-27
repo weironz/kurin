@@ -86,16 +86,62 @@ impl OsBaseline {
             track,
         );
         let artifacts = b.phase("artifacts");
-        b.add_track(
+        let delivery = tasks::effective_delivery(b.cluster(), b.run().sources.as_ref());
+        let has_curl = b.facts().get(&node.name).and_then(|facts| facts.curl) != Some(false);
+        let registry_fetch = delivery == kurin_config::v1alpha2::Delivery::Registry && has_curl;
+        let mut fetch = None;
+        if registry_fetch {
+            let cluster = b.cluster();
+            let endpoint = cluster
+                .registry_endpoint()
+                .ok_or_else(|| miette::miette!("registry endpoint missing"))?;
+            let prefix = if cluster.registry_kind() == Some(kurin_config::RegistryKind::Harbor) {
+                "library/".to_string()
+            } else {
+                cluster.registry_repo_prefix()
+            };
+            let username =
+                cluster.registry_username().map(str::to_string).or_else(|| {
+                    match cluster.registry_kind() {
+                        Some(kurin_config::RegistryKind::Harbor) => Some("admin".into()),
+                        Some(kurin_config::RegistryKind::External) => None,
+                        _ => Some("kurin".into()),
+                    }
+                });
+            let password = b
+                .run()
+                .secrets()
+                .registry_password
+                .as_ref()
+                .map(|p| secrecy::ExposeSecret::expose_secret(p).to_string());
+            let use_ca = !cluster.registry_is_external() || cluster.registry_ca_file().is_some();
+            let task = tasks::install::FetchFromRegistry::new(
+                node,
+                arch,
+                cluster.runtime,
+                &endpoint,
+                &prefix,
+                username.as_deref(),
+                password.as_deref(),
+                use_ca,
+                b.run(),
+            );
+            fetch = Some(b.add_track(artifacts, Arc::new(task), track));
+        }
+        let install = b.add_track(
             artifacts,
             Arc::new(tasks::install::ArtifactsInstall::new(
                 node,
                 arch,
                 b.cluster().runtime,
                 b.run(),
+                registry_fetch,
             )),
             track,
         );
+        if let Some(fetch) = fetch {
+            b.after(install, fetch);
+        }
         let prepare = b.phase("prepare");
         b.add_track(
             prepare,

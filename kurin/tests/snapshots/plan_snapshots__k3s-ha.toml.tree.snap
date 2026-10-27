@@ -12,6 +12,7 @@ expression: render_tree(&plan)
 │   ├── preflight/server01 :: probe swap / selinux / time-sync / kernel modules
 │   ├── preflight/server02 :: probe swap / selinux / time-sync / kernel modules
 │   └── preflight/server03 :: probe swap / selinux / time-sync / kernel modules
+├── stage: registry (0 tasks)
 ├── stage: artifacts (4 tasks)
 │   ├── artifacts/install@agent01 :: fetch+install pinned binaries (amd64)
 │   ├── artifacts/install@server01 :: fetch+install pinned binaries (amd64)
@@ -34,7 +35,6 @@ expression: render_tree(&plan)
 │   ├── prepare/k3s-unit@server01 :: render + install /etc/systemd/system/k3s.service, enable (not start)
 │   ├── prepare/k3s-unit@server02 :: render + install /etc/systemd/system/k3s.service, enable (not start)
 │   └── prepare/k3s-unit@server03 :: render + install /etc/systemd/system/k3s.service, enable (not start)
-├── stage: registry (0 tasks)
 ├── stage: images (0 tasks)
 ├── stage: vip (3 tasks)
 │   ├── vip/kube-vip@server01 :: install kube-vip static pod /var/lib/rancher/k3s/agent/pod-manifests/kube-vip.yaml

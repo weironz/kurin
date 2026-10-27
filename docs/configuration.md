@@ -151,7 +151,7 @@ cargo test -p kurin-config --test json_schema   # 校验入库文件未漂移
 | 动态存储 | `[storage] kind/default/server/path` | `[addons.local-path]` / `[addons.nfs-subdir]`；`values` 中写 `default-class`、`server`、`path` |
 | addon | 无 | `[addons.<name>] enabled/version/source/values/raw-values` |
 | 包来源 | `[artifacts] offline-dir/zone` | `[packages] base/os/delivery/verify/trusted-keys`；`[artifacts]` 继续接受 |
-| 私有仓库 | `[registry] kind = docker-registry \| zot \| harbor` | 同上，另加预留的 `kind = "external"`（需 `address`） |
+| 私有仓库 | `[registry] kind = docker-registry \| zot \| harbor` | 同上，另加 `kind = "external"`（`address`、`ca-file`、`namespace`） |
 | SSH 提权/主机密钥 | `[ssh] become/become-password/known-hosts` | 相同 |
 | network / ha / nodes / ssh.auth | — | 相同 |
 
@@ -219,7 +219,7 @@ values 的合并顺序为 `defaults` → addon 内置推荐值（`values.yaml.j2
 |---|---|
 | `base` | base 包 URI（`oci-layout://DIR` / `file://X.tar[.zst]`）；不写用内置清单。`oci://` 需先 `kurin package pull`（WP-33） |
 | `os` | 按 OS 的包 URI 列表；不写按节点 facts 自动匹配 |
-| `delivery` | `auto`（默认）\| `preload` \| `registry` |
+| `delivery` | `auto`（默认；配置了 `[registry]` 时用 `registry`，否则 `preload`）\| `preload` \| `registry` |
 | `verify` | `none`（默认）\| `digest` \| `signature` |
 | `trusted-keys` | cosign 公钥路径列表；`verify = "signature"` 时必填且文件必须存在（加载期校验） |
 
@@ -321,11 +321,15 @@ zone = "cn"                        # 国内镜像；KURIN_ZONE=cn 环境变量�
 
 # ── registry（私有镜像仓库，可选） ─────────────────────────────
 # [registry]
-# kind = "zot"                  # docker-registry | zot | harbor
+# kind = "zot"                  # docker-registry | zot | harbor | external
 # port = 5000                   # harbor 默认 8443
 # username = "kurin"            # harbor 只能是 admin
 # password = "s3cret"
 # data-dir = "/var/lib/kurin/registry"
+# ── external 专用 ──
+# address = "https://registry.example.com:5000"
+# ca-file = "/etc/kurin/registry-ca.pem"
+# namespace = "kurin"           # 默认 kurin
 
 # ── storage（动态存储，可选） ──────────────────────────────────
 # [storage]
@@ -395,21 +399,33 @@ join 时 CLI 显式警告）。
 
 ### `[registry]`（私有镜像仓库）
 
-三种实现（详见 `docs/registry-contracts.md`），装在 `role = "registry"` 的节点上：
+四种实现（详见 `docs/registry-contracts.md`）。前三种装在 `role = "registry"`
+的节点上；`external` 使用已有仓库，kurin 不安装任何东西：
 
 | kind | 实现 | 说明 |
 |---|---|---|
 | `docker-registry` | CNCF distribution v3 | 单二进制 + systemd，最简 |
 | `zot` | project-zot | OCI 原生，开 `docker2s2` 兼容 ctr 推送 |
 | `harbor` | Harbor v2 离线安装器 | 唯一实现自带 UI；仅单 registry 节点；username 必须 admin |
+| `external` | 运维自管仓库（v1alpha2） | 需要 `address`；可选 `ca-file`、`namespace`（默认 `kurin`） |
 
-- 校验：存在 `role = "registry"` 节点 ⇔ 必须有 `[registry]`；`harbor` 仅支持
-  单个 registry 节点；username/password 必须成对
-- TLS：kurin 生成一次自签 CA，给每个 registry 节点签发证书（SAN 含节点 IP）
-- 认证：docker-registry/zot 用 htpasswd（bcrypt）；harbor 用 admin 密码
-- 镜像源：`docker-registry`/`zot` 在 k8s 节点上安装 containerd mirror（已知
-  上游未命中时回退公网）；`harbor` 因 project/repo 命名形状不做上游 mirror，
-  控制面镜像走 `imageRepository`（seed 到 `library` 项目）
+- 校验：存在 `role = "registry"` 节点 ⇔ 必须有 `[registry]`（`external` 不需要
+  registry 节点）；`harbor` 仅支持单个 registry 节点；username/password 必须成对；
+  `external` 必须有 `address`
+- TLS：kurin 生成一次自签 CA，给每个 registry 节点签发证书（SAN 含节点 IP）；
+  `external` 用 `ca-file` 指定的 PEM（不写则用系统信任库）
+- 认证：docker-registry/zot 用 htpasswd（bcrypt）；harbor 用 admin 密码；
+  external 用配置的 username/password
+- 分发（`delivery = "auto"` 时配置了 `[registry]` 即走 registry）：控制机用
+  `registry/push@controller` 把包内镜像和文件推一次到
+  `<reg>/mirror/<上游主机>/<路径>:<tag>` 与
+  `<reg>/kurin/files/<名称>:<版本>-<架构>`（external 再加 `<namespace>/` 前缀），
+  只推仓库缺失的 blob；节点用 `curl` 按 digest 下载文件并校验，镜像由运行时
+  mirror 透明改写
+- 镜像源：containerd 写 `certs.d/<上游>/hosts.toml`（`override_path`），CRI-O 写
+  `registries.conf.d/50-kurin.conf`，k3s 写 `registries.yaml`；上游主机集合来自
+  包内镜像引用。`harbor` 因 project/repo 命名形状不做上游 mirror，控制面镜像走
+  `imageRepository`（推到 `library` 项目）
 - 离线：zot / docker-registry / harbor 的安装包都进 `kurin artifact` bundle
 
 ### `[storage]`（动态存储，仅 v1alpha1）

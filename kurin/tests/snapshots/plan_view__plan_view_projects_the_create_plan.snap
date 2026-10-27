@@ -42,6 +42,11 @@ expression: plan_view(&plan)
       ]
     },
     {
+      "id": "registry",
+      "label": "registry",
+      "tasks": []
+    },
+    {
       "id": "artifacts",
       "label": "artifacts",
       "tasks": [
@@ -136,11 +141,6 @@ expression: plan_view(&plan)
           "drift": null
         }
       ]
-    },
-    {
-      "id": "registry",
-      "label": "registry",
-      "tasks": []
     },
     {
       "id": "images",

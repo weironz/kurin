@@ -79,9 +79,12 @@ impl OpKind {
 const CREATE_PHASES: &[Phase] = &[
     Phase::new("discover", "discover"),
     Phase::new("preflight", "preflight"),
+    // Registry delivery installs/pushes before any node fetches binaries
+    // or images from it (04 §5.2); the registry node's own payload still
+    // streams through preload inside `registry/install`.
+    Phase::new("registry", "registry"),
     Phase::new("artifacts", "artifacts"),
     Phase::new("prepare", "prepare"),
-    Phase::new("registry", "registry"),
     Phase::new("images", "images"),
     Phase::new("vip", "vip"),
     Phase::new("bootstrap", "bootstrap"),
@@ -728,9 +731,9 @@ role = "registry"
             [
                 "discover",
                 "preflight",
+                "registry",
                 "artifacts",
                 "prepare",
-                "registry",
                 "images",
                 "vip",
                 "bootstrap",
@@ -784,8 +787,8 @@ role = "registry"
         let groups = plan.phase_groups();
         assert_eq!(groups[1].phase.id, "preflight");
         assert_eq!(groups[1].tasks.len(), 1);
-        assert_eq!(groups[3].phase.id, "prepare");
-        assert_eq!(groups[3].tasks.len(), 2);
+        assert_eq!(groups[4].phase.id, "prepare");
+        assert_eq!(groups[4].tasks.len(), 2);
     }
 
     /// A task whose node is configurable, for track-ordering tests.

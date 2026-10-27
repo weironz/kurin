@@ -12,12 +12,13 @@
 //! `/v2/` itself instead of relying on task order, and [`RegistryTrust`]
 //! writes only local files.
 
-use std::path::PathBuf;
+use std::collections::BTreeSet;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use secrecy::{ExposeSecret, SecretString};
 
-use kurin_config::{Cluster, Node, RegistryKind};
+use kurin_config::{Cluster, Distribution, Node, RegistryKind};
 use miette::Result;
 
 use kurin_artifact::artifact::{install_manifest, Arch};
@@ -36,8 +37,8 @@ const DIST_BIN: &str = "/usr/local/bin/registry";
 /// Harbor's installer layout (its own `--installation` default).
 const HARBOR_DIR: &str = "/opt/harbor";
 
-/// Upstream registries whose pulls get routed through the internal
-/// registry first (containerd falls back to the public registry on miss).
+/// Fallback upstream hosts when the run has no image manifest (online
+/// runs without a package still mirror the images kubeadm pulls).
 pub const MIRRORED_UPSTREAMS: &[&str] = &[
     "registry.k8s.io",
     "k8s.gcr.io",
@@ -45,6 +46,33 @@ pub const MIRRORED_UPSTREAMS: &[&str] = &[
     "ghcr.io",
     "docker.io",
 ];
+
+/// The upstream hosts a runtime mirror must cover: the union of every
+/// image reference in the run's manifest (04 §5.4), or
+/// [`MIRRORED_UPSTREAMS`] when the manifest cannot be read.
+pub fn upstream_hosts(run: &RunContext) -> Vec<String> {
+    let mut hosts = BTreeSet::new();
+    if let Ok(manifest) = install_manifest(&run.sources) {
+        for entry in manifest.artifacts() {
+            if entry.kind != kurin_artifact::artifact::ArtifactKind::Image {
+                continue;
+            }
+            if let Ok(spec) = manifest.spec(&entry.name, Arch::Amd64) {
+                let reference =
+                    kurin_artifact::zone::rewrite_image_ref(&spec.url(), run.sources.zone);
+                if let Some((host, _)) = reference.split_once('/') {
+                    if !host.is_empty() {
+                        hosts.insert(host.to_string());
+                    }
+                }
+            }
+        }
+    }
+    if hosts.is_empty() {
+        return MIRRORED_UPSTREAMS.iter().map(|s| s.to_string()).collect();
+    }
+    hosts.into_iter().collect()
+}
 
 /// The cluster's one registry CA: generated ONCE per plan build and shared
 /// by install (writes cert), trust (writes ca.crt) and seed (curl/ctr).
@@ -505,69 +533,115 @@ impl Task for RegistryInstall {
     }
 }
 
-/// `registry/trust@k8snode`: per-upstream containerd mirror config.
+/// `registry/trust@k8snode`: runtime mirror configuration (04 §5.4).
 ///
-/// Two layouts are needed and both are written here:
-/// - `certs.d/<upstream>/hosts.toml` — the actual mirroring: containerd
-///   asks for `<upstream>/<repo>` and this file points it at the internal
-///   registry first (with auth), falling back to the public upstream on a
-///   miss (`server` stays the public endpoint).
-/// - `certs.d/<reg>:<port>/ca.crt` — the CA for direct pulls/pushes to the
-///   registry itself (used by `registry/seed` and any manual `ctr pull`).
+/// The upstream hosts are the union of the package's image references, so
+/// every public registry a workload might name is transparently rewritten
+/// to the private registry. Three runtimes are covered:
+/// - containerd: `/etc/containerd/certs.d/<upstream>/hosts.toml`;
+/// - CRI-O: `/etc/containers/registries.conf.d/50-kurin.conf`;
+/// - k3s: `/etc/rancher/k3s/registries.yaml`.
+///
+/// The registry's own endpoint also gets its CA (and, for containerd, a
+/// `hosts.toml`) so direct `ctr pull <reg>/…` and the push client verify
+/// TLS.
 pub struct RegistryTrust {
     node_name: String,
     kind: RegistryKind,
-    registry: String,
-    port: u16,
-    ca_pem: String,
+    endpoint: String,
+    /// Repository prefix (`""` for a dedicated registry, `<ns>/` for an
+    /// external one, `library/` for harbor).
+    prefix: String,
+    ca_pem: Option<String>,
+    username: Option<String>,
+    password: Option<String>,
     auth_header: Option<String>,
+    distribution: Distribution,
+    runtime: kurin_config::RuntimeKind,
+    upstreams: Vec<String>,
 }
 
 impl RegistryTrust {
     pub fn new(
         cluster: &Cluster,
         node: &Node,
-        ca: &RegistryCa,
+        ca: Option<&RegistryCa>,
         run: &Arc<RunContext>,
+        upstreams: &[String],
     ) -> Result<Self> {
-        let reg = cluster
-            .nodes
-            .iter()
-            .find(|n| n.role == kurin_config::NodeRole::Registry)
-            .ok_or_else(|| miette::miette!("no registry node"))?;
-        // Harbor's only admin account is "admin"; other kinds default to
-        // the "kurin" user the installer creates.
-        let user = cluster
+        let kind = cluster
+            .registry_kind()
+            .ok_or_else(|| miette::miette!("registry kind missing"))?;
+        let endpoint = cluster
+            .registry_endpoint()
+            .ok_or_else(|| miette::miette!("registry endpoint missing"))?;
+        let prefix = if kind == RegistryKind::Harbor {
+            "library/".to_string()
+        } else {
+            cluster.registry_repo_prefix()
+        };
+        let ca_pem = match kind {
+            RegistryKind::External => cluster
+                .registry_ca_file()
+                .map(|path| {
+                    std::fs::read_to_string(path)
+                        .map_err(|e| miette::miette!("read registry CA {}: {e}", path.display()))
+                })
+                .transpose()?,
+            _ => ca.map(|ca| ca.cert_pem.clone()),
+        };
+        let username = cluster
             .registry_username()
             .map(str::to_string)
-            .unwrap_or_else(|| match cluster.registry_kind() {
-                Some(RegistryKind::Harbor) => "admin".into(),
-                _ => "kurin".into(),
+            .or_else(|| match kind {
+                RegistryKind::Harbor => Some("admin".into()),
+                RegistryKind::External => None,
+                _ => Some("kurin".into()),
             });
-        let auth_header = run.secrets().registry_password.as_ref().map(|p| {
-            format!(
+        let password = run
+            .secrets()
+            .registry_password
+            .as_ref()
+            .map(|p| p.expose_secret().to_string());
+        let auth_header = match (&username, &password) {
+            (Some(user), Some(password)) => Some(format!(
                 "Basic {}",
-                base64_encode(format!("{user}:{}", p.expose_secret()).as_bytes())
-            )
-        });
+                base64_encode(format!("{user}:{password}").as_bytes())
+            )),
+            _ => None,
+        };
         Ok(Self {
             node_name: node.name.clone(),
-            kind: cluster
-                .registry_kind()
-                .ok_or_else(|| miette::miette!("registry kind missing"))?,
-            registry: reg.internal_address.to_string(),
-            port: cluster.registry_port(),
-            ca_pem: ca.cert_pem.clone(),
+            kind,
+            endpoint,
+            prefix,
+            ca_pem,
+            username,
+            password,
             auth_header,
+            distribution: cluster.distribution,
+            runtime: cluster.runtime,
+            upstreams: upstreams.to_vec(),
         })
     }
 
-    /// Mirror config for one public upstream registry.
+    fn mirror_url(&self, upstream: &str) -> String {
+        format!(
+            "https://{}/v2/{}mirror/{}",
+            self.endpoint, self.prefix, upstream
+        )
+    }
+
+    /// containerd `hosts.toml` for one public upstream.
     fn upstream_hosts_toml(&self, upstream: &str) -> String {
-        let mirror = format!("https://{}:{}", self.registry, self.port);
+        let mirror = self.mirror_url(upstream);
+        let ca = format!("/etc/containerd/certs.d/{upstream}/ca.crt");
         let mut s = format!(
-            "server = \"https://{upstream}\"\n\n[host.\"{mirror}\"]\n  capabilities = [\"pull\", \"resolve\"]\n  ca = \"/etc/containerd/certs.d/{upstream}/ca.crt\"\n"
+            "server = \"https://{upstream}\"\n\n[host.\"{mirror}\"]\n  capabilities = [\"pull\", \"resolve\"]\n  override_path = true\n"
         );
+        if self.ca_pem.is_some() {
+            s.push_str(&format!("  ca = \"{ca}\"\n"));
+        }
         if let Some(h) = &self.auth_header {
             s.push_str(&format!(
                 "  [host.\"{mirror}\".header]\n    authorization = \"{h}\"\n"
@@ -576,12 +650,150 @@ impl RegistryTrust {
         s
     }
 
-    fn upstream_dir(upstream: &str) -> String {
-        format!("/etc/containerd/certs.d/{upstream}")
+    /// containerd `hosts.toml` for the registry endpoint itself.
+    fn endpoint_hosts_toml(&self) -> String {
+        let mut s = format!(
+            "server = \"https://{ep}\"\n\n[host.\"https://{ep}\"]\n  capabilities = [\"pull\", \"resolve\", \"push\"]\n",
+            ep = self.endpoint
+        );
+        if self.ca_pem.is_some() {
+            s.push_str(&format!(
+                "  ca = \"/etc/containerd/certs.d/{}/ca.crt\"\n",
+                self.endpoint
+            ));
+        }
+        if let Some(h) = &self.auth_header {
+            s.push_str(&format!(
+                "  [host.\"https://{ep}\".header]\n    authorization = \"{h}\"\n",
+                ep = self.endpoint
+            ));
+        }
+        s
     }
 
-    fn registry_dir(&self) -> String {
-        format!("/etc/containerd/certs.d/{}:{}", self.registry, self.port)
+    /// CRI-O drop-in for one upstream.
+    fn crio_conf(&self) -> String {
+        let mut s = String::new();
+        for upstream in &self.upstreams {
+            s.push_str(&format!(
+                "[[registry]]\nprefix = \"{upstream}\"\nlocation = \"{}/{}mirror/{upstream}\"\n\n",
+                self.endpoint, self.prefix
+            ));
+        }
+        s
+    }
+
+    /// k3s `registries.yaml`.
+    fn k3s_registries(&self) -> String {
+        let mut mirrors = serde_json::Map::new();
+        for upstream in &self.upstreams {
+            mirrors.insert(
+                upstream.clone(),
+                serde_json::json!({ "endpoint": [self.mirror_url(upstream)] }),
+            );
+        }
+        let mut config = serde_json::Map::new();
+        let mut entry = serde_json::Map::new();
+        if let (Some(user), Some(password)) = (&self.username, &self.password) {
+            entry.insert(
+                "auth".into(),
+                serde_json::json!({ "username": user, "password": password }),
+            );
+        }
+        if self.ca_pem.is_some() {
+            entry.insert(
+                "tls".into(),
+                serde_json::json!({ "ca_file": "/etc/rancher/k3s/registry-ca.crt" }),
+            );
+        }
+        if !entry.is_empty() {
+            config.insert(self.endpoint.clone(), serde_json::Value::Object(entry));
+        }
+        let doc = serde_json::json!({
+            "mirrors": serde_json::Value::Object(mirrors),
+            "configs": serde_json::Value::Object(config),
+        });
+        serde_yml::to_string(&doc).unwrap_or_default()
+    }
+
+    /// Every file this task owns: `(path, contents)`.
+    fn files(&self) -> Vec<(String, Vec<u8>)> {
+        let mut files = Vec::new();
+        let ca = self.ca_pem.as_deref().map(str::as_bytes);
+        if let Some(ca) = ca {
+            // Shared by the node-side registry fetch task.
+            files.push(("/etc/kurin/registry-ca.crt".into(), ca.to_vec()));
+        }
+        match self.distribution {
+            Distribution::K3s => {
+                if let Some(ca) = ca {
+                    files.push(("/etc/rancher/k3s/registry-ca.crt".into(), ca.to_vec()));
+                }
+                files.push((
+                    "/etc/rancher/k3s/registries.yaml".into(),
+                    self.k3s_registries().into_bytes(),
+                ));
+            }
+            Distribution::K8s => match self.runtime {
+                kurin_config::RuntimeKind::Containerd => {
+                    if self.kind == RegistryKind::Harbor {
+                        let dir = format!("/etc/containerd/certs.d/{}", self.endpoint);
+                        if let Some(ca) = ca {
+                            files.push((format!("{dir}/ca.crt"), ca.to_vec()));
+                        }
+                        files.push((
+                            format!("{dir}/hosts.toml"),
+                            self.endpoint_hosts_toml().into_bytes(),
+                        ));
+                    } else {
+                        for upstream in &self.upstreams {
+                            let dir = format!("/etc/containerd/certs.d/{upstream}");
+                            if let Some(ca) = ca {
+                                files.push((format!("{dir}/ca.crt"), ca.to_vec()));
+                            }
+                            files.push((
+                                format!("{dir}/hosts.toml"),
+                                self.upstream_hosts_toml(upstream).into_bytes(),
+                            ));
+                        }
+                        let dir = format!("/etc/containerd/certs.d/{}", self.endpoint);
+                        if let Some(ca) = ca {
+                            files.push((format!("{dir}/ca.crt"), ca.to_vec()));
+                        }
+                        files.push((
+                            format!("{dir}/hosts.toml"),
+                            self.endpoint_hosts_toml().into_bytes(),
+                        ));
+                    }
+                }
+                kurin_config::RuntimeKind::Crio => {
+                    if let Some(ca) = ca {
+                        files.push((
+                            format!("/etc/containers/certs.d/{}/ca.crt", self.endpoint),
+                            ca.to_vec(),
+                        ));
+                    }
+                    files.push((
+                        "/etc/containers/registries.conf.d/50-kurin.conf".into(),
+                        self.crio_conf().into_bytes(),
+                    ));
+                    if let (Some(user), Some(password)) = (&self.username, &self.password) {
+                        let auth = serde_json::json!({
+                            "auths": {
+                                self.endpoint.clone(): {
+                                    "auth": base64_encode(format!("{user}:{password}").as_bytes()),
+                                }
+                            }
+                        });
+                        files.push((
+                            "/etc/containers/auth.json".into(),
+                            serde_json::to_vec_pretty(&auth).unwrap_or_default(),
+                        ));
+                    }
+                }
+            },
+        }
+        files
     }
 }
 
@@ -597,248 +809,403 @@ impl Task for RegistryTrust {
         &self.node_name
     }
     fn describe(&self) -> String {
+        let runtime = match self.distribution {
+            Distribution::K3s => "k3s",
+            Distribution::K8s => match self.runtime {
+                kurin_config::RuntimeKind::Containerd => "containerd",
+                kurin_config::RuntimeKind::Crio => "cri-o",
+            },
+        };
         format!(
-            "containerd mirrors -> registry {}:{}",
-            self.registry, self.port
+            "{runtime} mirrors -> registry {} ({} upstream(s))",
+            self.endpoint,
+            self.upstreams.len()
         )
     }
 
     async fn check(&self, session: &dyn Session) -> Result<Drift> {
-        if self.kind == RegistryKind::Harbor {
-            // Harbor writes only its own endpoint entry (no upstream
-            // mirrors — harbor is project/repo shaped).
-            let dir = self.registry_dir();
-            let out = session
-                .exec(&format!(
-                    "test -s {dir}/hosts.toml && test -s {dir}/ca.crt && echo ok"
-                ))
-                .await?;
-            return Ok(if out.stdout.trim() == "ok" {
-                Drift::InSync
-            } else {
-                Drift::Drifted("harbor registry trust config missing".into())
-            });
-        }
-        let mut script = String::new();
-        for upstream in MIRRORED_UPSTREAMS {
-            let dir = Self::upstream_dir(upstream);
-            let want = self.upstream_hosts_toml(upstream);
-            script.push_str(&format!(
-                "printf '@@{}@@\\n'; cat {dir}/hosts.toml 2>/dev/null; test -s {dir}/ca.crt && echo ca-ok\n",
-                upstream.replace('.', "_")
-            ));
-            let _ = want;
-        }
-        let out = session.exec(&script).await?;
-        for upstream in MIRRORED_UPSTREAMS {
-            let marker = format!("@@{}@@", upstream.replace('.', "_"));
-            let want = self.upstream_hosts_toml(upstream);
-            let Some(rest) = out.stdout.split(&marker).nth(1) else {
-                return Ok(Drift::Drifted(format!(
-                    "mirror config for {upstream} missing"
-                )));
-            };
-            let section = rest.split("@@").next().unwrap_or("");
-            let conf = section
-                .lines()
-                .take_while(|l| *l != "ca-ok")
-                .collect::<Vec<_>>()
-                .join("\n");
-            if conf.trim() != want.trim() || !section.contains("ca-ok") {
-                return Ok(Drift::Drifted(format!(
-                    "mirror config for {upstream} missing/stale"
-                )));
+        for (path, want) in self.files() {
+            let out = session.exec(&format!("cat {path} 2>/dev/null")).await?;
+            if out.stdout.as_bytes() != want.as_slice() {
+                return Ok(Drift::Drifted(format!("{path} missing/stale")));
             }
         }
         Ok(Drift::InSync)
     }
 
     async fn apply(&self, session: &dyn Session) -> Result<Outcome> {
-        // Direct-connection CA first (seed/manual ctr pull at the registry).
-        let reg_dir = self.registry_dir();
-        session
-            .exec(&format!("install -d -m 0755 {reg_dir}"))
-            .await?;
-        session
-            .write_file(&format!("{reg_dir}/ca.crt"), self.ca_pem.as_bytes())
-            .await?;
-        if self.kind == RegistryKind::Harbor {
-            // Harbor cannot mirror arbitrary upstream names (its registry is
-            // project/repo shaped); kubeadm's imageRepository covers the
-            // control-plane pulls, and this hosts.toml gives the registry's
-            // own endpoint CA + auth for anything pulling <reg>:<port>/library.
-            let mut cfg = format!(
-                "server = \"https://{}:{}\"\n\n[host.\"https://{}:{}\"]\n  capabilities = [\"pull\", \"resolve\", \"push\"]\n  ca = \"{reg_dir}/ca.crt\"\n",
-                self.registry, self.port, self.registry, self.port,
-            );
-            if let Some(h) = &self.auth_header {
-                cfg.push_str(&format!(
-                    "  [host.\"https://{}:{}\".header]\n    authorization = \"{h}\"\n",
-                    self.registry, self.port
-                ));
+        for (path, contents) in self.files() {
+            if let Some(parent) = std::path::Path::new(&path).parent() {
+                session
+                    .exec(&format!("install -d -m 0755 {}", parent.display()))
+                    .await?;
             }
-            session
-                .write_file(&format!("{reg_dir}/hosts.toml"), cfg.as_bytes())
-                .await?;
-            return Ok(Outcome::Verified);
+            let mode = if path.ends_with("auth.json") {
+                0o600
+            } else {
+                0o644
+            };
+            session.write_file_mode(&path, &contents, mode).await?;
         }
-        for upstream in MIRRORED_UPSTREAMS {
-            let dir = Self::upstream_dir(upstream);
-            session.exec(&format!("install -d -m 0755 {dir}")).await?;
-            session
-                .write_file(&format!("{dir}/ca.crt"), self.ca_pem.as_bytes())
-                .await?;
-            session
-                .write_file(
-                    &format!("{dir}/hosts.toml"),
-                    self.upstream_hosts_toml(upstream).as_bytes(),
-                )
-                .await?;
-        }
-        // containerd reads certs.d per request — no restart.
+        // containerd reads certs.d per request and CRI-O/k3s read their
+        // config at start; the registry phase runs before those services
+        // start in a fresh install.
         Ok(Outcome::Verified)
     }
 }
 
-/// `registry/seed@cp1`: push the bundle images into the registry so
-/// air-gapped nodes can pull them. Waits for `/v2/` itself (see module
-/// docs on intra-stage concurrency).
-pub struct RegistrySeed {
-    node_name: String,
+/// One image the control machine pushes.
+struct PushImage {
+    spec: kurin_artifact::artifact::ArtifactSpec,
+    repo: String,
+    tag: String,
+}
+
+/// One file artifact the control machine pushes as a single-layer OCI
+/// artifact.
+struct PushFile {
+    spec: kurin_artifact::artifact::ArtifactSpec,
+    repo: String,
+    tag: String,
+}
+
+/// `registry/push@controller`: push every package image and file into the
+/// registry exactly once, in the deterministic 04 §5.2 layout.
+///
+/// The task runs on the **control machine** (`Target::Controller`) and
+/// talks the registry HTTP API with `curl`, so it needs no container
+/// runtime on the host. Blobs are HEAD-checked first: a re-run only
+/// uploads what the registry is missing.
+pub struct RegistryPush {
     kind: RegistryKind,
-    ca_pem: String,
-    registry: String,
-    port: u16,
-    username: String,
-    password: SecretString,
-    arch: Arch,
-    /// Image artifact names to push — the bootstrap set the enabled
-    /// runtime/distribution/CNI components declare (same selection as
-    /// `images/import`).
-    images: Vec<String>,
-    /// Run sources: offline dir, manifest override and mirror zone.
+    endpoint: String,
+    prefix: String,
+    ca_pem: Option<String>,
+    ca_file: Option<PathBuf>,
+    username: Option<String>,
+    password: Option<String>,
     run: Arc<RunContext>,
 }
 
-impl RegistrySeed {
-    pub fn new(
-        cluster: &Cluster,
-        node: &Node,
-        arch: Arch,
-        ca: &RegistryCa,
-        run: &Arc<RunContext>,
-    ) -> Result<Self> {
-        let reg = cluster
-            .nodes
-            .iter()
-            .find(|n| n.role == kurin_config::NodeRole::Registry)
-            .ok_or_else(|| miette::miette!("no registry node"))?;
+impl RegistryPush {
+    pub fn new(cluster: &Cluster, ca: Option<&RegistryCa>, run: &Arc<RunContext>) -> Result<Self> {
+        let kind = cluster
+            .registry_kind()
+            .ok_or_else(|| miette::miette!("registry kind missing"))?;
+        let endpoint = cluster
+            .registry_endpoint()
+            .ok_or_else(|| miette::miette!("registry endpoint missing"))?;
+        let prefix = if kind == RegistryKind::Harbor {
+            "library/".to_string()
+        } else {
+            cluster.registry_repo_prefix()
+        };
+        let ca_pem = match kind {
+            RegistryKind::External => None,
+            _ => ca.map(|ca| ca.cert_pem.clone()),
+        };
         Ok(Self {
-            node_name: node.name.clone(),
-            kind: cluster
-                .registry_kind()
-                .ok_or_else(|| miette::miette!("registry kind missing"))?,
-            ca_pem: ca.cert_pem.clone(),
-            registry: reg.internal_address.to_string(),
-            port: cluster.registry_port(),
+            kind,
+            endpoint,
+            prefix,
+            ca_pem,
+            ca_file: cluster.registry_ca_file().map(Path::to_path_buf),
             username: cluster
                 .registry_username()
                 .map(str::to_string)
-                .unwrap_or_else(|| match cluster.registry_kind() {
-                    Some(RegistryKind::Harbor) => "admin".into(),
-                    _ => "kurin".into(),
+                .or_else(|| match kind {
+                    RegistryKind::Harbor => Some("admin".into()),
+                    RegistryKind::External => None,
+                    _ => Some("kurin".into()),
                 }),
-            password: resolved_registry_password(run),
-            arch,
-            images: crate::component::bootstrap_images(cluster, arch)
-                .into_iter()
-                .map(|r| r.name)
-                .collect(),
+            password: run
+                .secrets()
+                .registry_password
+                .as_ref()
+                .map(|p| p.expose_secret().to_string()),
             run: Arc::clone(run),
         })
     }
 
-    /// The images to push: same selection as `images/import` (the
-    /// enabled components' bootstrap set), always from the offline
-    /// bundle when present, else from the local artifact cache.
-    /// Cheap view: image names + repo/tag only (no archives built) — used
-    /// by check()'s drift signature.
-    async fn seed_names(&self) -> Result<Vec<(String, String)>> {
-        let manifest = kurin_artifact::artifact::install_manifest(&self.run.sources)?;
-        let mut out = Vec::new();
-        for name in &self.images {
-            let spec = manifest.spec(name, self.arch)?;
-            // Upstream reference "host/org/repo:tag"; the apply side keeps
-            // only the repo path after the first '/'.
-            let reference =
-                kurin_artifact::zone::rewrite_image_ref(&spec.url(), self.run.sources.zone);
-            if reference.split_once('/').is_none() {
-                return Err(miette::miette!("cannot split image reference {reference}"));
+    /// Image and file targets derived from the run's manifest.
+    fn targets(&self) -> Result<(Vec<PushImage>, Vec<PushFile>)> {
+        let manifest = install_manifest(&self.run.sources)?;
+        let mut images: Vec<PushImage> = Vec::new();
+        let mut files: Vec<PushFile> = Vec::new();
+        for entry in manifest.artifacts() {
+            match entry.kind {
+                kurin_artifact::artifact::ArtifactKind::Image => {
+                    for arch in [Arch::Amd64, Arch::Arm64] {
+                        let spec = manifest.spec(&entry.name, arch)?;
+                        if spec.expected_sha256().is_none() {
+                            continue;
+                        }
+                        let reference = kurin_artifact::zone::rewrite_image_ref(
+                            &spec.url(),
+                            self.run.sources.zone,
+                        );
+                        let host =
+                            reference
+                                .split_once('/')
+                                .map(|(host, _)| host)
+                                .ok_or_else(|| {
+                                    miette::miette!("cannot split image reference {reference}")
+                                })?;
+                        let rest = &reference[host.len() + 1..];
+                        let (path, tag) = rest
+                            .rsplit_once(':')
+                            .filter(|(_, tag)| !tag.contains('/'))
+                            .ok_or_else(|| {
+                                miette::miette!("image reference {reference} has no tag")
+                            })?;
+                        let repo = if self.kind == RegistryKind::Harbor {
+                            format!("library/{}", path.rsplit('/').next().unwrap_or(path))
+                        } else {
+                            format!("{}mirror/{host}/{path}", self.prefix)
+                        };
+                        if !images.iter().any(|i| i.repo == repo && i.tag == tag) {
+                            images.push(PushImage {
+                                spec,
+                                repo,
+                                tag: tag.to_string(),
+                            });
+                        }
+                    }
+                }
+                _ => {
+                    for arch in [Arch::Amd64, Arch::Arm64] {
+                        let spec = manifest.spec(&entry.name, arch)?;
+                        if spec.expected_sha256().is_none() {
+                            continue;
+                        }
+                        files.push(PushFile {
+                            repo: format!("{}kurin/files/{}", self.prefix, spec.name),
+                            tag: format!("{}-{}", spec.version, arch.as_str()),
+                            spec,
+                        });
+                    }
+                }
             }
-            out.push((spec.name.clone(), reference));
         }
-        Ok(out)
+        Ok((images, files))
+    }
+
+    fn ca_arg(&self, ca_path: Option<&str>) -> String {
+        match ca_path {
+            Some(path) => format!("--cacert {}", shell_quote(path)),
+            None => String::new(),
+        }
+    }
+
+    fn auth_arg(&self) -> String {
+        match (&self.username, &self.password) {
+            (Some(user), Some(password)) => {
+                format!("-u {}", shell_quote(&format!("{user}:{password}")))
+            }
+            _ => String::new(),
+        }
+    }
+
+    fn manifest_accept() -> &'static str {
+        "application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json, \
+         application/vnd.docker.distribution.manifest.list.v2+json, \
+         application/vnd.docker.distribution.manifest.v2+json"
+    }
+
+    async fn manifest_exists(
+        &self,
+        session: &dyn Session,
+        repo: &str,
+        tag: &str,
+        ca: Option<&str>,
+    ) -> Result<bool> {
+        let out = session
+            .exec_cmd(
+                &kurin_core::engine::Cmd::new(format!(
+                    "curl -sS -o /dev/null -w '%{{http_code}}' {ca} {auth} -H {accept} \
+                     https://{ep}/v2/{repo}/manifests/{tag}",
+                    ca = self.ca_arg(ca),
+                    auth = self.auth_arg(),
+                    accept = shell_quote(&format!("Accept: {}", Self::manifest_accept())),
+                    ep = self.endpoint,
+                ))
+                .readonly()
+                .redact(self.password.clone().unwrap_or_default()),
+            )
+            .await?;
+        Ok(out.stdout.trim() == "200")
+    }
+
+    /// Upload one blob unless the registry already has it.
+    async fn push_blob(
+        &self,
+        session: &dyn Session,
+        repo: &str,
+        digest: &str,
+        path: &Path,
+        ca: Option<&str>,
+    ) -> Result<()> {
+        let script = format!(
+            "set -e; code=$(curl -sS -o /dev/null -w '%{{http_code}}' {ca} {auth} \
+               https://{ep}/v2/{repo}/blobs/{digest}); \
+             if [ \"$code\" != 200 ]; then \
+               loc=$(curl -fsS -X POST {ca} {auth} -D - -o /dev/null \
+                 https://{ep}/v2/{repo}/blobs/uploads/ | tr -d '\\r' \
+                 | awk 'tolower($1)==\"location:\"{{print $2}}'); \
+               case \"$loc\" in http*) url=$loc;; *) url=https://{ep}$loc;; esac; \
+               sep='?'; case \"$url\" in *\\?*) sep='&';; esac; \
+               curl -fsS -X PUT {ca} {auth} -H 'Content-Type: application/octet-stream' \
+                 --data-binary @{path} \"$url${{sep}}digest={digest}\" -o /dev/null; \
+             fi",
+            ca = self.ca_arg(ca),
+            auth = self.auth_arg(),
+            ep = self.endpoint,
+            repo = repo,
+            digest = digest,
+            path = shell_quote(&path.display().to_string()),
+        );
+        let out = session
+            .exec_cmd(
+                &kurin_core::engine::Cmd::new(script)
+                    .redact(self.password.clone().unwrap_or_default()),
+            )
+            .await?;
+        if !out.ok() {
+            return Err(miette::miette!(
+                "push blob {digest} to {repo} failed: {}",
+                out.stderr.lines().last().unwrap_or("").trim()
+            ));
+        }
+        Ok(())
+    }
+
+    /// PUT a manifest (index or image manifest) under a tag or digest.
+    async fn put_manifest(
+        &self,
+        session: &dyn Session,
+        repo: &str,
+        reference: &str,
+        media_type: &str,
+        path: &Path,
+        ca: Option<&str>,
+    ) -> Result<()> {
+        let out = session
+            .exec_cmd(
+                &kurin_core::engine::Cmd::new(format!(
+                    "curl -fsS -X PUT {ca} {auth} -H {mt} --data-binary @{path} \
+                     https://{ep}/v2/{repo}/manifests/{reference} -o /dev/null",
+                    ca = self.ca_arg(ca),
+                    auth = self.auth_arg(),
+                    mt = shell_quote(&format!("Content-Type: {media_type}")),
+                    path = shell_quote(&path.display().to_string()),
+                    ep = self.endpoint,
+                    repo = repo,
+                    reference = reference,
+                ))
+                .redact(self.password.clone().unwrap_or_default()),
+            )
+            .await?;
+        if !out.ok() {
+            return Err(miette::miette!(
+                "push manifest {repo}:{reference} failed: {}",
+                out.stderr.lines().last().unwrap_or("").trim()
+            ));
+        }
+        Ok(())
+    }
+
+    fn temp_path(&self, name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!("kurin-registry-push-{}-{name}", std::process::id()))
     }
 }
 
 #[async_trait::async_trait]
-impl Task for RegistrySeed {
+impl Task for RegistryPush {
     fn id(&self) -> String {
-        format!("registry/seed@{}", self.node_name)
+        format!("registry/push@{}", kurin_core::engine::CONTROLLER_NODE)
     }
     fn stage(&self) -> Stage {
         Stage::Registry
     }
     fn node(&self) -> &str {
-        &self.node_name
+        kurin_core::engine::CONTROLLER_NODE
+    }
+    fn target(&self) -> kurin_core::engine::Target {
+        kurin_core::engine::Target::Controller
     }
     fn describe(&self) -> String {
-        "push bundle images into the internal registry".into()
+        format!("push package payloads to registry {}", self.endpoint)
     }
 
     async fn check(&self, session: &dyn Session) -> Result<Drift> {
-        // A marker records the last successful seed set (name@version).
-        let want_sig = match self.seed_names().await {
-            Ok(list) => list
-                .iter()
-                .map(|(n, _)| n.clone())
-                .collect::<Vec<_>>()
-                .join(","),
-            Err(_) => return Ok(Drift::Drifted("seed list unavailable".into())),
-        };
-        let out = session
-            .exec("cat /etc/kurin/registry-seed.marker 2>/dev/null || true")
-            .await?;
-        Ok(if out.stdout.trim() == want_sig {
-            Drift::InSync
+        let (images, files) = self.targets()?;
+        let ca_path = if let Some(pem) = &self.ca_pem {
+            let path = self.temp_path("check-ca.crt");
+            kurin_core::local::write_local_file(&path, pem.as_bytes(), 0o600)?;
+            Some(path)
         } else {
-            Drift::Drifted("registry not seeded with the bundle images".into())
-        })
+            self.ca_file.clone()
+        };
+        let ca = ca_path.as_ref().map(|p| p.display().to_string());
+        let result = async {
+            for image in &images {
+                if !self
+                    .manifest_exists(session, &image.repo, &image.tag, ca.as_deref())
+                    .await?
+                {
+                    return Ok(Drift::Drifted(format!(
+                        "{}:{} missing from the registry",
+                        image.repo, image.tag
+                    )));
+                }
+            }
+            for file in &files {
+                if !self
+                    .manifest_exists(session, &file.repo, &file.tag, ca.as_deref())
+                    .await?
+                {
+                    return Ok(Drift::Drifted(format!(
+                        "{}:{} missing from the registry",
+                        file.repo, file.tag
+                    )));
+                }
+            }
+            Ok(Drift::InSync)
+        }
+        .await;
+        if let Some(path) = ca_path {
+            let _ = std::fs::remove_file(path);
+        }
+        result
     }
 
     async fn apply(&self, session: &dyn Session) -> Result<Outcome> {
-        // 1. Registry must answer (registry/install may still be running).
-        // Our own copy of the CA: registry/trust writes the certs.d copy
-        // concurrently (same bytes), and ctr needs a stable path.
-        session.exec("install -d -m 0755 /etc/kurin").await?;
-        session
-            .write_file("/etc/kurin/registry-ca.crt", self.ca_pem.as_bytes())
-            .await?;
+        let mut temp_files = Vec::new();
+        let ca_path = if let Some(pem) = &self.ca_pem {
+            let path = self.temp_path("ca.crt");
+            kurin_core::local::write_local_file(&path, pem.as_bytes(), 0o600)?;
+            temp_files.push(path.clone());
+            Some(path.display().to_string())
+        } else {
+            self.ca_file.as_ref().map(|p| p.display().to_string())
+        };
+        let ca = ca_path.as_deref();
 
-        // Note: a failed curl still emits its -w placeholder ("000"), so the
-        // chain must overwrite, not append — hence the code= assignment.
+        // The registry may still be installing (same stage, concurrent).
         let mut ready = false;
         for _ in 0..90 {
             let out = session
-                .exec(&format!(
-                    "code=$(curl -fsS --cacert /etc/kurin/registry-ca.crt -u '{u}:{p}' -o /dev/null -w '%{{http_code}}' https://{host}:{port}/v2/ 2>/dev/null) || \
-                     code=$(curl -fsS -k -u '{u}:{p}' -o /dev/null -w '%{{http_code}}' https://{host}:{port}/v2/ 2>/dev/null) || true; \
-                     printf %s \"${{code:-000}}\"",
-                    u = self.username,
-                    p = self.password.expose_secret(),
-                    host = self.registry,
-                    port = self.port,
-                ))
+                .exec_cmd(
+                    &kurin_core::engine::Cmd::new(format!(
+                        "curl -sS -o /dev/null -w '%{{http_code}}' {ca} {auth} \
+                         https://{ep}/v2/ || true",
+                        ca = self.ca_arg(ca),
+                        auth = self.auth_arg(),
+                        ep = self.endpoint,
+                    ))
+                    .readonly()
+                    .redact(self.password.clone().unwrap_or_default()),
+                )
                 .await?;
             let code = out.stdout.trim();
             if code == "200" || code == "401" {
@@ -849,105 +1216,116 @@ impl Task for RegistrySeed {
         }
         if !ready {
             return Err(miette::miette!(
-                "registry {}:{} not answering; cannot seed",
-                self.registry,
-                self.port
+                "registry {} not answering; cannot push package payloads",
+                self.endpoint
             ));
         }
 
-        // Harbor needs one project per repo namespace before a push: the
-        // "library" project exists by default, every other prefix does not.
-        // Public + ignored-on-409 keeps the task idempotent.
-        if self.kind == RegistryKind::Harbor {
-            for ns in ["library"] {
-                let _ = session
-                    .exec(&format!(
-                        "curl -sS --cacert /etc/kurin/registry-ca.crt -u '{u}:{p}' \
-                         -Y POST -H 'Content-Type: application/json' \
-                         -d '{{\"project_name\":\"{ns}\",\"public\":true}}' \
-                         https://{host}:{port}/api/v2.0/projects -o /dev/null -w '%{{http_code}}' || true",
-                        u = self.username,
-                        p = self.password.expose_secret(),
-                        host = self.registry,
-                        port = self.port,
-                    ))
-                    .await;
-            }
-        }
-
-        // Warm-up: the readiness loop above can find the registry up on the
-        // first try while the SSH connection sat idle through a long harbor
-        // install and died; a cheap exec forces detect-and-reconnect before
-        // the large payload writes that follow.
-        session.exec("true").await?;
-
-        // 2. Per image: load the single-image OCI layout tar into containerd,
-        //    retag under the internal registry **preserving the upstream repo
-        //    path** (that is the path containerd requests when the mirror is
-        //    consulted), push with the curl pair baked to --user, then drop
-        //    the local copy.
-        let manifest = install_manifest(&self.run.sources)?;
+        let (images, files) = self.targets()?;
         let payloads = PayloadSet::open(&self.run.sources).await?;
-        let mut names = Vec::new();
-        for (name, reference) in self.seed_names().await? {
-            let spec = manifest.spec(&name, self.arch)?;
-            let tar = payloads.image(&spec).await?.to_temp_tar()?;
-            // repo path: everything after the first '/' ("org/repo:tag").
-            let repo = reference
-                .split_once('/')
-                .map(|(_, rest)| rest)
-                .ok_or_else(|| miette::miette!("cannot split image reference {reference}"))?;
-            let remote = format!("/tmp/kurin-seed-{name}.tar");
-            let uploaded = session.upload(tar.upload_source(), &remote, 0o600).await;
-            let _ = std::fs::remove_file(&tar.path);
-            uploaded?;
-            // Local ref is the full upstream reference (the docker
-            // archive's RepoTags); the pushed ref keeps only the repo
-            // path — that is what containerd requests from a mirror.
-            // Harbor cannot serve single-segment paths at all (its registry
-            // is project/repo shaped), so harbor seeds go under the
-            // built-in `library` project; kubeadm's imageRepository points
-            // there and the trust task installs no upstream mirrors.
-            let local = &reference;
-            let repo_path = if self.kind == RegistryKind::Harbor {
-                format!("library/{}", repo.rsplit('/').next().unwrap_or(repo))
-            } else {
-                repo.to_string()
-            };
-            let pushed = format!("{}:{}/{}", self.registry, self.port, repo_path);
-            let dir = "/etc/kurin";
-            let out = session
-                .exec(&format!(
-                    "set -e; ctr -n k8s.io images import {remote} >/dev/null; rm -f {remote}; \
-                     ctr -n k8s.io images tag --force {local} {pushed} >/dev/null; \
-                     ctr -n k8s.io images push --user '{u}:{p}' --tlscacert {dir}/registry-ca.crt \
-                       --local {pushed} >/dev/null; \
-                     ctr -n k8s.io images rm {pushed} >/dev/null 2>&1 || true",
-                    u = self.username,
-                    p = self.password.expose_secret(),
-                ))
-                .await?;
-            if !out.ok() {
-                let listed = session
-                    .exec("ctr -n k8s.io images ls -q 2>/dev/null | head -20")
-                    .await
-                    .map(|o| o.stdout)
-                    .unwrap_or_default();
-                return Err(miette::miette!(
-                    "pushing {name} to the registry failed: {} (local refs:\n{listed})",
-                    out.stderr.lines().last().unwrap_or("")
-                ));
+
+        for image in &images {
+            let payload = payloads.image_for_push(&image.spec).await?;
+            for blob in &payload.blobs {
+                if blob.manifest {
+                    self.put_manifest(
+                        session,
+                        &image.repo,
+                        &blob.digest,
+                        &blob.media_type,
+                        &blob.path,
+                        ca,
+                    )
+                    .await?;
+                } else {
+                    self.push_blob(session, &image.repo, &blob.digest, &blob.path, ca)
+                        .await?;
+                }
             }
-            names.push(name);
-        }
-        session
-            .write_file(
-                "/etc/kurin/registry-seed.marker",
-                names.join(",").as_bytes(),
+            let index = self.temp_path(&format!("{}.index.json", image.spec.name));
+            kurin_core::local::write_local_file(&index, &payload.index_bytes, 0o600)?;
+            temp_files.push(index.clone());
+            self.put_manifest(
+                session,
+                &image.repo,
+                &image.tag,
+                &payload.media_type,
+                &index,
+                ca,
             )
             .await?;
+            // Also pin the index by digest so a digest-addressed pull works.
+            self.put_manifest(
+                session,
+                &image.repo,
+                &payload.index_digest,
+                &payload.media_type,
+                &index,
+                ca,
+            )
+            .await?;
+        }
+
+        let empty_config = b"{}";
+        let config_digest = format!("sha256:{}", kurin_core::engine::sha256_hex(empty_config));
+        for file in &files {
+            let blob = payloads.file(&file.spec).await?;
+            let config = self.temp_path(&format!("{}.config.json", file.spec.name));
+            kurin_core::local::write_local_file(&config, empty_config, 0o600)?;
+            temp_files.push(config.clone());
+            self.push_blob(session, &file.repo, &config_digest, &config, ca)
+                .await?;
+            self.push_blob(session, &file.repo, &blob.digest, &blob.path, ca)
+                .await?;
+            let manifest = serde_json::json!({
+                "schemaVersion": 2,
+                "mediaType": "application/vnd.oci.image.manifest.v1+json",
+                "config": {
+                    "mediaType": "application/vnd.oci.empty.v1+json",
+                    "digest": config_digest,
+                    "size": empty_config.len(),
+                },
+                "layers": [{
+                    "mediaType": "application/octet-stream",
+                    "digest": blob.digest,
+                    "size": blob.size,
+                    "annotations": {
+                        "org.opencontainers.image.title": file.spec.name,
+                    },
+                }],
+                "annotations": {
+                    "org.opencontainers.image.title": file.spec.name,
+                    "org.opencontainers.image.version": file.spec.version,
+                },
+            });
+            let manifest_path = self.temp_path(&format!("{}.manifest.json", file.spec.name));
+            kurin_core::local::write_local_file(
+                &manifest_path,
+                serde_json::to_vec(&manifest).unwrap_or_default().as_slice(),
+                0o600,
+            )?;
+            temp_files.push(manifest_path.clone());
+            self.put_manifest(
+                session,
+                &file.repo,
+                &file.tag,
+                "application/vnd.oci.image.manifest.v1+json",
+                &manifest_path,
+                ca,
+            )
+            .await?;
+        }
+
+        for path in temp_files {
+            let _ = std::fs::remove_file(path);
+        }
         Ok(Outcome::Verified)
     }
+}
+
+/// Shell-quote one argument (single quotes, embedded quotes escaped).
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
 }
 
 /// Minimal RFC 4648 base64 (no extra dependency for one header value).
@@ -1085,12 +1463,137 @@ role = "registry"
         let ca = ca_for(&cluster).unwrap();
         let run = crate::test_util::run();
         run.set_secrets(cluster.resolve_secrets().unwrap());
-        let trust = RegistryTrust::new(&cluster, cp, &ca, &run).unwrap();
+        let trust = RegistryTrust::new(
+            &cluster,
+            cp,
+            Some(&ca),
+            &run,
+            &["registry.k8s.io".to_string()],
+        )
+        .unwrap();
         let toml = trust.upstream_hosts_toml("registry.k8s.io");
         assert!(toml.contains("server = \"https://registry.k8s.io\""));
-        assert!(toml.contains("[host.\"https://192.168.10.31:5000\"]"));
+        assert!(toml.contains("[host.\"https://192.168.10.31:5000/v2/mirror/registry.k8s.io\"]"));
+        assert!(toml.contains("override_path = true"));
         assert!(toml.contains("ca = \"/etc/containerd/certs.d/registry.k8s.io/ca.crt\""));
         assert!(toml.contains("authorization = \"Basic dTpw\""));
         assert!(toml.contains("capabilities"));
+    }
+
+    /// Cluster with a dedicated zot registry and one control plane.
+    fn mirror_cluster(extra: &str) -> Cluster {
+        use kurin_config::parse_str;
+        let toml = format!(
+            r#"
+version = "v1alpha1"
+name = "mirror"
+[kubernetes]
+version = "1.33.1"
+{extra}
+[network]
+pod-cidr = "10.233.64.0/18"
+service-cidr = "10.233.0.0/18"
+[network.cni]
+kind = "flannel"
+[registry]
+kind = "zot"
+username = "kurin"
+password = "s3cret"
+[ssh]
+user = "root"
+[ssh.auth]
+method = "password"
+password = "x"
+[nodes.m1]
+address = "192.168.10.11"
+role = "control-plane"
+[nodes.r1]
+address = "192.168.10.30"
+internal-address = "192.168.10.30"
+role = "registry"
+"#
+        );
+        parse_str(std::path::Path::new("mirror.toml"), &toml).unwrap()
+    }
+
+    fn trust_for(cluster: &Cluster) -> RegistryTrust {
+        let cp = cluster
+            .nodes
+            .iter()
+            .find(|n| n.role == kurin_config::NodeRole::ControlPlane)
+            .unwrap();
+        let ca = ca_for(cluster).unwrap();
+        let run = crate::test_util::run();
+        run.set_secrets(cluster.resolve_secrets().unwrap());
+        RegistryTrust::new(
+            cluster,
+            cp,
+            Some(&ca),
+            &run,
+            &["registry.k8s.io".to_string(), "docker.io".to_string()],
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn containerd_hosts_toml_snapshot() {
+        let cluster = mirror_cluster("");
+        let trust = trust_for(&cluster);
+        insta::assert_snapshot!(
+            "containerd_hosts_toml",
+            trust.upstream_hosts_toml("registry.k8s.io")
+        );
+    }
+
+    #[test]
+    fn crio_registries_conf_snapshot() {
+        let cluster = mirror_cluster("runtime = \"crio\"");
+        let trust = trust_for(&cluster);
+        insta::assert_snapshot!("crio_registries_conf", trust.crio_conf());
+    }
+
+    #[test]
+    fn k3s_registries_yaml_snapshot() {
+        let cluster = mirror_cluster("distribution = \"k3s\"");
+        let trust = trust_for(&cluster);
+        insta::assert_snapshot!("k3s_registries_yaml", trust.k3s_registries());
+    }
+
+    #[test]
+    fn external_registry_uses_the_namespace_prefix() {
+        use kurin_config::parse_str;
+        let toml = r#"
+version = "v1alpha2"
+name = "ext"
+[kubernetes]
+version = "1.33.1"
+[network]
+pod-cidr = "10.233.64.0/18"
+service-cidr = "10.233.0.0/18"
+[network.cni]
+kind = "flannel"
+[registry]
+kind = "external"
+address = "https://reg.example.com:5000"
+namespace = "team-a"
+[ssh]
+user = "root"
+[ssh.auth]
+method = "password"
+password = "x"
+[nodes.m1]
+address = "192.168.10.11"
+role = "control-plane"
+"#;
+        let cluster = parse_str(std::path::Path::new("ext.toml"), toml).unwrap();
+        let cp = &cluster.nodes[0];
+        let run = crate::test_util::run();
+        run.set_secrets(cluster.resolve_secrets().unwrap());
+        let trust =
+            RegistryTrust::new(&cluster, cp, None, &run, &["registry.k8s.io".to_string()]).unwrap();
+        assert_eq!(trust.endpoint, "reg.example.com:5000");
+        assert!(trust
+            .upstream_hosts_toml("registry.k8s.io")
+            .contains("/v2/team-a/mirror/registry.k8s.io"));
     }
 }

@@ -432,6 +432,13 @@
             "null"
           ]
         },
+        "ca-file": {
+          "description": "CA bundle (PEM) for an external registry's TLS certificate. Unset\nmeans the system trust store. Copied to every node and used by the\ncontrol machine's push client.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "data-dir": {
           "description": "Storage directory for images (harbor uses its installer layout).",
           "type": [
@@ -449,6 +456,13 @@
             }
           ],
           "description": "Implementation; required when any node has role = \"registry\".\n`external` means \"an operator-managed registry\": kurin installs\nnothing and only uses the address and credentials (reserved, WP-49)."
+        },
+        "namespace": {
+          "description": "Repository namespace kurin writes under (`kind = \"external\"` only;\ndefault `kurin`). Keeps kurin's mirror tree apart from other users\nof a shared registry.",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "password": {
           "anyOf": [
@@ -759,8 +773,10 @@
       "$ref": "#/$defs/RegistryConfig",
       "default": {
         "address": null,
+        "ca-file": null,
         "data-dir": null,
         "kind": null,
+        "namespace": null,
         "password": null,
         "port": null,
         "username": null

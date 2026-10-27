@@ -35,6 +35,7 @@ pub use error::{ConfigError, Result};
 pub use model::{
     AddonSpec, Cluster, ClusterSpec, Node, NodeSpec, PackageSources, RegistrySpec, ResolvedAuth,
     ResolvedSecrets, ResolvedSsh, ResolvedSshSecrets, SshDefaultsSpec, StorageSpec,
+    DEFAULT_REGISTRY_NAMESPACE,
 };
 pub use secret::SecretRef;
 pub use v1alpha2::BUILTIN_ADDONS;

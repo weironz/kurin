@@ -8,6 +8,7 @@ skip  discover/facts@worker01
 skip  preflight/master01
 skip  preflight/worker01
 -- stage preflight complete
+-- stage registry complete
 skip  artifacts/install@master01
 skip  artifacts/install@worker01
 -- stage artifacts complete
@@ -24,7 +25,6 @@ skip  prepare/kernel-deps@worker01
 skip  prepare/os-baseline@master01
 skip  prepare/os-baseline@worker01
 -- stage prepare complete
--- stage registry complete
 skip  images/import@master01
 skip  images/import@worker01
 -- stage images complete

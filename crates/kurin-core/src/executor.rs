@@ -45,7 +45,8 @@ use tracing::Instrument;
 
 use crate::engine::{
     Cmd, Drift, Event, ExecOutput, FailurePolicy, LocalForward, Outcome, PlannedTask,
-    RemoteForward, Session, Stage, TransportLost, UploadReport, UploadSource,
+    RemoteForward, Session, Stage, Target, TransportLost, UploadReport, UploadSource,
+    CONTROLLER_NODE,
 };
 use crate::events::{Body, Envelope, EventBus, Level, Stream as EventStream};
 use crate::plan::{Plan, TaskIdx};
@@ -1132,7 +1133,11 @@ async fn execute_one(
         });
 
         let result: Result<()> = async {
-            let session = pool.get(&node).await?;
+            let session_node = match task.target() {
+                Target::Controller => CONTROLLER_NODE,
+                Target::Node => node.as_str(),
+            };
+            let session = pool.get(session_node).await?;
             let session = LoggingSession::new(
                 session,
                 Arc::clone(&bus),
@@ -1223,7 +1228,11 @@ pub async fn probe(plan: &mut Plan, pool: &Arc<dyn SessionPool>) -> Result<()> {
             let task = Arc::clone(&planned.task);
             let pool = Arc::clone(pool);
             set.spawn(async move {
-                let session = pool.get(task.node()).await?;
+                let session_node = match task.target() {
+                    Target::Controller => CONTROLLER_NODE,
+                    Target::Node => task.node(),
+                };
+                let session = pool.get(session_node).await?;
                 let drift = task.check(session.as_ref()).await?;
                 Ok((i, drift))
             });

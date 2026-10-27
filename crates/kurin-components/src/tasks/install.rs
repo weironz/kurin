@@ -27,6 +27,21 @@ enum Install {
     Tar { dir: &'static str, strip: u16 },
 }
 
+/// Where one install task's bytes come from.
+enum Source {
+    /// The run's payload set (preload delivery).
+    Blob(kurin_artifact::preload::BlobRef),
+    /// A file already downloaded from the registry by
+    /// [`FetchFromRegistry`].
+    Registry(String),
+}
+
+/// Node-local path of a registry-fetched file artifact.
+pub fn fetch_path(name: &str, digest: &str) -> String {
+    let hex = digest.rsplit(':').next().unwrap_or(digest);
+    format!("/var/lib/kurin/fetch/{name}-{hex}")
+}
+
 /// Bump when any Install mapping changes: marker values embed this so a
 /// recipe fix (like the containerd strip-level bug) invalidates old state.
 pub const INSTALL_RECIPE: u32 = 3;
@@ -82,6 +97,10 @@ pub struct ArtifactsInstall {
     arch: Arch,
     /// Runtime selection (CRI-O clusters skip the containerd payload).
     runtime: kurin_config::RuntimeKind,
+    /// Registry delivery: the file blobs were already downloaded by
+    /// [`FetchFromRegistry`] into [`fetch_path`]; install them locally
+    /// instead of streaming the package payload.
+    registry_fetch: bool,
     /// Run sources: offline dir, manifest override and mirror zone.
     run: Arc<RunContext>,
 }
@@ -92,11 +111,13 @@ impl ArtifactsInstall {
         arch: Arch,
         runtime: kurin_config::RuntimeKind,
         run: &Arc<RunContext>,
+        registry_fetch: bool,
     ) -> Self {
         Self {
             node: node.clone(),
             arch,
             runtime,
+            registry_fetch,
             run: Arc::clone(run),
         }
     }
@@ -167,10 +188,14 @@ impl Task for ArtifactsInstall {
         let manifest = install_manifest(&self.run.sources)?;
         // One payload source per task: a legacy bundle is verified once
         // here instead of once per artifact, and a package is opened once.
-        let payloads = PayloadSet::open(&self.run.sources).await?;
+        let payloads = if self.registry_fetch {
+            None
+        } else {
+            Some(PayloadSet::open(&self.run.sources).await?)
+        };
 
         session
-            .exec("mkdir -p /usr/local/bin /opt/cni/bin /etc/kurin")
+            .exec("mkdir -p /usr/local/bin /opt/cni/bin /etc/kurin /var/lib/kurin/fetch")
             .await?;
 
         for entry in manifest.artifacts() {
@@ -178,7 +203,13 @@ impl Task for ArtifactsInstall {
                 continue;
             };
             let spec = manifest.spec(&entry.name, self.arch)?;
-            let blob = payloads.file(&spec).await?;
+            let source = match &payloads {
+                Some(payloads) => Source::Blob(payloads.file(&spec).await?),
+                None => Source::Registry(fetch_path(
+                    &spec.name,
+                    &spec.expected_sha256().unwrap_or_default(),
+                )),
+            };
 
             match install {
                 Install::Direct(dest) => {
@@ -186,7 +217,16 @@ impl Task for ArtifactsInstall {
                     // currently executing (ETXTBSY), and keep replacement
                     // atomic for concurrent readers.
                     let tmp = format!("{dest}.kurin-new");
-                    session.upload(blob.upload_source(), &tmp, 0o755).await?;
+                    match source {
+                        Source::Blob(blob) => {
+                            session.upload(blob.upload_source(), &tmp, 0o755).await?;
+                        }
+                        Source::Registry(path) => {
+                            session
+                                .exec(&format!("install -m 0755 {path} {tmp}"))
+                                .await?;
+                        }
+                    }
                     let out = session
                         .exec(&format!("mv -f {tmp} {dest} && echo installed"))
                         .await?;
@@ -200,20 +240,29 @@ impl Task for ArtifactsInstall {
                     }
                 }
                 Install::Tar { dir, strip } => {
-                    let remote_tmp = format!("/tmp/kurin-{}.tgz", spec.name);
-                    session
-                        .upload(blob.upload_source(), &remote_tmp, 0o600)
-                        .await?;
                     let strip_flag = if strip > 0 {
                         format!("--strip-components={strip}")
                     } else {
                         String::new()
                     };
-                    let out = session
-                        .exec(&format!(
-                            "tar -xzf {remote_tmp} -C {dir} {strip_flag} && rm -f {remote_tmp}"
-                        ))
-                        .await?;
+                    let out = match source {
+                        Source::Blob(blob) => {
+                            let remote_tmp = format!("/tmp/kurin-{}.tgz", spec.name);
+                            session
+                                .upload(blob.upload_source(), &remote_tmp, 0o600)
+                                .await?;
+                            session
+                                .exec(&format!(
+                                    "tar -xzf {remote_tmp} -C {dir} {strip_flag} && rm -f {remote_tmp}"
+                                ))
+                                .await?
+                        }
+                        Source::Registry(path) => {
+                            session
+                                .exec(&format!("tar -xzf {path} -C {dir} {strip_flag}"))
+                                .await?
+                        }
+                    };
                     if !out.ok() {
                         return Err(miette::miette!(
                             "extract {} on {} failed ({}): {}",
@@ -240,6 +289,167 @@ impl Task for ArtifactsInstall {
         session
             .write_file("/etc/kurin/artifacts.marker", lines.as_bytes())
             .await?;
+        Ok(Outcome::Verified)
+    }
+}
+
+/// `artifacts/fetch-registry@node`: download the package's file artifacts
+/// from the registry by digest, verify sha256, and leave them for
+/// [`ArtifactsInstall`] (04 §5.2 step 3).
+///
+/// The plan adds this task only when the node's facts report `curl`; a
+/// node without curl falls back to preload streaming.
+pub struct FetchFromRegistry {
+    node: Node,
+    arch: Arch,
+    runtime: kurin_config::RuntimeKind,
+    endpoint: String,
+    prefix: String,
+    username: Option<String>,
+    password: Option<String>,
+    /// The registry has a CA (internal generated, or external `ca-file`);
+    /// `registry/trust` wrote it to [`Self::ca_path`] earlier in the plan.
+    use_ca: bool,
+    run: Arc<RunContext>,
+}
+
+impl FetchFromRegistry {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        node: &Node,
+        arch: Arch,
+        runtime: kurin_config::RuntimeKind,
+        endpoint: &str,
+        prefix: &str,
+        username: Option<&str>,
+        password: Option<&str>,
+        use_ca: bool,
+        run: &Arc<RunContext>,
+    ) -> Self {
+        Self {
+            node: node.clone(),
+            arch,
+            runtime,
+            endpoint: endpoint.to_string(),
+            prefix: prefix.to_string(),
+            username: username.map(str::to_string),
+            password: password.map(str::to_string),
+            use_ca,
+            run: Arc::clone(run),
+        }
+    }
+
+    fn ca_path() -> &'static str {
+        "/etc/kurin/registry-ca.crt"
+    }
+
+    fn curl_auth(&self) -> String {
+        match (&self.username, &self.password) {
+            (Some(user), Some(password)) => {
+                format!(
+                    "-u '{}:{}'",
+                    user.replace('\'', ""),
+                    password.replace('\'', "")
+                )
+            }
+            _ => String::new(),
+        }
+    }
+
+    fn ca_arg(&self) -> String {
+        if self.use_ca {
+            format!("--cacert {}", Self::ca_path())
+        } else {
+            String::new()
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl Task for FetchFromRegistry {
+    fn id(&self) -> String {
+        format!("artifacts/fetch-registry@{}", self.node.name)
+    }
+    fn stage(&self) -> Stage {
+        Stage::Artifacts
+    }
+    fn node(&self) -> &str {
+        &self.node.name
+    }
+    fn describe(&self) -> String {
+        format!("fetch pinned files from registry {}", self.endpoint)
+    }
+
+    async fn check(&self, session: &dyn Session) -> Result<Drift> {
+        let manifest = install_manifest(&self.run.sources)?;
+        for entry in manifest.artifacts() {
+            if install_for_runtime(&entry.name, self.runtime).is_none() {
+                continue;
+            }
+            let spec = manifest.spec(&entry.name, self.arch)?;
+            let digest = spec.expected_sha256().unwrap_or_default();
+            let path = fetch_path(&spec.name, &digest);
+            let out = session
+                .exec_cmd(
+                    &kurin_core::engine::Cmd::probe(format!("sha256sum {path} 2>/dev/null"))
+                        .readonly(),
+                )
+                .await?;
+            if out.stdout.split_whitespace().next() != Some(digest.as_str()) {
+                return Ok(Drift::Drifted(format!(
+                    "{} not fetched from the registry",
+                    spec.name
+                )));
+            }
+        }
+        Ok(Drift::InSync)
+    }
+
+    async fn apply(&self, session: &dyn Session) -> Result<Outcome> {
+        session
+            .exec("install -d -m 0755 /etc/kurin /var/lib/kurin/fetch")
+            .await?;
+        let manifest = install_manifest(&self.run.sources)?;
+        let redact = self.password.clone().unwrap_or_default();
+        for entry in manifest.artifacts() {
+            if install_for_runtime(&entry.name, self.runtime).is_none() {
+                continue;
+            }
+            let spec = manifest.spec(&entry.name, self.arch)?;
+            let digest = spec.expected_sha256().unwrap_or_default();
+            if digest.is_empty() {
+                continue;
+            }
+            let hex = digest.rsplit(':').next().unwrap_or(&digest);
+            let path = fetch_path(&spec.name, &digest);
+            let script = format!(
+                "set -e; if [ \"$(sha256sum {path} 2>/dev/null | awk '{{print $1}}')\" = {hex} ]; then \
+                   exit 0; fi; \
+                 curl -fsSL {ca} {auth} -o {path}.part \
+                   https://{ep}/v2/{prefix}kurin/files/{name}/blobs/{digest}; \
+                 printf '%s  %s\\n' {hex} {path}.part | sha256sum -c - >/dev/null; \
+                 mv -f {path}.part {path}",
+                ca = self.ca_arg(),
+                auth = self.curl_auth(),
+                ep = self.endpoint,
+                prefix = self.prefix,
+                name = spec.name,
+                digest = digest,
+                hex = hex,
+                path = path,
+            );
+            let out = session
+                .exec_cmd(&kurin_core::engine::Cmd::new(script).redact(redact.clone()))
+                .await?;
+            if !out.ok() {
+                return Err(miette::miette!(
+                    "fetch {} from the registry failed on {}: {}",
+                    spec.name,
+                    self.node.name,
+                    out.stderr.lines().last().unwrap_or("").trim()
+                ));
+            }
+        }
         Ok(Outcome::Verified)
     }
 }

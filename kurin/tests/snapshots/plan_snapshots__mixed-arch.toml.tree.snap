@@ -8,6 +8,7 @@ expression: render_tree(&plan)
 ├── stage: preflight (2 tasks)
 │   ├── preflight/cp1 :: probe swap / selinux / time-sync / kernel modules
 │   └── preflight/w1 :: probe swap / selinux / time-sync / kernel modules
+├── stage: registry (0 tasks)
 ├── stage: artifacts (2 tasks)
 │   ├── artifacts/install@cp1 :: fetch+install pinned binaries (amd64)
 │   └── artifacts/install@w1 :: fetch+install pinned binaries (arm64)
@@ -24,7 +25,6 @@ expression: render_tree(&plan)
 │   ├── prepare/containerd-config@w1 :: render + install /etc/containerd/config.toml
 │   ├── prepare/containerd-unit@w1 :: render + install /etc/systemd/system/containerd.service, enable --now
 │   └── prepare/kubelet-unit@w1 :: render + install /etc/systemd/system/kubelet.service, enable (start deferred to kubeadm)
-├── stage: registry (0 tasks)
 ├── stage: images (2 tasks)
 │   ├── images/import@cp1 :: no-op online (kubelet pulls from registries)
 │   └── images/import@w1 :: no-op online (kubelet pulls from registries)

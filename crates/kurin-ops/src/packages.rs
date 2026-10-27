@@ -132,33 +132,10 @@ pub(crate) fn apply_offline_override(spec: &mut Cluster, value: &str) {
     }
 }
 
-/// The delivery strategy this run would use (04 §5.5): an explicit
-/// `[packages] delivery` wins, `auto` picks `registry` when the cluster
-/// configures one (a `role = "registry"` node or `kind = "external"`) and
-/// `preload` otherwise.
-pub(crate) fn effective_delivery(spec: &Cluster) -> kurin_config::v1alpha2::Delivery {
-    use kurin_config::v1alpha2::Delivery;
-    match spec.packages.delivery {
-        Delivery::Auto => {
-            let registry = spec.registry.kind.is_some()
-                || spec
-                    .nodes
-                    .iter()
-                    .any(|n| n.role == kurin_config::NodeRole::Registry);
-            if registry {
-                Delivery::Registry
-            } else {
-                Delivery::Preload
-            }
-        }
-        other => other,
-    }
-}
-
 /// Validate the base package against the cluster it is about to install
-/// (WP-34 step 3), then enforce the delivery boundary: preload delivery
-/// (WP-35) executes from the package, registry delivery still refuses
-/// instead of silently fetching online (WP-36).
+/// (WP-34 step 3). Both delivery strategies execute from the package:
+/// preload streams payloads to each node (WP-35), registry pushes them
+/// once and lets the nodes fetch (WP-36).
 ///
 /// `mutating` is false for `--dry-run` runs, which plan and validate
 /// without touching a node.
@@ -166,7 +143,7 @@ pub(crate) fn validate_payload(
     spec: &Cluster,
     facts: &FactsTable,
     payload: &Payload,
-    mutating: bool,
+    _mutating: bool,
 ) -> Result<()> {
     let Payload::Package { uri, package } = payload else {
         return Ok(());
@@ -178,13 +155,6 @@ pub(crate) fn validate_payload(
     if !gaps.is_empty() {
         let report = kurin_components::component::coverage::render_gaps(uri, &meta, &gaps);
         return Err(miette::miette!("{}", report.trim_end()));
-    }
-    if mutating && effective_delivery(spec) == kurin_config::v1alpha2::Delivery::Registry {
-        return Err(miette::miette!(
-            "the base package {uri} covers this cluster, but registry delivery is not \
-             implemented yet (WP-36); set [packages] delivery = \"preload\" to stream \
-             payloads to the nodes"
-        ));
     }
     Ok(())
 }

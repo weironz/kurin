@@ -199,7 +199,13 @@ async fn artifacts_install_streams_the_selected_arch_blob() {
     let node = cluster.nodes[0].clone();
 
     for arch in [Arch::Amd64, Arch::Arm64] {
-        let task = ArtifactsInstall::new(&node, arch, kurin_config::RuntimeKind::Containerd, &run);
+        let task = ArtifactsInstall::new(
+            &node,
+            arch,
+            kurin_config::RuntimeKind::Containerd,
+            &run,
+            false,
+        );
         let session = ScriptedSession::new(&node.name, Vec::new());
         assert!(matches!(
             task.check(&session).await.unwrap(),

@@ -389,13 +389,19 @@ pub async fn prepare_with_handle(
     let pool: Arc<dyn SessionPool> = match kind {
         // The teardown plan ends with a control-machine step; the wrapper
         // answers the `local` node without an SSH connection.
-        OpKind::DeleteCluster => kurin_components::teardown::with_local_node(Arc::new(
+        OpKind::DeleteCluster => {
+            kurin_components::teardown::with_local_node(kurin_core::local::with_controller_node(
+                Arc::new(kurin_ssh::SshSessionPool::from_cluster(&spec, &secrets)?),
+            ))
+        }
+        // Registry distribution pushes from the control machine
+        // (`Target::Controller`), which the pool answers locally.
+        _ => kurin_core::local::with_controller_node(Arc::new(
             kurin_ssh::SshSessionPool::from_cluster(&spec, &secrets)?,
         )),
-        _ => Arc::new(kurin_ssh::SshSessionPool::from_cluster(&spec, &secrets)?),
     };
 
-let prepared = match kind {
+    let prepared = match kind {
         OpKind::Create => create::prepare(spec, params, pool, seed, out, lock, secrets).await,
         OpKind::AddNodes => add_nodes::prepare(spec, params, pool, seed, out, lock, secrets).await,
         OpKind::DeleteNode | OpKind::DeleteCluster => {

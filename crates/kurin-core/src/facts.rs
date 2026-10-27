@@ -134,6 +134,9 @@ pub struct NodeFacts {
     /// `sshd -T` `AllowTcpForwarding` (`yes`/`no`); unknown when sshd
     /// could not be queried.
     pub tcp_forwarding: Option<bool>,
+    /// `curl` is on PATH (`None` when the probe did not report it). The
+    /// registry fetch task falls back to preload when this is `Some(false)`.
+    pub curl: Option<bool>,
     pub existing: ExistingInstall,
 }
 
@@ -159,6 +162,7 @@ impl NodeFacts {
             is_root: false,
             sudo: SudoCapability::None,
             tcp_forwarding: None,
+            curl: None,
             existing: ExistingInstall::default(),
         }
     }

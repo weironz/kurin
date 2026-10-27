@@ -1,0 +1,18 @@
+---
+source: crates/kurin-components/src/tasks/registry.rs
+expression: trust.k3s_registries()
+---
+configs:
+  '192.168.10.30:5000':
+    auth:
+      password: s3cret
+      username: kurin
+    tls:
+      ca_file: /etc/rancher/k3s/registry-ca.crt
+mirrors:
+  docker.io:
+    endpoint:
+    - https://192.168.10.30:5000/v2/mirror/docker.io
+  registry.k8s.io:
+    endpoint:
+    - https://192.168.10.30:5000/v2/mirror/registry.k8s.io

@@ -85,6 +85,40 @@ pub async fn open_package(uri: &str) -> Result<Arc<PackageSource>, PreloadError>
     Ok(package)
 }
 
+/// One blob a registry push needs: a local file plus its digest/size and
+/// whether it is a manifest (uploaded through the manifests API) or a
+/// content blob.
+#[derive(Debug, Clone)]
+pub struct PushBlob {
+    /// `sha256:<hex>` digest.
+    pub digest: String,
+    /// Local file holding the bytes.
+    pub path: PathBuf,
+    /// Payload size in bytes.
+    pub size: u64,
+    /// Media type sent with the upload.
+    pub media_type: String,
+    /// True for an image index/manifest (PUT manifests), false for
+    /// config/layer blobs (PUT blobs).
+    pub manifest: bool,
+}
+
+/// A complete image ready to be pushed to a registry under one tag: the
+/// upstream multi-architecture index plus every blob it reaches.
+#[derive(Debug, Clone)]
+pub struct ImagePushPayload {
+    /// Upstream reference (`registry.k8s.io/kube-apiserver:v1.33.1`).
+    pub reference: String,
+    /// Digest of the index itself.
+    pub index_digest: String,
+    /// Index bytes.
+    pub index_bytes: Vec<u8>,
+    /// Index media type.
+    pub media_type: String,
+    /// Sub-manifests and blobs (the index is pushed separately).
+    pub blobs: Vec<PushBlob>,
+}
+
 /// One payload blob a node needs: a local file plus the digest and size
 /// its metadata pins.
 #[derive(Debug, Clone)]
@@ -217,6 +251,46 @@ impl PayloadSet {
                     size: artifact.size,
                 })
             }
+        }
+    }
+
+    /// The selected image as a registry push payload: the upstream
+    /// multi-architecture index and every blob it reaches.
+    ///
+    /// The push keeps the upstream index intact (digests unchanged), so a
+    /// mixed-architecture cluster resolves the same image correctly from
+    /// the mirror.
+    ///
+    /// # Errors
+    ///
+    /// [`PreloadError::MissingImage`] when the source does not carry the
+    /// image.
+    pub async fn image_for_push(
+        &self,
+        spec: &ArtifactSpec,
+    ) -> Result<ImagePushPayload, PreloadError> {
+        match self {
+            PayloadSet::Online { store, zone } => {
+                store.fetch(spec, *zone).await?;
+                let dir = store.artifact_dir(spec);
+                image_push_from_dir(&dir, &spec.url())
+            }
+            PayloadSet::Legacy { manifest } => {
+                let found = manifest.find(&spec.name, spec.arch).ok_or_else(|| {
+                    PreloadError::MissingImage {
+                        reference: spec.url(),
+                    }
+                })?;
+                let dir = found
+                    .file
+                    .parent()
+                    .ok_or_else(|| PreloadError::MissingImage {
+                        reference: spec.url(),
+                    })?
+                    .to_path_buf();
+                image_push_from_dir(&dir, &spec.url())
+            }
+            PayloadSet::Package { package } => image_push_from_package(package, spec),
         }
     }
 
@@ -474,6 +548,165 @@ fn image_from_package(
         blobs,
         source: BlobDir::Store(layout.blobs().clone()),
     })
+}
+
+/// Where a push payload's blobs live.
+enum PushSource {
+    /// A package layout's content-addressed store.
+    Store(BlobStore),
+    /// A cache/offline artifact directory (`index.json`, `manifest.json`,
+    /// hex-named blobs).
+    Dir(PathBuf),
+}
+
+impl PushSource {
+    fn read(&self, digest: &Digest) -> Result<Vec<u8>, PreloadError> {
+        let path = self.path(digest)?.0;
+        std::fs::read(&path).map_err(|e| PreloadError::Io {
+            detail: format!("read {}: {e}", path.display()),
+        })
+    }
+
+    fn path(&self, digest: &Digest) -> Result<(PathBuf, u64), PreloadError> {
+        let path = match self {
+            PushSource::Store(store) => store.path(digest),
+            PushSource::Dir(dir) => {
+                let hex = dir.join(digest.digest());
+                if hex.is_file() {
+                    hex
+                } else {
+                    dir.join("manifest.json")
+                }
+            }
+        };
+        let size = std::fs::metadata(&path)
+            .map_err(|e| PreloadError::Io {
+                detail: format!("stat {}: {e}", path.display()),
+            })?
+            .len();
+        Ok((path, size))
+    }
+}
+
+fn media_type_string(media_type: &MediaType) -> String {
+    serde_json::to_value(media_type)
+        .ok()
+        .and_then(|v| v.as_str().map(str::to_string))
+        .unwrap_or_else(|| format!("{media_type:?}"))
+}
+
+fn image_push_from_package(
+    package: &PackageSource,
+    spec: &ArtifactSpec,
+) -> Result<ImagePushPayload, PreloadError> {
+    let meta = package.manifest()?;
+    let reference = spec.url();
+    let image = meta
+        .images
+        .iter()
+        .find(|i| i.reference == reference)
+        .ok_or_else(|| PreloadError::MissingImage {
+            reference: reference.clone(),
+        })?;
+    let index_digest = package_digest(image)?;
+    let source = PushSource::Store(package.layout().blobs().clone());
+    let index_bytes = source.read(&index_digest)?;
+    let mut blobs = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    collect_index(&index_bytes, &source, &mut blobs, &mut seen)?;
+    Ok(ImagePushPayload {
+        reference,
+        index_digest: index_digest.to_string(),
+        index_bytes,
+        media_type: "application/vnd.oci.image.index.v1+json".to_string(),
+        blobs,
+    })
+}
+
+fn image_push_from_dir(dir: &Path, reference: &str) -> Result<ImagePushPayload, PreloadError> {
+    let index_path = dir.join("index.json");
+    let index_bytes = std::fs::read(&index_path).map_err(|e| PreloadError::Io {
+        detail: format!("read {}: {e}", index_path.display()),
+    })?;
+    let index_digest = {
+        let mut hasher = Sha256::new();
+        hasher.update(&index_bytes);
+        format!("sha256:{:x}", hasher.finalize())
+    };
+    let source = PushSource::Dir(dir.to_path_buf());
+    let mut blobs = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    collect_index(&index_bytes, &source, &mut blobs, &mut seen)?;
+    Ok(ImagePushPayload {
+        reference: reference.to_string(),
+        index_digest,
+        index_bytes,
+        media_type: "application/vnd.oci.image.index.v1+json".to_string(),
+        blobs,
+    })
+}
+
+fn collect_index(
+    bytes: &[u8],
+    source: &PushSource,
+    blobs: &mut Vec<PushBlob>,
+    seen: &mut std::collections::HashSet<String>,
+) -> Result<(), PreloadError> {
+    let index = ImageIndex::from_reader(bytes).map_err(|e| PreloadError::Layout {
+        detail: format!("parse image index: {e}"),
+    })?;
+    for descriptor in index.manifests() {
+        let digest = descriptor.digest().clone();
+        let media_type = media_type_string(descriptor.media_type());
+        if seen.insert(digest.to_string()) {
+            let (path, size) = source.path(&digest)?;
+            blobs.push(PushBlob {
+                digest: digest.to_string(),
+                path,
+                size,
+                media_type: media_type.clone(),
+                manifest: true,
+            });
+        }
+        let child = source.read(&digest)?;
+        if media_type.contains("index") || media_type.contains("manifest.list") {
+            collect_index(&child, source, blobs, seen)?;
+        } else {
+            collect_manifest(&child, source, blobs, seen)?;
+        }
+    }
+    Ok(())
+}
+
+fn collect_manifest(
+    bytes: &[u8],
+    source: &PushSource,
+    blobs: &mut Vec<PushBlob>,
+    seen: &mut std::collections::HashSet<String>,
+) -> Result<(), PreloadError> {
+    let manifest = ImageManifest::from_reader(bytes).map_err(|e| PreloadError::Layout {
+        detail: format!("parse image manifest: {e}"),
+    })?;
+    let mut add = |descriptor: &oci_spec::image::Descriptor| -> Result<(), PreloadError> {
+        let digest = descriptor.digest().clone();
+        if !seen.insert(digest.to_string()) {
+            return Ok(());
+        }
+        let (path, size) = source.path(&digest)?;
+        blobs.push(PushBlob {
+            digest: digest.to_string(),
+            path,
+            size,
+            media_type: media_type_string(descriptor.media_type()),
+            manifest: false,
+        });
+        Ok(())
+    };
+    add(manifest.config())?;
+    for layer in manifest.layers() {
+        add(layer)?;
+    }
+    Ok(())
 }
 
 /// The package's index digest for one image row.

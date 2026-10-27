@@ -2,6 +2,30 @@
 
 All notable changes to kurin. Format follows Keep a Changelog; semver.
 
+### Added (WP-36)
+- registry-based distribution (04 §5.2): `[registry] kind = "external"`
+  accepts `address`, `ca-file`, `username`, `password` and `namespace`
+  (default `kurin`), and the new `registry/push@controller` task pushes
+  every package image and file **once** from the control machine using
+  the registry HTTP API (`curl`), keeping the upstream multi-arch index
+  and skipping blobs the registry already has. Layout:
+  `<reg>/mirror/<upstream-host>/<path>:<tag>` for images and
+  `<reg>/kurin/files/<name>:<version>-<arch>` for single-layer file
+  artifacts.
+- node-side `artifacts/fetch-registry` downloads file blobs by digest
+  with `curl --cacert … -u …`, verifies sha256 and hands them to the
+  install task; a node whose facts report no `curl` falls back to
+  preload streaming. Images are pulled through the runtime mirror
+  instead of being imported.
+- runtime mirrors (04 §5.4) cover containerd `certs.d` (`hosts.toml`
+  with `override_path`), CRI-O `registries.conf.d/50-kurin.conf` and k3s
+  `registries.yaml`; the upstream host set is the union of the package's
+  image references. The registry phase now runs before artifact
+  installation so nodes can fetch from it.
+- `delivery = "auto"` resolves to `registry` when `[registry]` is
+  configured (a `role = "registry"` node or `kind = "external"`),
+  `preload` otherwise.
+
 ### Added (WP-35)
 - package-based preload distribution (04 §5.1): `ArtifactsInstall`,
   `ImagesImport` and the registry node's own binary now take their

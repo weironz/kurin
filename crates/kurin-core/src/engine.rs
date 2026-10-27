@@ -306,6 +306,25 @@ pub enum FailurePolicy {
     BestEffort,
 }
 
+/// Where a task executes.
+///
+/// Most tasks run on a cluster node through its SSH session. Registry
+/// distribution pushes from the *control machine* (the host running
+/// `kurin`), which has no SSH session of its own; the executor resolves
+/// [`Target::Controller`] to the reserved [`CONTROLLER_NODE`] label and
+/// the caller's pool must answer it with a local session.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Target {
+    /// A cluster node (`Task::node` names it).
+    #[default]
+    Node,
+    /// The control machine running kurin.
+    Controller,
+}
+
+/// Reserved node label for [`Target::Controller`] tasks.
+pub const CONTROLLER_NODE: &str = "controller";
+
 /// A unit of work on one node. check_state -> apply -> verify, always.
 #[async_trait::async_trait]
 pub trait Task: Send + Sync {
@@ -313,6 +332,10 @@ pub trait Task: Send + Sync {
     fn id(&self) -> String;
     fn stage(&self) -> Stage;
     fn node(&self) -> &str;
+    /// Where the task runs. Defaults to a cluster node.
+    fn target(&self) -> Target {
+        Target::Node
+    }
     /// One-line human summary for plan rendering.
     fn describe(&self) -> String;
     /// What a failure means for the rest of the plan. Defaults to

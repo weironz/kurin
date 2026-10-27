@@ -1,0 +1,12 @@
+---
+source: crates/kurin-components/src/tasks/registry.rs
+expression: "trust.upstream_hosts_toml(\"registry.k8s.io\")"
+---
+server = "https://registry.k8s.io"
+
+[host."https://192.168.10.30:5000/v2/mirror/registry.k8s.io"]
+  capabilities = ["pull", "resolve"]
+  override_path = true
+  ca = "/etc/containerd/certs.d/registry.k8s.io/ca.crt"
+  [host."https://192.168.10.30:5000/v2/mirror/registry.k8s.io".header]
+    authorization = "Basic a3VyaW46czNjcmV0"

@@ -2,7 +2,7 @@
 # tier-3 registry: 1 control-plane + 1 registry node, kind as arg
 # (docker-registry | zot | harbor). Proves end to end:
 #   registry/install -> /v2/ over TLS with auth
-#   registry/seed    -> bundle images present in the catalog
+#   registry/push    -> package payloads present in the catalog
 #   registry/trust   -> an upstream pull resolves via the mirror while the
 #                       real upstream is iptables-blocked
 set -euo pipefail
@@ -82,7 +82,7 @@ fails=$(grep -c '"task-failed"' "$EVENTS" || true)
 [ "$fails" -eq 0 ] || { echo "[FAIL] $fails task failures"; grep task-failed "$EVENTS"; cp "$EVENTS" /tmp/reg-e2e-events.jsonl; exit 1; }
 grep -q '"id":"registry/install@reg1"' "$EVENTS" || { echo "[FAIL] no registry/install event"; exit 1; }
 grep -q '"id":"registry/trust@cp1"' "$EVENTS" || { echo "[FAIL] no registry/trust event"; exit 1; }
-grep -q '"id":"registry/seed@cp1"' "$EVENTS" || { echo "[FAIL] no registry/seed event"; exit 1; }
+grep -q '"id":"registry/push@controller"' "$EVENTS" || { echo "[FAIL] no registry/push event"; exit 1; }
 echo "[ok] cluster ready with all registry tasks"
 
 PORT=5000
@@ -142,10 +142,96 @@ fi
 echo "[registry:$KIND] second run: registry tasks must all skip"
 EVENTS2=$(mktemp)
 "$BIN" create cluster -f "$CFG" --json > "$EVENTS2" 2>>/tmp/reg-e2e-err.log
-for t in registry/install registry/trust registry/seed; do
+for t in registry/install registry/trust registry/push; do
     grep -q "\"id\":\"$t@.*task-skipped\|task-skipped\"}" "$EVENTS2" 2>/dev/null || true
     SKIPPED=$(grep -F "\"id\":\"$t@" "$EVENTS2" | grep -c '"task-skipped"' || true)
     [ "$SKIPPED" -ge 1 ] || { echo "[FAIL] $t did not skip on second run"; grep -F "\"$t@" "$EVENTS2" | tail -2; exit 1; }
 done
 echo "[ok] idempotent second run"
+
+# ── fully disconnected 3-node cluster (WP-36) ─────────────────────────
+# Manual run:
+#   KURIN_DISCONNECTED=1 KURIN_BASE_PACKAGE=oci-layout:///path/to/base \
+#     e2e/tier3/registry.sh zot
+# Builds a 3-node cluster whose nodes can only reach the registry (80/443
+# egress is rejected), installs from the base package through registry
+# delivery, and checks that every node pulled the pause image from the
+# mirror with a repo digest.
+if [ "${KURIN_DISCONNECTED:-0}" = 1 ]; then
+    : "${KURIN_BASE_PACKAGE:?set KURIN_BASE_PACKAGE to a base package for the disconnected scenario}"
+    DCP1=kurin-reg-dcp1
+    DCP2=kurin-reg-dcp2
+    DW1=kurin-reg-dw1
+    for v in "$DCP1" "$DCP2" "$DW1"; do
+        multipass info "$v" >/dev/null 2>&1 || multipass launch -n "$v" -c 2 -m 2G -d 15G 24.04 >/dev/null
+        multipass exec "$v" -- sudo bash -c "
+            mkdir -p /root/.ssh && chmod 700 /root/.ssh
+            echo '$PUB' >> /root/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys"
+    done
+    DCP1IP=$(multipass info "$DCP1" --format json | python3 -c "import json,sys;print(json.load(sys.stdin)['info']['$DCP1']['ipv4'][0])")
+    DCP2IP=$(multipass info "$DCP2" --format json | python3 -c "import json,sys;print(json.load(sys.stdin)['info']['$DCP2']['ipv4'][0])")
+    DW1IP=$(multipass info "$DW1" --format json | python3 -c "import json,sys;print(json.load(sys.stdin)['info']['$DW1']['ipv4'][0])")
+    for ip in "$DCP1IP" "$DCP2IP" "$DW1IP"; do ssh-keygen -R "$ip" -f "$KH" >/dev/null 2>&1 || true; done
+    DCFG=$(mktemp --suffix=.toml)
+    cat > "$DCFG" <<EOF
+version = "v1alpha1"
+name = "regdisc"
+[kubernetes]
+version = "1.33.1"
+[network]
+pod-cidr = "10.233.64.0/18"
+service-cidr = "10.233.0.0/18"
+[network.cni]
+kind = "flannel"
+[registry]
+kind = "$KIND"
+username = "$REG_USER"
+password = "s3cret-pw"
+[ssh]
+user = "root"
+port = 22
+[ssh.auth]
+method = "private_key"
+key-path = "$KDIR/id_ed25519"
+[nodes.cp1]
+address = "$DCP1IP"
+internal-address = "$DCP1IP"
+role = "control-plane"
+[nodes.cp2]
+address = "$DCP2IP"
+internal-address = "$DCP2IP"
+role = "control-plane"
+[nodes.w1]
+address = "$DW1IP"
+internal-address = "$DW1IP"
+role = "worker"
+[nodes.reg1]
+address = "$REGIP"
+internal-address = "$REGIP"
+role = "registry"
+EOF
+    # Fully disconnected: no HTTP(S) egress at all; SSH and the registry
+    # (same L2) stay reachable.
+    for v in "$DCP1" "$DCP2" "$DW1"; do
+        multipass exec "$v" -- sudo bash -c \
+          'iptables -I OUTPUT -p tcp --dport 443 -j REJECT; iptables -I OUTPUT -p tcp --dport 80 -j REJECT' || true
+    done
+    DEVENTS=$(mktemp)
+    echo "[registry:$KIND] disconnected 3-node create from $KURIN_BASE_PACKAGE"
+    if ! "$BIN" create cluster -f "$DCFG" --package "$KURIN_BASE_PACKAGE" --json > "$DEVENTS" 2>/tmp/reg-disc-err.log; then
+        echo "[FAIL] disconnected create exited nonzero"; tail -8 /tmp/reg-disc-err.log; exit 1
+    fi
+    grep -q '"cluster-ready"' "$DEVENTS" || { echo "[FAIL] no cluster-ready (disconnected)"; tail -6 "$DEVENTS"; exit 1; }
+    fails=$(grep -c '"task-failed"' "$DEVENTS" || true)
+    [ "$fails" -eq 0 ] || { echo "[FAIL] $fails task failures (disconnected)"; grep task-failed "$DEVENTS"; exit 1; }
+    grep -q '"id":"registry/push@controller"' "$DEVENTS" || { echo "[FAIL] no registry/push event"; exit 1; }
+    for v in "$DCP1" "$DCP2" "$DW1"; do
+        DIG=$(multipass exec "$v" -- sudo sh -c \
+            "crictl images --digests 2>/dev/null | awk '/$REGIP:$PORT\/mirror\/registry.k8s.io\/pause/{print \$3; exit}'" || true)
+        [ -n "$DIG" ] || { echo "[FAIL] $v did not pull pause from the mirror"; exit 1; }
+        echo "$DIG" | grep -q '^sha256:' || { echo "[FAIL] $v pause repo digest is not a sha256 digest: $DIG"; exit 1; }
+        echo "[ok] $v pause repo digest $DIG"
+    done
+    echo "[ok] disconnected 3-node cluster pulled every image from the registry"
+fi
 echo "tier3-registry-$KIND: PASS"

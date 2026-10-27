@@ -31,32 +31,35 @@ fn common_rules(spec: &Cluster, d: &mut Diagnostics) {
     }
 }
 
-/// The registry install/trust/seed sweep shared by every kind: install
-/// on the registry nodes, trust on the Kubernetes members, seed from the
-/// first control plane (see docs/registry-contracts.md).
-fn plan_registry_track(b: &mut PlanBuilder<'_>) -> Result<()> {
-    let ca = tasks::registry::ca_for(b.cluster())?;
+/// The registry install/trust/push sweep shared by every kind: install on
+/// the `role = "registry"` nodes (internal kinds only), runtime mirrors on
+/// the Kubernetes members, and one control-machine push of every package
+/// payload (04 §5.2).
+fn plan_registry_track(
+    b: &mut PlanBuilder<'_>,
+    ca: Option<&tasks::registry::RegistryCa>,
+) -> Result<()> {
+    let upstreams = tasks::registry::upstream_hosts(b.run());
     let phase = b.phase("registry");
-    for node in &b.cluster().nodes {
-        match node.role {
-            NodeRole::Registry => {
-                let arch = b.facts().arch(&node.name)?;
-                let task =
-                    tasks::registry::RegistryInstall::new(b.cluster(), node, arch, &ca, b.run())?;
-                b.add(phase, Arc::new(task));
-            }
-            NodeRole::ControlPlane | NodeRole::Worker => {
-                let task = tasks::registry::RegistryTrust::new(b.cluster(), node, &ca, b.run())?;
-                b.add(phase, Arc::new(task));
-            }
-            NodeRole::Lb => {}
+    if !b.cluster().registry_is_external() {
+        for node in b.nodes().role(NodeRole::Registry).collect::<Vec<_>>() {
+            let arch = b.facts().arch(&node.name)?;
+            let task = tasks::registry::RegistryInstall::new(
+                b.cluster(),
+                node,
+                arch,
+                ca.ok_or_else(|| miette::miette!("internal registry has no CA"))?,
+                b.run(),
+            )?;
+            b.add(phase, Arc::new(task));
         }
     }
-    if let Some(cp1) = b.nodes().first_cp() {
-        let arch = b.facts().arch(&cp1.name)?;
-        let task = tasks::registry::RegistrySeed::new(b.cluster(), cp1, arch, &ca, b.run())?;
+    for node in b.nodes().k8s().collect::<Vec<_>>() {
+        let task = tasks::registry::RegistryTrust::new(b.cluster(), node, ca, b.run(), &upstreams)?;
         b.add(phase, Arc::new(task));
     }
+    let push = tasks::registry::RegistryPush::new(b.cluster(), ca, b.run())?;
+    b.add(phase, Arc::new(push));
     Ok(())
 }
 
@@ -96,10 +99,8 @@ impl Component for Zot {
     }
 
     fn plan(&self, b: &mut PlanBuilder<'_>) -> Result<()> {
-        if b.cluster().distribution != Distribution::K8s {
-            return Ok(());
-        }
-        plan_registry_track(b)
+        let ca = tasks::registry::ca_for(b.cluster())?;
+        plan_registry_track(b, Some(&ca))
     }
 }
 
@@ -139,10 +140,8 @@ impl Component for DockerRegistry {
     }
 
     fn plan(&self, b: &mut PlanBuilder<'_>) -> Result<()> {
-        if b.cluster().distribution != Distribution::K8s {
-            return Ok(());
-        }
-        plan_registry_track(b)
+        let ca = tasks::registry::ca_for(b.cluster())?;
+        plan_registry_track(b, Some(&ca))
     }
 }
 
@@ -200,10 +199,58 @@ impl Component for Harbor {
     }
 
     fn plan(&self, b: &mut PlanBuilder<'_>) -> Result<()> {
+        // Harbor's project/repo shape only fits the kubeadm track.
         if b.cluster().distribution != Distribution::K8s {
             return Ok(());
         }
-        plan_registry_track(b)
+        let ca = tasks::registry::ca_for(b.cluster())?;
+        plan_registry_track(b, Some(&ca))
+    }
+}
+
+/// `registry/external`: an operator-managed registry. kurin installs
+/// nothing; it only configures runtime mirrors and pushes package
+/// payloads to the configured address.
+pub struct External;
+
+impl Component for External {
+    fn id(&self) -> &'static str {
+        "registry/external"
+    }
+
+    fn kind(&self) -> ComponentKind {
+        ComponentKind::Registry
+    }
+
+    fn enabled(&self, spec: &Cluster) -> bool {
+        spec.registry_kind() == Some(RegistryKind::External)
+    }
+
+    fn validate(&self, spec: &Cluster, d: &mut Diagnostics) {
+        if spec.registry_address().is_none() {
+            d.error("[registry] kind = \"external\" requires registry.address");
+        }
+        if spec.registry_username().is_some() != spec.registry_password().is_some() {
+            d.error("[registry] username and password must be set together");
+        }
+    }
+
+    fn capabilities(&self) -> Capabilities {
+        Capabilities {
+            distributions: &[Distribution::K8s, Distribution::K3s],
+            archs: &[Arch::Amd64, Arch::Arm64],
+            offline: Offline::Bundle,
+            zones: ALL_ZONES,
+            ops: &[OpKind::Create],
+        }
+    }
+
+    fn artifacts(&self, _spec: &Cluster, _arch: Arch) -> Vec<ArtifactRef> {
+        Vec::new()
+    }
+
+    fn plan(&self, b: &mut PlanBuilder<'_>) -> Result<()> {
+        plan_registry_track(b, None)
     }
 }
 
@@ -336,23 +383,22 @@ role = "registry"
     }
     #[test]
     fn the_registry_sweep_lands_in_the_registry_phase() {
-        // Node consultation order is the config's (alphabetical) node
-        // order: cp1, reg1, w1 — install interleaves with the trusts,
-        // matching the frozen registry-zot snapshot's layout.
+        // Install on the registry node, runtime mirrors on every k8s
+        // member, then the control-machine push.
         let plan = crate::test_util::plan_for(&cluster(&base("kind = \"zot\"")));
         assert_eq!(
             crate::test_util::phase_ids(&plan, "registry"),
             [
-                "registry/trust@cp1",
                 "registry/install@reg1",
+                "registry/trust@cp1",
                 "registry/trust@w1",
-                "registry/seed@cp1",
+                "registry/push@controller",
             ]
         );
     }
 
     #[test]
-    fn k3s_track_plans_no_registry_tasks() {
+    fn k3s_track_gets_runtime_mirrors_and_a_push() {
         let toml = base("kind = \"zot\"")
             .replace(
                 "version = \"1.33.1\"",
@@ -361,6 +407,31 @@ role = "registry"
             .replace("kind = \"calico\"", "kind = \"flannel\"");
         let c = cluster(&toml);
         let plan = crate::test_util::plan_for(&c);
-        assert!(crate::test_util::phase_ids(&plan, "registry").is_empty());
+        assert_eq!(
+            crate::test_util::phase_ids(&plan, "registry"),
+            [
+                "registry/install@reg1",
+                "registry/trust@cp1",
+                "registry/trust@w1",
+                "registry/push@controller",
+            ]
+        );
+    }
+
+    #[test]
+    fn external_registry_plans_trust_and_push_without_install() {
+        let mut c = cluster(&base("kind = \"zot\""));
+        c.registry.kind = Some(RegistryKind::External);
+        c.registry.address = Some("https://reg.example.com:5000".into());
+        c.registry.namespace = "kurin".into();
+        let plan = crate::test_util::plan_for(&c);
+        assert_eq!(
+            crate::test_util::phase_ids(&plan, "registry"),
+            [
+                "registry/trust@cp1",
+                "registry/trust@w1",
+                "registry/push@controller",
+            ]
+        );
     }
 }

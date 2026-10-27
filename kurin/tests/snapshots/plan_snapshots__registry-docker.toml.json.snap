@@ -50,19 +50,61 @@ expression: plan_matrix(&plan)
     },
     {
       "ids": [
+        "registry/install@registry01",
+        "registry/trust@master01",
+        "registry/trust@worker01",
+        "registry/push@controller"
+      ],
+      "stage": "registry",
+      "tasks": [
+        {
+          "describe": "install DockerRegistry registry on :5000",
+          "id": "registry/install@registry01"
+        },
+        {
+          "describe": "containerd mirrors -> registry 192.168.10.41:5000 (4 upstream(s))",
+          "id": "registry/trust@master01"
+        },
+        {
+          "describe": "containerd mirrors -> registry 192.168.10.41:5000 (4 upstream(s))",
+          "id": "registry/trust@worker01"
+        },
+        {
+          "describe": "push package payloads to registry 192.168.10.41:5000",
+          "id": "registry/push@controller"
+        }
+      ]
+    },
+    {
+      "ids": [
+        "artifacts/fetch-registry@registry01",
         "artifacts/install@registry01",
+        "artifacts/fetch-registry@master01",
         "artifacts/install@master01",
+        "artifacts/fetch-registry@worker01",
         "artifacts/install@worker01"
       ],
       "stage": "artifacts",
       "tasks": [
         {
+          "describe": "fetch pinned files from registry 192.168.10.41:5000",
+          "id": "artifacts/fetch-registry@registry01"
+        },
+        {
           "describe": "fetch+install pinned binaries (amd64)",
           "id": "artifacts/install@registry01"
         },
         {
+          "describe": "fetch pinned files from registry 192.168.10.41:5000",
+          "id": "artifacts/fetch-registry@master01"
+        },
+        {
           "describe": "fetch+install pinned binaries (amd64)",
           "id": "artifacts/install@master01"
+        },
+        {
+          "describe": "fetch pinned files from registry 192.168.10.41:5000",
+          "id": "artifacts/fetch-registry@worker01"
         },
         {
           "describe": "fetch+install pinned binaries (amd64)",
@@ -144,44 +186,17 @@ expression: plan_matrix(&plan)
     },
     {
       "ids": [
-        "registry/trust@master01",
-        "registry/install@registry01",
-        "registry/trust@worker01",
-        "registry/seed@master01"
-      ],
-      "stage": "registry",
-      "tasks": [
-        {
-          "describe": "containerd mirrors -> registry 192.168.10.41:5000",
-          "id": "registry/trust@master01"
-        },
-        {
-          "describe": "install DockerRegistry registry on :5000",
-          "id": "registry/install@registry01"
-        },
-        {
-          "describe": "containerd mirrors -> registry 192.168.10.41:5000",
-          "id": "registry/trust@worker01"
-        },
-        {
-          "describe": "push bundle images into the internal registry",
-          "id": "registry/seed@master01"
-        }
-      ]
-    },
-    {
-      "ids": [
         "images/import@master01",
         "images/import@worker01"
       ],
       "stage": "images",
       "tasks": [
         {
-          "describe": "no-op online (kubelet pulls from registries)",
+          "describe": "no-op registry delivery (runtime mirror pulls from the registry)",
           "id": "images/import@master01"
         },
         {
-          "describe": "no-op online (kubelet pulls from registries)",
+          "describe": "no-op registry delivery (runtime mirror pulls from the registry)",
           "id": "images/import@worker01"
         }
       ]

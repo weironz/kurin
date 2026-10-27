@@ -1,0 +1,11 @@
+---
+source: crates/kurin-components/src/tasks/registry.rs
+expression: trust.crio_conf()
+---
+[[registry]]
+prefix = "registry.k8s.io"
+location = "192.168.10.30:5000/mirror/registry.k8s.io"
+
+[[registry]]
+prefix = "docker.io"
+location = "192.168.10.30:5000/mirror/docker.io"

@@ -170,6 +170,7 @@ fact kubelet "$(kubelet --version 2>/dev/null || echo '')"
 fact k3s "$(k3s --version 2>/dev/null | head -1 || echo '')"
 fact containerd "$(containerd --version 2>/dev/null || echo '')"
 if [ -f /etc/kubernetes/admin.conf ]; then fact admin-conf yes; else fact admin-conf no; fi
+if command -v curl >/dev/null 2>&1; then fact curl yes; else fact curl no; fi
 "#;
 
 /// Parse the `fact\t…` lines of one node's script output.
@@ -191,6 +192,7 @@ pub(crate) fn parse_facts(node: &Node, stdout: &str) -> Result<NodeFacts> {
     let mut uid: Option<u32> = None;
     let mut sudo = SudoCapability::None;
     let mut tcp_forwarding = None;
+    let mut curl = None;
     let mut existing = ExistingInstall::default();
 
     for line in stdout.lines() {
@@ -246,6 +248,7 @@ pub(crate) fn parse_facts(node: &Node, stdout: &str) -> Result<NodeFacts> {
             "k3s" => existing.k3s = non_empty(value),
             "containerd" => existing.containerd = non_empty(value),
             "admin-conf" => existing.admin_conf = value == "yes",
+            "curl" => curl = Some(value == "yes"),
             _ => {}
         }
     }
@@ -279,6 +282,7 @@ pub(crate) fn parse_facts(node: &Node, stdout: &str) -> Result<NodeFacts> {
     facts.is_root = is_root;
     facts.sudo = sudo;
     facts.tcp_forwarding = tcp_forwarding;
+    facts.curl = curl;
     facts.existing = existing;
     Ok(facts)
 }

@@ -131,6 +131,14 @@ pub struct RegistryConfig {
     pub kind: Option<RegistryKind>,
     /// Registry endpoint, required for `kind = "external"`.
     pub address: Option<String>,
+    /// CA bundle (PEM) for an external registry's TLS certificate. Unset
+    /// means the system trust store. Copied to every node and used by the
+    /// control machine's push client.
+    pub ca_file: Option<PathBuf>,
+    /// Repository namespace kurin writes under (`kind = "external"` only;
+    /// default `kurin`). Keeps kurin's mirror tree apart from other users
+    /// of a shared registry.
+    pub namespace: Option<String>,
     /// Listen port. Defaults per kind: 5000 (docker-registry, zot), 8443 (harbor).
     pub port: Option<u16>,
     /// Basic-auth user for the registry API (harbor: its admin user).
@@ -147,6 +155,8 @@ impl std::fmt::Debug for RegistryConfig {
         f.debug_struct("RegistryConfig")
             .field("kind", &self.kind)
             .field("address", &self.address)
+            .field("ca_file", &self.ca_file)
+            .field("namespace", &self.namespace)
             .field("port", &self.port)
             .field("username", &self.username)
             .field("password", &self.password.as_ref().map(|_| "******"))
@@ -254,6 +264,17 @@ pub fn check_version(cfg: &ClusterConfig) -> Result<()> {
     Ok(())
 }
 
+/// A registry namespace is one or more Docker path components.
+fn is_registry_namespace(ns: &str) -> bool {
+    !ns.is_empty()
+        && ns.split('/').all(|part| {
+            !part.is_empty()
+                && part
+                    .chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
+        })
+}
+
 /// Lower a v1alpha2 document to the internal model.
 ///
 /// The shared sections are converted through the v1alpha1 shape so both
@@ -271,6 +292,36 @@ impl TryFrom<ClusterConfig> for ClusterSpec {
                 String::new(),
                 "registry.kind = \"external\" requires registry.address",
             ));
+        }
+        if let Some(ns) = cfg.registry.namespace.as_deref() {
+            if cfg.registry.kind != Some(RegistryKind::External) {
+                return Err(ConfigError::invalid(
+                    String::new(),
+                    "registry.namespace is only valid with registry.kind = \"external\"",
+                ));
+            }
+            if !is_registry_namespace(ns) {
+                return Err(ConfigError::invalid(
+                    String::new(),
+                    format!(
+                        "registry.namespace {ns:?} must be slash-separated lowercase path segments"
+                    ),
+                ));
+            }
+        }
+        if let Some(ca) = cfg.registry.ca_file.as_deref() {
+            if cfg.registry.kind != Some(RegistryKind::External) {
+                return Err(ConfigError::invalid(
+                    String::new(),
+                    "registry.ca-file is only valid with registry.kind = \"external\"",
+                ));
+            }
+            if !ca.is_file() {
+                return Err(ConfigError::invalid(
+                    String::new(),
+                    format!("registry.ca-file {} does not exist", ca.display()),
+                ));
+            }
         }
         // One payload source: a legacy bundle directory and a base
         // package are mutually exclusive (WP-34).
@@ -311,6 +362,11 @@ impl TryFrom<ClusterConfig> for ClusterSpec {
         };
         let mut spec = ClusterSpec::from_config(crate::config::with_defaults(v1))?;
         spec.registry.address = cfg.registry.address;
+        spec.registry.ca_file = cfg.registry.ca_file;
+        spec.registry.namespace = cfg
+            .registry
+            .namespace
+            .unwrap_or_else(|| crate::model::DEFAULT_REGISTRY_NAMESPACE.to_string());
         spec.packages = PackageSources {
             offline_dir: spec.packages.offline_dir,
             zone: spec.packages.zone,
