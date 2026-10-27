@@ -103,6 +103,31 @@ export interface ClusterDetail {
   observedNodes: ObservedNode[];
   snapshot: ClusterSnapshot | null;
   activeOperation: OperationSummary | null;
+  /** 最近一次采集失败原因（成功时为 null；与 ClusterSummary.collectError 同源）。 */
+  collectError: string | null;
+  /** 配置摘要（配置 Tab 的只读表单视图；完整 TOML 走 `GET /clusters/{name}/config`）。 */
+  configSummary: ClusterConfigSummary;
+}
+
+/**
+ * `GET /clusters/{name}` 的配置摘要（UI §8.1 配置 Tab；与 §8.2 向导第 9 步的摘要同源）。
+ * 只覆盖向导展示的字段，完整配置以 `GET /clusters/{name}/config` 的 TOML 为准。
+ */
+export interface ClusterConfigSummary {
+  distribution: 'kubeadm' | 'k3s';
+  kubernetesVersion: string;
+  /** 容器运行时（k3s 固定 containerd）。 */
+  runtime: 'containerd' | 'cri-o';
+  /** 镜像区域。 */
+  zone: 'global' | 'cn';
+  /** CNI 名称（calico / flannel / cilium / kube-ovn / none…）。 */
+  cni: string;
+  podCidr: string;
+  serviceCidr: string;
+  /** 高可用模式（UI §8.2 第 5 步）。 */
+  haMode: 'none' | 'kube-vip' | 'kurin-lb';
+  /** kube-vip 模式下的 VIP。 */
+  vip?: string | null;
 }
 
 /** 配置中的期望节点。 */
@@ -121,6 +146,8 @@ export interface ObservedNode {
   roles: string;
   version: string;
   osImage?: string;
+  /** CPU 架构（WP-04 facts：amd64 / arm64），混合架构集群各节点不同。 */
+  arch?: string;
   cpuCores?: number;
   memoryMb?: number;
 }
@@ -133,6 +160,8 @@ export interface ClusterSnapshot {
   nodesTotal: number;
   podsRunning?: number;
   podsFailed?: number;
+  /** 未处于 Running 状态的 Pod 数（UI §8.1 详情概览「未运行 Pod」）。 */
+  podsNotRunning?: number;
   etcdHealth?: 'ok' | 'degraded' | 'unreachable';
   certMinDays?: number | null;
   error?: string | null;

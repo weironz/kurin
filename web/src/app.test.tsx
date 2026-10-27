@@ -54,11 +54,12 @@ describe('app shell 渲染（所有路由，无真实后端）', () => {
     });
   }
 
-  it('集群总览表格渲染 mock 数据（tier1 / tier2-edge）', async () => {
+  it('集群总览表格渲染 mock 数据（五个集群 / 五种健康态）', async () => {
     renderAt('/');
     await waitFor(() => expect(screen.getByText('tier1')).toBeInTheDocument());
     expect(screen.getByText('tier2-edge')).toBeInTheDocument();
-    expect(screen.getByText('kubeadm')).toBeInTheDocument();
+    expect(screen.getByText('tier3-ha')).toBeInTheDocument();
+    expect(screen.getAllByText('kubeadm').length).toBe(3);
     expect(screen.getAllByText('健康').length).toBeGreaterThan(0);
   });
 

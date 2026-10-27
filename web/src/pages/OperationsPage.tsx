@@ -3,17 +3,9 @@ import { useLocation, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { Table, Tag, Typography } from 'antd';
 import { apiFetch } from '../api/client';
-import type { OperationList } from '../api/types';
+import type { OperationKind, OperationList, OperationState } from '../api/types';
 import { t } from '../i18n/zh-CN';
-
-const stateColor: Record<string, string> = {
-  queued: 'default',
-  running: 'processing',
-  succeeded: 'success',
-  failed: 'error',
-  cancelled: 'warning',
-  interrupted: 'warning',
-};
+import { operationKindLabel, operationStateColor, operationStateLabel } from '../utils/operation';
 
 /** `/operations` 列表与 `/operations/:id` 占位详情（WP-63 实现日志控制台）。 */
 export default function OperationsPage() {
@@ -46,24 +38,33 @@ export default function OperationsPage() {
   return (
     <div>
       <Typography.Title level={3}>{t('page.operations.title')}</Typography.Title>
+      <Typography.Paragraph type="secondary">
+        {t('page.operations.description')}
+      </Typography.Paragraph>
       <Table
         rowKey="id"
         loading={isLoading}
         dataSource={data?.items ?? []}
-        locale={{ emptyText: t('common.empty') }}
+        locale={{ emptyText: t('operations.empty') }}
         pagination={false}
       >
         <Table.Column
-          title="ID"
+          title={t('operations.column.id')}
           dataIndex="id"
           render={(v: string) => <Typography.Text code>{v}</Typography.Text>}
         />
-        <Table.Column title={t('nav.clusters')} dataIndex="cluster" />
-        <Table.Column title="类型" dataIndex="kind" />
+        <Table.Column title={t('operations.column.cluster')} dataIndex="cluster" />
         <Table.Column
-          title="状态"
+          title={t('operations.column.kind')}
+          dataIndex="kind"
+          render={(v: OperationKind) => operationKindLabel(v)}
+        />
+        <Table.Column
+          title={t('operations.column.state')}
           dataIndex="state"
-          render={(v: string) => <Tag color={stateColor[v]}>{v}</Tag>}
+          render={(v: OperationState) => (
+            <Tag color={operationStateColor[v]}>{operationStateLabel(v)}</Tag>
+          )}
         />
       </Table>
     </div>

@@ -29,7 +29,7 @@ export default function AboutPage() {
         </Descriptions>
       </Card>
       <Typography.Title level={5} style={{ marginTop: 24 }}>
-        组件版本
+        {t('about.componentVersions')}
       </Typography.Title>
       <Table
         rowKey={(r) => r.name}
@@ -40,11 +40,11 @@ export default function AboutPage() {
           version,
         }))}
       >
-        <Table.Column title="组件" dataIndex="name" />
-        <Table.Column title="版本" dataIndex="version" />
+        <Table.Column title={t('about.column.component')} dataIndex="name" />
+        <Table.Column title={t('about.column.version')} dataIndex="version" />
       </Table>
       <Typography.Title level={5} style={{ marginTop: 24 }}>
-        能力约束
+        {t('about.capabilities')}
       </Typography.Title>
       <Table
         rowKey={(r) => r.name}
@@ -56,11 +56,15 @@ export default function AboutPage() {
         }))}
       >
         <Table.Column
-          title="约束"
+          title={t('about.column.constraint')}
           dataIndex="name"
           render={(v: string) => <Typography.Text code>{v}</Typography.Text>}
         />
-        <Table.Column title="说明" dataIndex="reason" render={(v: string) => <Tag>{v}</Tag>} />
+        <Table.Column
+          title={t('about.column.reason')}
+          dataIndex="reason"
+          render={(v: string) => <Tag>{v}</Tag>}
+        />
       </Table>
     </div>
   );

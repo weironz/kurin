@@ -1,12 +1,15 @@
 import { useEffect } from 'react';
-import { useLocation } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { Table, Tag, Typography } from 'antd';
-import { apiFetch } from '../api/client';
+import { Button, Empty, Result, Skeleton, Table, Tag, Tooltip, Typography } from 'antd';
+import { PlusOutlined } from '@ant-design/icons';
 import type { ClusterSummary } from '../api/types';
+import { clustersQuery } from '../api/queries';
 import { t, type MessageKey } from '../i18n/zh-CN';
+import { formatAbsolute, formatRelative } from '../utils/format';
+import { isActiveOperation, operationKindLabel } from '../utils/operation';
 
-/** 健康徽标五态（WP-61 做完整总览；此处是 shell 的最小表格）。 */
+/** 健康徽标五态（UI §8.1）。 */
 const healthStyle: Record<ClusterSummary['health'], { color: string; labelKey: MessageKey }> = {
   healthy: { color: 'green', labelKey: 'cluster.health.healthy' },
   degraded: { color: 'orange', labelKey: 'cluster.health.degraded' },
@@ -15,12 +18,12 @@ const healthStyle: Record<ClusterSummary['health'], { color: string; labelKey: M
   unknown: { color: 'default', labelKey: 'cluster.health.unknown' },
 };
 
+/** 集群总览 `/`（UI §8.1）：15 秒轮询快照；`/clusters/new` 是 WP-62 的占位入口。 */
 export default function ClustersPage() {
   const location = useLocation();
-  const { data, isLoading, error } = useQuery({
-    queryKey: ['clusters'],
-    queryFn: () => apiFetch<ClusterSummary[]>('/clusters'),
-  });
+  const navigate = useNavigate();
+  const { data, isLoading, isFetching, error, refetch } = useQuery(clustersQuery);
+
   useEffect(() => {
     document.title = `${t('page.clusters.title')} · kurin`;
   }, []);
@@ -29,52 +32,123 @@ export default function ClustersPage() {
     return (
       <div>
         <Typography.Title level={3}>{t('page.clusters.new')}</Typography.Title>
-        <Typography.Paragraph type="secondary">9 步表单向导（WP-62 实现）</Typography.Paragraph>
-      </div>
-    );
-  }
-
-  if (location.pathname.startsWith('/clusters/')) {
-    return (
-      <div>
-        <Typography.Title level={3}>{t('page.clusterDetail.title')}</Typography.Title>
         <Typography.Paragraph type="secondary">
-          {t('page.clusterDetail.description')}
+          {t('page.clusters.newDescription')}
         </Typography.Paragraph>
       </div>
     );
   }
 
+  const errorMessage = error instanceof Error ? error.message : String(error);
+
   return (
     <div>
       <Typography.Title level={3}>{t('page.clusters.title')}</Typography.Title>
-      <Table<ClusterSummary>
-        rowKey="name"
-        loading={isLoading}
-        dataSource={data ?? []}
-        locale={{ emptyText: t('common.empty') }}
-        pagination={false}
-      >
-        <Table.Column<ClusterSummary> title="名称" dataIndex="name" />
-        <Table.Column<ClusterSummary>
-          title="发行版"
-          dataIndex="distribution"
-          render={(v) => <Tag>{v}</Tag>}
+      <Typography.Paragraph type="secondary">{t('page.clusters.description')}</Typography.Paragraph>
+      {isLoading ? (
+        <Skeleton active title={false} paragraph={{ rows: 6 }} />
+      ) : error ? (
+        <Result
+          status="error"
+          title={t('clusters.error.title')}
+          subTitle={errorMessage}
+          extra={
+            <Button type="primary" onClick={() => void refetch()}>
+              {t('common.retry')}
+            </Button>
+          }
         />
-        <Table.Column<ClusterSummary> title="K8s" dataIndex="kubernetesVersion" />
-        <Table.Column<ClusterSummary>
-          title="节点"
-          render={(_, r) => (r.nodesReady == null ? '—' : `${r.nodesReady}/${r.nodesTotal ?? '—'}`)}
-        />
-        <Table.Column<ClusterSummary>
-          title="健康"
-          dataIndex="health"
-          render={(v: ClusterSummary['health']) => (
-            <Tag color={healthStyle[v].color}>{t(healthStyle[v].labelKey)}</Tag>
-          )}
-        />
-      </Table>
-      {error && <Typography.Text type="danger">{String(error)}</Typography.Text>}
+      ) : (data?.length ?? 0) === 0 ? (
+        <Empty
+          image={Empty.PRESENTED_IMAGE_SIMPLE}
+          description={
+            <>
+              <div>{t('clusters.empty.title')}</div>
+              <Typography.Text type="secondary" style={{ fontSize: 13 }}>
+                {t('clusters.empty.description')}
+              </Typography.Text>
+            </>
+          }
+        >
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => navigate('/clusters/new')}>
+            {t('clusters.empty.create')}
+          </Button>
+        </Empty>
+      ) : (
+        <Table<ClusterSummary>
+          rowKey="name"
+          loading={isFetching}
+          dataSource={data ?? []}
+          pagination={false}
+          size="middle"
+        >
+          <Table.Column<ClusterSummary>
+            title={t('clusters.column.name')}
+            dataIndex="name"
+            render={(_, r) => <Link to={`/clusters/${r.name}`}>{r.name}</Link>}
+          />
+          <Table.Column<ClusterSummary>
+            title={t('clusters.column.distribution')}
+            dataIndex="distribution"
+            render={(v: ClusterSummary['distribution']) => <Tag>{v}</Tag>}
+          />
+          <Table.Column<ClusterSummary>
+            title={t('clusters.column.k8sVersion')}
+            dataIndex="kubernetesVersion"
+          />
+          <Table.Column<ClusterSummary>
+            title={t('clusters.column.nodes')}
+            render={(_, r) =>
+              r.nodesReady == null ? '—' : `${r.nodesReady}/${r.nodesTotal ?? '—'}`
+            }
+          />
+          <Table.Column<ClusterSummary>
+            title={t('clusters.column.health')}
+            dataIndex="health"
+            render={(v: ClusterSummary['health']) => (
+              <Tag color={healthStyle[v].color}>{t(healthStyle[v].labelKey)}</Tag>
+            )}
+          />
+          <Table.Column<ClusterSummary>
+            title={t('clusters.column.certMinDays')}
+            dataIndex="certMinDays"
+            render={(v: number | null) =>
+              v == null ? (
+                '—'
+              ) : (
+                <Typography.Text type={v < 30 ? 'danger' : undefined}>
+                  {t('clusters.certDays', { n: v })}
+                </Typography.Text>
+              )
+            }
+          />
+          <Table.Column<ClusterSummary>
+            title={t('clusters.column.observedAt')}
+            dataIndex="observedAt"
+            render={(v: string | null) =>
+              v ? (
+                <Tooltip title={formatAbsolute(v)}>
+                  <span>{formatRelative(v)}</span>
+                </Tooltip>
+              ) : (
+                '—'
+              )
+            }
+          />
+          <Table.Column<ClusterSummary>
+            title={t('clusters.column.operation')}
+            render={(_, r) =>
+              isActiveOperation(r.activeOperation) ? (
+                <Link to={`/operations/${r.activeOperation.id}`}>
+                  {operationKindLabel(r.activeOperation.kind)}
+                </Link>
+              ) : (
+                '—'
+              )
+            }
+          />
+        </Table>
+      )}
     </div>
   );
 }

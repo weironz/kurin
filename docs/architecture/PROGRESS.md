@@ -61,7 +61,7 @@
 | WP-54 其余 API | todo | | | | |
 | WP-55 类型生成与静态资源 | todo | | | | |
 | WP-60 前端脚手架 | done | 见提交 | 无 | 无 | 提前实施（先用手写 provisional DTO 对 mock 开发，WP-55 替换为 ts-rs 生成类型）；34 个 Vitest 用例通过 |
-| WP-61 集群总览与详情 | todo | | | | |
+| WP-61 集群总览与详情 | done | 见提交 | 无 | 无（WP-53 验收场景待后端） | 15s 轮询、五态徽标、详情四 Tab；46 个 Vitest 用例 |
 | WP-62 创建向导 | todo | | | tier1 真实创建 | |
 | WP-63 操作详情与日志控制台 | todo | | | tier1 刷新续读 | |
 | WP-64 Addon 页面与危险操作 | todo | | | tier1 metrics-server | |
@@ -82,6 +82,7 @@
 - WP-00：`ScriptedSession` 在 `(exit, stdout, stderr)` 之外增加了「命令已执行但传输中断」的应答与副作用文件，用于覆盖 `Outcome::Unknown → 重新探测` 路径；`cli_output` 快照对任务耗时与阶段内行序做归一化（并发完成顺序不在 v1 契约内）。
 - WP-05：`exec_stream` 不做透明重试（流式重放会重复行/副作用）；捕获上限按 stdout/stderr 各自 16 MiB 计算，sink 仍收到每一行。
 - WP-03：`become` 是 Rust 保留字，运行期字段写作 `r#become`（配置键不变）；「节点 become=none + 继承集群 become-password」按跨字段冲突拒绝；无新依赖。集成时补上了 `SshDefaults`/`NodeConfig`/`RegistryConfig`/`Cluster` 的 Debug 脱敏（含 `Cluster.source` 原文），并加测试。
+- WP-61：为详情页扩展了 provisional DTO：`ClusterDetail.collectError`、`configSummary`、`ObservedNode.arch?`、`ClusterSnapshot.podsNotRunning?`；WP-55 生成 ts-rs 绑定时需与后端对齐。
 - WP-60：按计划允许“前端先对 mock 开发”，在 WP-55 之前完成脚手架；`src/api/types.ts` 为临时手写 DTO，WP-55 生成 ts-rs 绑定后必须替换并删除该文件的 provisional 标记。
 - WP-02：`kurin-core` 的 `tempfile` 是运行时依赖（`state.rs` 原子写状态文件）；`kurin` 移除已无源码使用的 `futures` 直接依赖；`kurin/tests` 通过 facade 原样保留；`Plan::build*` 改为 `kurin::plan::build*`。
 - WP-00 基线记录到的现有行为（未修改）：kubeadm 轨道把 `kubeadm-init` 放在 `vip` stage、`api-ready` 放在 `bootstrap`、join 任务放在 `api-ready`，`join` stage 为空；顺序正确，仅标签错位。WP-10 修正时需逐条解释快照变化。
