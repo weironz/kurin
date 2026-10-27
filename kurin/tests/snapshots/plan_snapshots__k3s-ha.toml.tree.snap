@@ -1,0 +1,48 @@
+---
+source: kurin/tests/plan_snapshots.rs
+expression: render_tree(&plan)
+---
+├── stage: preflight (4 tasks)
+│   ├── preflight/agent01 :: probe swap / selinux / time-sync / kernel modules
+│   ├── preflight/server01 :: probe swap / selinux / time-sync / kernel modules
+│   ├── preflight/server02 :: probe swap / selinux / time-sync / kernel modules
+│   └── preflight/server03 :: probe swap / selinux / time-sync / kernel modules
+├── stage: artifacts (4 tasks)
+│   ├── artifacts/install@agent01 :: fetch+install pinned binaries (amd64)
+│   ├── artifacts/install@server01 :: fetch+install pinned binaries (amd64)
+│   ├── artifacts/install@server02 :: fetch+install pinned binaries (amd64)
+│   └── artifacts/install@server03 :: fetch+install pinned binaries (amd64)
+├── stage: prepare (16 tasks)
+│   ├── prepare/os-baseline@agent01 :: disable swap / firewalld, SELinux permissive
+│   ├── prepare/sysctl@agent01 :: modprobe br_netfilter; persist net.bridge.bridge-nf-call-iptables net.bridge.bridge-nf-call-ip6tables net.ipv4.ip_forward
+│   ├── prepare/kernel-deps@agent01 :: ensure conntrack/socat (+recommended ebtables ipset ipvsadm)
+│   ├── prepare/os-baseline@server01 :: disable swap / firewalld, SELinux permissive
+│   ├── prepare/sysctl@server01 :: modprobe br_netfilter; persist net.bridge.bridge-nf-call-iptables net.bridge.bridge-nf-call-ip6tables net.ipv4.ip_forward
+│   ├── prepare/kernel-deps@server01 :: ensure conntrack/socat (+recommended ebtables ipset ipvsadm)
+│   ├── prepare/os-baseline@server02 :: disable swap / firewalld, SELinux permissive
+│   ├── prepare/sysctl@server02 :: modprobe br_netfilter; persist net.bridge.bridge-nf-call-iptables net.bridge.bridge-nf-call-ip6tables net.ipv4.ip_forward
+│   ├── prepare/kernel-deps@server02 :: ensure conntrack/socat (+recommended ebtables ipset ipvsadm)
+│   ├── prepare/os-baseline@server03 :: disable swap / firewalld, SELinux permissive
+│   ├── prepare/sysctl@server03 :: modprobe br_netfilter; persist net.bridge.bridge-nf-call-iptables net.bridge.bridge-nf-call-ip6tables net.ipv4.ip_forward
+│   ├── prepare/kernel-deps@server03 :: ensure conntrack/socat (+recommended ebtables ipset ipvsadm)
+│   ├── prepare/k3s-unit@agent01 :: render + install /etc/systemd/system/k3s.service, enable (not start)
+│   ├── prepare/k3s-unit@server01 :: render + install /etc/systemd/system/k3s.service, enable (not start)
+│   ├── prepare/k3s-unit@server02 :: render + install /etc/systemd/system/k3s.service, enable (not start)
+│   └── prepare/k3s-unit@server03 :: render + install /etc/systemd/system/k3s.service, enable (not start)
+├── stage: registry (0 tasks)
+├── stage: images (0 tasks)
+├── stage: vip (3 tasks)
+│   ├── vip/kube-vip@server01 :: install kube-vip static pod /var/lib/rancher/k3s/agent/pod-manifests/kube-vip.yaml
+│   ├── vip/kube-vip@server02 :: install kube-vip static pod /var/lib/rancher/k3s/agent/pod-manifests/kube-vip.yaml
+│   └── vip/kube-vip@server03 :: install kube-vip static pod /var/lib/rancher/k3s/agent/pod-manifests/kube-vip.yaml
+├── stage: bootstrap (1 tasks)
+│   └── bootstrap/k3s-init@server01 :: write /etc/rancher/k3s/config.yaml, start k3s, wait /readyz, harvest token
+├── stage: api-ready (1 tasks)
+│   └── api-ready/k3s@server01 :: wait for https://192.168.10.100:6443 /readyz
+├── stage: join (3 tasks)
+│   ├── join/k3s@agent01 :: k3s agent join -> https://192.168.10.100:6443
+│   ├── join/k3s@server02 :: k3s server join -> https://192.168.10.100:6443
+│   └── join/k3s@server03 :: k3s server join -> https://192.168.10.100:6443
+├── stage: cni (0 tasks)
+└── stage: post (1 tasks)
+    └── post/k3s-kubeconfig@server01 :: record kubeconfig at /root/.kube/config (mode 600)

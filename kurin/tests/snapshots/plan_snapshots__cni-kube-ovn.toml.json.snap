@@ -1,0 +1,196 @@
+---
+source: kurin/tests/plan_snapshots.rs
+expression: plan_matrix(&plan)
+---
+{
+  "stages": [
+    {
+      "ids": [
+        "preflight/master01",
+        "preflight/worker01"
+      ],
+      "stage": "preflight",
+      "tasks": [
+        {
+          "describe": "probe swap / selinux / time-sync / kernel modules",
+          "id": "preflight/master01"
+        },
+        {
+          "describe": "probe swap / selinux / time-sync / kernel modules",
+          "id": "preflight/worker01"
+        }
+      ]
+    },
+    {
+      "ids": [
+        "artifacts/install@master01",
+        "artifacts/install@worker01"
+      ],
+      "stage": "artifacts",
+      "tasks": [
+        {
+          "describe": "fetch+install pinned binaries (amd64)",
+          "id": "artifacts/install@master01"
+        },
+        {
+          "describe": "fetch+install pinned binaries (amd64)",
+          "id": "artifacts/install@worker01"
+        }
+      ]
+    },
+    {
+      "ids": [
+        "prepare/os-baseline@master01",
+        "prepare/sysctl@master01",
+        "prepare/kernel-deps@master01",
+        "prepare/containerd-config@master01",
+        "prepare/containerd-unit@master01",
+        "prepare/kubelet-unit@master01",
+        "prepare/os-baseline@worker01",
+        "prepare/sysctl@worker01",
+        "prepare/kernel-deps@worker01",
+        "prepare/containerd-config@worker01",
+        "prepare/containerd-unit@worker01",
+        "prepare/kubelet-unit@worker01"
+      ],
+      "stage": "prepare",
+      "tasks": [
+        {
+          "describe": "disable swap / firewalld, SELinux permissive",
+          "id": "prepare/os-baseline@master01"
+        },
+        {
+          "describe": "modprobe br_netfilter; persist net.bridge.bridge-nf-call-iptables net.bridge.bridge-nf-call-ip6tables net.ipv4.ip_forward",
+          "id": "prepare/sysctl@master01"
+        },
+        {
+          "describe": "ensure conntrack/socat (+recommended ebtables ipset ipvsadm)",
+          "id": "prepare/kernel-deps@master01"
+        },
+        {
+          "describe": "render + install /etc/containerd/config.toml",
+          "id": "prepare/containerd-config@master01"
+        },
+        {
+          "describe": "render + install /etc/systemd/system/containerd.service, enable --now",
+          "id": "prepare/containerd-unit@master01"
+        },
+        {
+          "describe": "render + install /etc/systemd/system/kubelet.service, enable (start deferred to kubeadm)",
+          "id": "prepare/kubelet-unit@master01"
+        },
+        {
+          "describe": "disable swap / firewalld, SELinux permissive",
+          "id": "prepare/os-baseline@worker01"
+        },
+        {
+          "describe": "modprobe br_netfilter; persist net.bridge.bridge-nf-call-iptables net.bridge.bridge-nf-call-ip6tables net.ipv4.ip_forward",
+          "id": "prepare/sysctl@worker01"
+        },
+        {
+          "describe": "ensure conntrack/socat (+recommended ebtables ipset ipvsadm)",
+          "id": "prepare/kernel-deps@worker01"
+        },
+        {
+          "describe": "render + install /etc/containerd/config.toml",
+          "id": "prepare/containerd-config@worker01"
+        },
+        {
+          "describe": "render + install /etc/systemd/system/containerd.service, enable --now",
+          "id": "prepare/containerd-unit@worker01"
+        },
+        {
+          "describe": "render + install /etc/systemd/system/kubelet.service, enable (start deferred to kubeadm)",
+          "id": "prepare/kubelet-unit@worker01"
+        }
+      ]
+    },
+    {
+      "ids": [],
+      "stage": "registry",
+      "tasks": []
+    },
+    {
+      "ids": [
+        "images/import@master01",
+        "images/import@worker01"
+      ],
+      "stage": "images",
+      "tasks": [
+        {
+          "describe": "no-op online (kubelet pulls from registries)",
+          "id": "images/import@master01"
+        },
+        {
+          "describe": "no-op online (kubelet pulls from registries)",
+          "id": "images/import@worker01"
+        }
+      ]
+    },
+    {
+      "ids": [
+        "bootstrap/kubeadm-init@master01"
+      ],
+      "stage": "vip",
+      "tasks": [
+        {
+          "describe": "kubeadm init --config /etc/kurin/kubeadm-init.yaml on master01",
+          "id": "bootstrap/kubeadm-init@master01"
+        }
+      ]
+    },
+    {
+      "ids": [
+        "bootstrap/api-ready@master01"
+      ],
+      "stage": "bootstrap",
+      "tasks": [
+        {
+          "describe": "wait until 192.168.10.11:6443 serves the API (VIP backend up)",
+          "id": "bootstrap/api-ready@master01"
+        }
+      ]
+    },
+    {
+      "ids": [
+        "join/kubeadm@worker01"
+      ],
+      "stage": "api-ready",
+      "tasks": [
+        {
+          "describe": "kubeadm join (worker) -> 192.168.10.11:6443",
+          "id": "join/kubeadm@worker01"
+        }
+      ]
+    },
+    {
+      "ids": [],
+      "stage": "join",
+      "tasks": []
+    },
+    {
+      "ids": [
+        "cni/kube-ovn@master01"
+      ],
+      "stage": "cni",
+      "tasks": [
+        {
+          "describe": "kubectl apply kube-ovn (pinned 1.16.15 chart output, CIDR-rewritten)",
+          "id": "cni/kube-ovn@master01"
+        }
+      ]
+    },
+    {
+      "ids": [
+        "post/kubeconfig@master01"
+      ],
+      "stage": "post",
+      "tasks": [
+        {
+          "describe": "fetch admin.conf -> merge local kubeconfig (context cluster-cni-kube-ovn)",
+          "id": "post/kubeconfig@master01"
+        }
+      ]
+    }
+  ]
+}

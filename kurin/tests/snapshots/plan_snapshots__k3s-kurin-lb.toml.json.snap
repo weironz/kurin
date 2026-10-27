@@ -1,0 +1,199 @@
+---
+source: kurin/tests/plan_snapshots.rs
+expression: plan_matrix(&plan)
+---
+{
+  "stages": [
+    {
+      "ids": [
+        "preflight/agent01",
+        "preflight/server01",
+        "preflight/server02"
+      ],
+      "stage": "preflight",
+      "tasks": [
+        {
+          "describe": "probe swap / selinux / time-sync / kernel modules",
+          "id": "preflight/agent01"
+        },
+        {
+          "describe": "probe swap / selinux / time-sync / kernel modules",
+          "id": "preflight/server01"
+        },
+        {
+          "describe": "probe swap / selinux / time-sync / kernel modules",
+          "id": "preflight/server02"
+        }
+      ]
+    },
+    {
+      "ids": [
+        "artifacts/install@agent01",
+        "artifacts/install@server01",
+        "artifacts/install@server02"
+      ],
+      "stage": "artifacts",
+      "tasks": [
+        {
+          "describe": "fetch+install pinned binaries (amd64)",
+          "id": "artifacts/install@agent01"
+        },
+        {
+          "describe": "fetch+install pinned binaries (amd64)",
+          "id": "artifacts/install@server01"
+        },
+        {
+          "describe": "fetch+install pinned binaries (amd64)",
+          "id": "artifacts/install@server02"
+        }
+      ]
+    },
+    {
+      "ids": [
+        "prepare/os-baseline@agent01",
+        "prepare/sysctl@agent01",
+        "prepare/kernel-deps@agent01",
+        "prepare/os-baseline@server01",
+        "prepare/sysctl@server01",
+        "prepare/kernel-deps@server01",
+        "prepare/os-baseline@server02",
+        "prepare/sysctl@server02",
+        "prepare/kernel-deps@server02",
+        "prepare/k3s-unit@agent01",
+        "prepare/k3s-unit@server01",
+        "prepare/k3s-unit@server02"
+      ],
+      "stage": "prepare",
+      "tasks": [
+        {
+          "describe": "disable swap / firewalld, SELinux permissive",
+          "id": "prepare/os-baseline@agent01"
+        },
+        {
+          "describe": "modprobe br_netfilter; persist net.bridge.bridge-nf-call-iptables net.bridge.bridge-nf-call-ip6tables net.ipv4.ip_forward",
+          "id": "prepare/sysctl@agent01"
+        },
+        {
+          "describe": "ensure conntrack/socat (+recommended ebtables ipset ipvsadm)",
+          "id": "prepare/kernel-deps@agent01"
+        },
+        {
+          "describe": "disable swap / firewalld, SELinux permissive",
+          "id": "prepare/os-baseline@server01"
+        },
+        {
+          "describe": "modprobe br_netfilter; persist net.bridge.bridge-nf-call-iptables net.bridge.bridge-nf-call-ip6tables net.ipv4.ip_forward",
+          "id": "prepare/sysctl@server01"
+        },
+        {
+          "describe": "ensure conntrack/socat (+recommended ebtables ipset ipvsadm)",
+          "id": "prepare/kernel-deps@server01"
+        },
+        {
+          "describe": "disable swap / firewalld, SELinux permissive",
+          "id": "prepare/os-baseline@server02"
+        },
+        {
+          "describe": "modprobe br_netfilter; persist net.bridge.bridge-nf-call-iptables net.bridge.bridge-nf-call-ip6tables net.ipv4.ip_forward",
+          "id": "prepare/sysctl@server02"
+        },
+        {
+          "describe": "ensure conntrack/socat (+recommended ebtables ipset ipvsadm)",
+          "id": "prepare/kernel-deps@server02"
+        },
+        {
+          "describe": "render + install /etc/systemd/system/k3s.service, enable (not start)",
+          "id": "prepare/k3s-unit@agent01"
+        },
+        {
+          "describe": "render + install /etc/systemd/system/k3s.service, enable (not start)",
+          "id": "prepare/k3s-unit@server01"
+        },
+        {
+          "describe": "render + install /etc/systemd/system/k3s.service, enable (not start)",
+          "id": "prepare/k3s-unit@server02"
+        }
+      ]
+    },
+    {
+      "ids": [],
+      "stage": "registry",
+      "tasks": []
+    },
+    {
+      "ids": [],
+      "stage": "images",
+      "tasks": []
+    },
+    {
+      "ids": [
+        "vip/external-lb@lb01"
+      ],
+      "stage": "vip",
+      "tasks": [
+        {
+          "describe": "install haproxy+keepalived (priority 200) for the API VIP",
+          "id": "vip/external-lb@lb01"
+        }
+      ]
+    },
+    {
+      "ids": [
+        "bootstrap/k3s-init@server01"
+      ],
+      "stage": "bootstrap",
+      "tasks": [
+        {
+          "describe": "write /etc/rancher/k3s/config.yaml, start k3s, wait /readyz, harvest token",
+          "id": "bootstrap/k3s-init@server01"
+        }
+      ]
+    },
+    {
+      "ids": [
+        "api-ready/k3s@server01"
+      ],
+      "stage": "api-ready",
+      "tasks": [
+        {
+          "describe": "wait for https://192.168.10.100:6443 /readyz",
+          "id": "api-ready/k3s@server01"
+        }
+      ]
+    },
+    {
+      "ids": [
+        "join/k3s@agent01",
+        "join/k3s@server02"
+      ],
+      "stage": "join",
+      "tasks": [
+        {
+          "describe": "k3s agent join -> https://192.168.10.100:6443",
+          "id": "join/k3s@agent01"
+        },
+        {
+          "describe": "k3s server join -> https://192.168.10.100:6443",
+          "id": "join/k3s@server02"
+        }
+      ]
+    },
+    {
+      "ids": [],
+      "stage": "cni",
+      "tasks": []
+    },
+    {
+      "ids": [
+        "post/k3s-kubeconfig@server01"
+      ],
+      "stage": "post",
+      "tasks": [
+        {
+          "describe": "record kubeconfig at /root/.kube/config (mode 600)",
+          "id": "post/k3s-kubeconfig@server01"
+        }
+      ]
+    }
+  ]
+}

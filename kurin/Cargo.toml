@@ -31,3 +31,6 @@ futures = "0.3.34"
 tempfile = "3.27.0"
 rcgen = "0.14"
 bcrypt = "0.17"
+[dev-dependencies]
+insta = { version = "1", features = ["yaml", "json"] }
+regex = "1"

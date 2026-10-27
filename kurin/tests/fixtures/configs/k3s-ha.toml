@@ -1,0 +1,43 @@
+# WP-00 baseline fixture: k3s HA — three servers behind a kube-vip VIP,
+# one agent.
+version = "v1alpha1"
+name = "k3s-ha"
+
+[kubernetes]
+version = "1.33.1"
+distribution = "k3s"
+
+[network]
+pod-cidr = "10.233.64.0/18"
+service-cidr = "10.233.0.0/18"
+dns-domain = "cluster.local"
+
+[network.cni]
+kind = "flannel"
+
+[ssh]
+user = "root"
+port = 22
+
+[ssh.auth]
+method = "private_key"
+key-path = "/root/.ssh/id_ed25519"
+
+[ha]
+vip = "192.168.10.100"
+
+[nodes.server01]
+address = "192.168.10.11"
+role = "control-plane"
+
+[nodes.server02]
+address = "192.168.10.12"
+role = "control-plane"
+
+[nodes.server03]
+address = "192.168.10.13"
+role = "control-plane"
+
+[nodes.agent01]
+address = "192.168.10.21"
+role = "worker"

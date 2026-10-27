@@ -1,0 +1,39 @@
+---
+source: kurin/tests/cli_output.rs
+expression: render_like_main(&events)
+---
+skip  preflight/master01
+skip  preflight/worker01
+-- stage preflight complete
+skip  artifacts/install@master01
+skip  artifacts/install@worker01
+-- stage artifacts complete
+done  prepare/containerd-config@master01 (Nms)
+done  prepare/containerd-config@worker01 (Nms)
+done  prepare/containerd-unit@master01 (Nms)
+done  prepare/containerd-unit@worker01 (Nms)
+done  prepare/kubelet-unit@master01 (Nms)
+done  prepare/kubelet-unit@worker01 (Nms)
+done  prepare/sysctl@master01 (Nms)
+done  prepare/sysctl@worker01 (Nms)
+skip  prepare/kernel-deps@master01
+skip  prepare/kernel-deps@worker01
+skip  prepare/os-baseline@master01
+skip  prepare/os-baseline@worker01
+-- stage prepare complete
+-- stage registry complete
+skip  images/import@master01
+skip  images/import@worker01
+-- stage images complete
+done  bootstrap/kubeadm-init@master01 (Nms)
+-- stage vip complete
+skip  bootstrap/api-ready@master01
+-- stage bootstrap complete
+ok    join/kubeadm@worker01 (reconciled)
+-- stage api-ready complete
+-- stage join complete
+skip  cni/calico-operator@master01
+-- stage cni complete
+done  post/kubeconfig@master01 (Nms)
+done  post/summary@master01 (Nms)
+-- stage post complete

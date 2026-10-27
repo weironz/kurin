@@ -1,0 +1,137 @@
+---
+source: kurin/tests/cli_output.rs
+expression: report
+---
+# master01: 19 command(s) answered by the permissive default
+
+    cat /etc/sysctl.d/99-kurin.conf 2>/dev/null || true
+
+    command -v getenforce >/dev/null && getenforce || echo disabled
+
+    for i in $(seq 1 60); do kubectl --kubeconfig /etc/kubernetes/admin.conf --server https://192.168.10.11:6443 get --raw /readyz >/dev/null 2>&1 && exit 0; sleep 2; done; echo 'API at 192.168.10.11:6443 never became ready' >&2; exit 1
+
+    kubeadm init phase upload-config all --config /etc/kurin/kubeadm-init.yaml && kubeadm init phase bootstrap-token --config /etc/kurin/kubeadm-init.yaml && kubeadm init phase addon all --config /etc/kurin/kubeadm-init.yaml
+
+    kubectl --kubeconfig /etc/kubernetes/admin.conf --server https://192.168.10.11:6443 get --raw /readyz
+
+    kubectl --kubeconfig /etc/kubernetes/super-admin.conf --server https://127.0.0.1:6443 get clusterrolebinding kubeadm:cluster-admins >/dev/null 2>&1 || kubectl --kubeconfig /etc/kubernetes/super-admin.conf --server https://127.0.0.1:6443 create clusterrolebinding kubeadm:cluster-admins --clusterrole=cluster-admin --group=kubeadm:cluster-admins
+
+    mkdir -p /etc/kurin
+
+    set -e
+    modprobe br_netfilter 2>/dev/null || true
+    cat > /etc/sysctl.d/99-kurin.conf <<'EOF'
+    net.bridge.bridge-nf-call-iptables = 1
+    net.bridge.bridge-nf-call-ip6tables = 1
+    net.ipv4.ip_forward = 1
+    EOF
+    printf 'overlay\nbr_netfilter\n' > /etc/modules-load.d/kurin.conf
+    mkdir -p /etc/modules-load.d
+    modprobe overlay >/dev/null 2>&1 || true
+    modprobe br_netfilter >/dev/null 2>&1 || true
+    sysctl --system >/dev/null
+
+    sh -eu -c '
+    for c in /etc/kubernetes/pki/*.crt /etc/kubernetes/pki/etcd/*.crt; do
+      [ -f "$c" ] || continue
+      end=$(openssl x509 -in "$c" -noout -enddate | cut -d= -f2-)
+      subj=$(openssl x509 -in "$c" -noout -subject | cut -d= -f2-)
+      if openssl x509 -in "$c" -noout -text | grep -q "CA:TRUE"; then ca=1; else ca=0; fi
+      endep=$(date -u -d "$end" +%s)
+      now=$(date -u +%s)
+      days=$(( (endep - now) / 86400 ))
+      echo "$c|$subj|$end|$days|$ca"
+    done
+    '
+
+    sh -eu -c '
+    for c in /etc/kubernetes/pki/*.crt /etc/kubernetes/pki/etcd/*.crt; do
+      [ -f "$c" ] || continue
+      end=$(openssl x509 -in "$c" -noout -enddate | cut -d= -f2-)
+      subj=$(openssl x509 -in "$c" -noout -subject | cut -d= -f2-)
+      if openssl x509 -in "$c" -noout -text | grep -q "CA:TRUE"; then ca=1; else ca=0; fi
+      endep=$(date -u -d "$end" +%s)
+      now=$(date -u +%s)
+      days=$(( (endep - now) / 86400 ))
+      echo "$c|$subj|$end|$days|$ca"
+    done
+    '
+
+    swap_on=$(awk '/^SwapTotal:/{print $2}' /proc/meminfo); [ "${swap_on:-0}" -eq 0 ] || echo swap; selinux=$(getenforce 2>/dev/null || echo Disabled); [ "$selinux" = Enforcing ] && echo selinux; fw=$(systemctl is-active firewalld 2>/dev/null || true); [ "$fw" = active ] && echo firewalld; fwen=$(systemctl is-enabled firewalld 2>/dev/null || true); [ "$fwen" = enabled ] && echo firewalld-enabled; true
+
+    sysctl -n net.bridge.bridge-nf-call-iptables
+
+    systemctl daemon-reload && systemctl enable --now containerd.service
+
+    systemctl daemon-reload && systemctl enable kubelet.service
+
+    systemctl restart containerd && systemctl is-active containerd
+
+    test -f /etc/kubernetes/admin.conf && echo ok
+
+    test -f /etc/kubernetes/super-admin.conf
+
+    test -z "$(tail -n +2 /proc/swaps)" && echo ok
+
+    { command -v conntrack >/dev/null 2>&1 || echo conntrack; command -v socat >/dev/null 2>&1 || echo socat; command -v ebtables >/dev/null 2>&1 || echo ebtables; command -v ipset >/dev/null 2>&1 || echo ipset; command -v ipvsadm >/dev/null 2>&1 || echo ipvsadm; } 2>/dev/null
+
+# worker01: 13 command(s) answered by the permissive default
+
+    cat /etc/sysctl.d/99-kurin.conf 2>/dev/null || true
+
+    command -v getenforce >/dev/null && getenforce || echo disabled
+
+    mkdir -p /etc/kurin
+
+    set -e
+    modprobe br_netfilter 2>/dev/null || true
+    cat > /etc/sysctl.d/99-kurin.conf <<'EOF'
+    net.bridge.bridge-nf-call-iptables = 1
+    net.bridge.bridge-nf-call-ip6tables = 1
+    net.ipv4.ip_forward = 1
+    EOF
+    printf 'overlay\nbr_netfilter\n' > /etc/modules-load.d/kurin.conf
+    mkdir -p /etc/modules-load.d
+    modprobe overlay >/dev/null 2>&1 || true
+    modprobe br_netfilter >/dev/null 2>&1 || true
+    sysctl --system >/dev/null
+
+    sh -eu -c '
+    for c in /etc/kubernetes/pki/*.crt /etc/kubernetes/pki/etcd/*.crt; do
+      [ -f "$c" ] || continue
+      end=$(openssl x509 -in "$c" -noout -enddate | cut -d= -f2-)
+      subj=$(openssl x509 -in "$c" -noout -subject | cut -d= -f2-)
+      if openssl x509 -in "$c" -noout -text | grep -q "CA:TRUE"; then ca=1; else ca=0; fi
+      endep=$(date -u -d "$end" +%s)
+      now=$(date -u +%s)
+      days=$(( (endep - now) / 86400 ))
+      echo "$c|$subj|$end|$days|$ca"
+    done
+    '
+
+    sh -eu -c '
+    for c in /etc/kubernetes/pki/*.crt /etc/kubernetes/pki/etcd/*.crt; do
+      [ -f "$c" ] || continue
+      end=$(openssl x509 -in "$c" -noout -enddate | cut -d= -f2-)
+      subj=$(openssl x509 -in "$c" -noout -subject | cut -d= -f2-)
+      if openssl x509 -in "$c" -noout -text | grep -q "CA:TRUE"; then ca=1; else ca=0; fi
+      endep=$(date -u -d "$end" +%s)
+      now=$(date -u +%s)
+      days=$(( (endep - now) / 86400 ))
+      echo "$c|$subj|$end|$days|$ca"
+    done
+    '
+
+    swap_on=$(awk '/^SwapTotal:/{print $2}' /proc/meminfo); [ "${swap_on:-0}" -eq 0 ] || echo swap; selinux=$(getenforce 2>/dev/null || echo Disabled); [ "$selinux" = Enforcing ] && echo selinux; fw=$(systemctl is-active firewalld 2>/dev/null || true); [ "$fw" = active ] && echo firewalld; fwen=$(systemctl is-enabled firewalld 2>/dev/null || true); [ "$fwen" = enabled ] && echo firewalld-enabled; true
+
+    sysctl -n net.bridge.bridge-nf-call-iptables
+
+    systemctl daemon-reload && systemctl enable --now containerd.service
+
+    systemctl daemon-reload && systemctl enable kubelet.service
+
+    systemctl restart containerd && systemctl is-active containerd
+
+    test -z "$(tail -n +2 /proc/swaps)" && echo ok
+
+    { command -v conntrack >/dev/null 2>&1 || echo conntrack; command -v socat >/dev/null 2>&1 || echo socat; command -v ebtables >/dev/null 2>&1 || echo ebtables; command -v ipset >/dev/null 2>&1 || echo ipset; command -v ipvsadm >/dev/null 2>&1 || echo ipvsadm; } 2>/dev/null

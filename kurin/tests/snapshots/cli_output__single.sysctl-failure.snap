@@ -1,0 +1,22 @@
+---
+source: kurin/tests/cli_output.rs
+expression: render_like_main(&events)
+---
+skip  preflight/master01
+skip  preflight/worker01
+-- stage preflight complete
+skip  artifacts/install@master01
+skip  artifacts/install@worker01
+-- stage artifacts complete
+FAIL  prepare/sysctl@master01: sysctl apply failed on master01 (exit 1): error: permission denied on key 'net.bridge.bridge-nf-call-iptables'
+done  prepare/containerd-config@master01 (Nms)
+done  prepare/containerd-config@worker01 (Nms)
+done  prepare/containerd-unit@master01 (Nms)
+done  prepare/containerd-unit@worker01 (Nms)
+done  prepare/kubelet-unit@master01 (Nms)
+done  prepare/kubelet-unit@worker01 (Nms)
+done  prepare/sysctl@worker01 (Nms)
+skip  prepare/kernel-deps@master01
+skip  prepare/kernel-deps@worker01
+skip  prepare/os-baseline@master01
+skip  prepare/os-baseline@worker01

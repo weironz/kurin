@@ -24,6 +24,10 @@ clippy:
 test:
     cargo test --workspace
 
+# review pending insta snapshots (needs cargo-insta: `cargo install cargo-insta`)
+snapshots-review:
+    cargo insta review
+
 build:
     cargo build --release
 
