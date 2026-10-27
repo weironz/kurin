@@ -2,4 +2,4 @@
 source: kurin/tests/cli_output.rs
 expression: event_json_line(event)
 ---
-{"type":"task-done","id":"prepare/sysctl@n1","node":"n1","stage":"prepare","ms":12}
+{"type":"task-done","id":"prepare/sysctl@n1","node":"n1","stage":"prepare","ms":12,"ts":1790000000123}

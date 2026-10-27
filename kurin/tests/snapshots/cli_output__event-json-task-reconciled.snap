@@ -2,4 +2,4 @@
 source: kurin/tests/cli_output.rs
 expression: event_json_line(event)
 ---
-{"type":"task-reconciled","id":"join/kubeadm@n2","node":"n2","stage":"join"}
+{"type":"task-reconciled","id":"join/kubeadm@n2","node":"n2","stage":"join","ts":1790000000123}

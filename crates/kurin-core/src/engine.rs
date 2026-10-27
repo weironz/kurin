@@ -204,6 +204,25 @@ impl Stage {
             Stage::Post => "post",
         }
     }
+
+    /// Inverse of [`Stage::label`]; `None` for an unknown phase name.
+    pub fn from_label(label: &str) -> Option<Self> {
+        Some(match label {
+            "discover" => Stage::Discover,
+            "preflight" => Stage::Preflight,
+            "artifacts" => Stage::Artifacts,
+            "prepare" => Stage::Prepare,
+            "registry" => Stage::Registry,
+            "images" => Stage::Images,
+            "vip" => Stage::Vip,
+            "bootstrap" => Stage::Bootstrap,
+            "api-ready" => Stage::ApiReady,
+            "join" => Stage::Join,
+            "cni" => Stage::Cni,
+            "post" => Stage::Post,
+            _ => return None,
+        })
+    }
 }
 
 /// A unit of work on one node. check_state -> apply -> verify, always.
@@ -375,6 +394,10 @@ pub struct PlannedTask {
 }
 
 /// Structured events; emitted as one JSON object per line on `--json`.
+///
+/// This is the frozen v1 wire shape (docs/v1.0-gates.md §2). `ts` is the
+/// only addition: the envelope's UTC-millisecond timestamp, so v1 consumers
+/// can order events without parsing the v2 envelope.
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum Event {
@@ -382,34 +405,42 @@ pub enum Event {
         id: String,
         node: String,
         stage: &'static str,
+        ts: u64,
     },
     TaskSkipped {
         id: String,
         node: String,
         stage: &'static str,
+        ts: u64,
     },
     TaskDone {
         id: String,
         node: String,
         stage: &'static str,
         ms: u128,
+        ts: u64,
     },
     TaskFailed {
         id: String,
         node: String,
         stage: &'static str,
         reason: String,
+        ts: u64,
     },
     /// Unknown outcome re-probed as in-sync.
     TaskReconciled {
         id: String,
         node: String,
         stage: &'static str,
+        ts: u64,
     },
     StageDone {
         stage: &'static str,
+        ts: u64,
     },
-    ClusterReady,
+    ClusterReady {
+        ts: u64,
+    },
 }
 
 impl Event {
@@ -422,7 +453,7 @@ impl Event {
             Event::TaskFailed { .. } => "task-failed",
             Event::TaskReconciled { .. } => "task-reconciled",
             Event::StageDone { .. } => "stage-done",
-            Event::ClusterReady => "cluster-ready",
+            Event::ClusterReady { .. } => "cluster-ready",
         }
     }
 }

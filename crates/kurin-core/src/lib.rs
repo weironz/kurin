@@ -10,6 +10,7 @@
 
 pub mod arch;
 pub mod engine;
+pub mod events;
 pub mod executor;
 pub mod facts;
 pub mod plan;

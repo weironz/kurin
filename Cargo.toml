@@ -45,6 +45,9 @@ bcrypt = "0.17"
 toml = "0.8"
 ipnet = { version = "2", features = ["serde"] }
 insta = { version = "1", features = ["toml"] }
+time = "0.3"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["registry", "std"] }
 
 [profile.release]
 lto = true

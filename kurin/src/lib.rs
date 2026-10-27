@@ -32,6 +32,9 @@ pub mod dynamic_manifest {
 pub mod engine {
     pub use kurin_core::engine::*;
 }
+pub mod events {
+    pub use kurin_core::events::*;
+}
 pub mod executor {
     pub use kurin_core::executor::*;
 }

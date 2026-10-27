@@ -517,7 +517,7 @@ impl Summary {
                 }
             }
             Err(e) => {
-                eprintln!("warn: certificate inventory unavailable: {e:?}");
+                tracing::warn!("warn: certificate inventory unavailable: {e:?}");
             }
         }
         report

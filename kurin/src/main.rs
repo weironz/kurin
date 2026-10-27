@@ -1,8 +1,13 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
-use clap::{Parser, Subcommand};
+use clap::{ArgAction, Parser, Subcommand, ValueEnum};
 use miette::{IntoDiagnostic, Result};
+
+use kurin::events::{self, Body, EventBus, JsonlSink, Level, LogQuery, OpKind, OpResult};
+use kurin::render::{JsonSink, TerminalRenderer};
 
 #[derive(Parser)]
 #[command(
@@ -11,8 +16,54 @@ use miette::{IntoDiagnostic, Result};
     version
 )]
 struct Cli {
+    /// Emit machine-readable JSON. Bare `--json` (or `--json=v1`) keeps the
+    /// frozen v1 event stream (its field set plus `ts`); `--json=v2` emits
+    /// full event envelopes.
+    #[arg(
+        long,
+        global = true,
+        value_name = "VERSION",
+        num_args = 0..=1,
+        default_missing_value = "v1",
+        value_enum
+    )]
+    json: Option<JsonMode>,
+    /// Prefix every terminal log line with its UTC timestamp.
+    #[arg(long, global = true)]
+    timestamps: bool,
+    /// `-v` shows info-level progress plus a per-command remote-output
+    /// summary; `-vv` also streams every remote stdout/stderr line.
+    #[arg(short = 'v', long = "verbose", global = true, action = ArgAction::Count)]
+    verbose: u8,
     #[command(subcommand)]
     command: Commands,
+}
+
+/// Version of the `--json` stream.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum JsonMode {
+    /// Frozen v1 event objects, now carrying `ts`.
+    V1,
+    /// Full v2 envelopes (`v`, `seq`, `ts`, `op`, `body`).
+    V2,
+}
+
+/// Output knobs shared by every operation.
+#[derive(Debug, Clone, Copy)]
+struct OutputOpts {
+    json: Option<JsonMode>,
+    timestamps: bool,
+    verbose: u8,
+}
+
+impl OutputOpts {
+    fn v2(self) -> bool {
+        self.json == Some(JsonMode::V2)
+    }
+
+    fn json_enabled(self) -> bool {
+        self.json.is_some()
+    }
 }
 
 #[derive(Subcommand)]
@@ -30,18 +81,12 @@ enum Commands {
         /// Config file (.toml or .yaml).
         #[arg(short, long)]
         file: PathBuf,
-        /// Emit one JSON object per check plus a summary line.
-        #[arg(long)]
-        json: bool,
     },
     /// Probe cluster health (nodes, pods, etcd, certificates).
     Status {
         /// Config file (.toml or .yaml).
         #[arg(short, long)]
         file: PathBuf,
-        /// Emit machine-readable JSON.
-        #[arg(long)]
-        json: bool,
     },
     /// Upgrade the cluster's Kubernetes components to a pinned version.
     Upgrade {
@@ -84,6 +129,8 @@ enum Commands {
     Add(AddArgs),
     /// Delete a node or the whole cluster.
     Delete(DeleteArgs),
+    /// Read the JSONL operation logs written by every operation.
+    Logs(LogsArgs),
 }
 
 #[derive(Subcommand)]
@@ -120,9 +167,6 @@ enum AddWhat {
         /// Config file (.toml or .yaml) listing the full desired node set.
         #[arg(short, long)]
         file: PathBuf,
-        /// Emit machine-readable JSON events.
-        #[arg(long)]
-        json: bool,
         /// Offline artifact bundle directory.
         #[arg(long)]
         offline: Option<PathBuf>,
@@ -170,9 +214,6 @@ enum CreateWhat {
         /// Additionally probe live nodes, annotating would-change/unchanged.
         #[arg(long)]
         check: bool,
-        /// Emit machine-readable JSON events.
-        #[arg(long)]
-        json: bool,
         /// Resume from the run-state file (skips already-done tasks).
         #[arg(long)]
         resume: bool,
@@ -186,6 +227,96 @@ enum CreateWhat {
         #[arg(long)]
         print_versions: bool,
     },
+}
+
+/// `kurin logs` filters. Without `--op` the newest log is shown.
+#[derive(clap::Args)]
+struct LogsArgs {
+    /// Cluster whose logs to read (default: the only cluster that has logs).
+    #[arg(long)]
+    cluster: Option<String>,
+    /// Operation id (or unique prefix) to read.
+    #[arg(long)]
+    op: Option<String>,
+    /// Read the newest operation log (the default).
+    #[arg(long)]
+    last: bool,
+    /// Keep printing envelopes as they are appended.
+    #[arg(long)]
+    follow: bool,
+    /// Only lines belonging to this node.
+    #[arg(long)]
+    node: Option<String>,
+    /// Minimum level: trace | debug | info | warn | error (default: info;
+    /// `-vv` selects debug).
+    #[arg(long)]
+    level: Option<String>,
+}
+
+/// One CLI operation: its event bus, JSONL log and start time.
+///
+/// The bus is created before the operation does any work so discovery and
+/// remote output land in the log; `begin` publishes `OpStarted` once the
+/// plan fingerprint is known.
+struct OpSession {
+    bus: Arc<EventBus>,
+    started: Instant,
+}
+
+impl OpSession {
+    /// Create the bus, attach the JSONL writer and the terminal/JSON sink,
+    /// install the `tracing` bridge and print the log path once.
+    fn start(cluster: &str, out: OutputOpts) -> Result<Self> {
+        let op_id = events::new_op_id();
+        let path = events::log_path(cluster, &op_id);
+        let sink = JsonlSink::create(&path)
+            .map_err(|e| miette::miette!("create log {}: {e}", path.display()))?;
+        let bus = Arc::new(EventBus::new(&op_id));
+        bus.add_sink(Arc::new(sink));
+        if out.v2() {
+            bus.add_sink(Arc::new(JsonSink::stdout()));
+        } else {
+            bus.add_sink(Arc::new(TerminalRenderer::stderr(
+                out.timestamps,
+                out.verbose,
+            )));
+        }
+        events::install_tracing(Arc::clone(&bus));
+        eprintln!("[logs] {}", path.display());
+        Ok(Self {
+            bus,
+            started: Instant::now(),
+        })
+    }
+
+    /// Register the cluster's configured secrets before anything runs.
+    fn register_cluster(&self, cluster: &kurin_config::Cluster) {
+        events::register_cluster_secrets(self.bus.redactor(), cluster);
+    }
+
+    /// Publish `OpStarted` with the plan fingerprint (empty when the
+    /// operation has no plan).
+    fn begin(&self, kind: &str, cluster: &str, plan_fingerprint: &str) {
+        self.bus.publish(Body::OpStarted {
+            kind: OpKind::new(kind),
+            cluster: cluster.to_string(),
+            plan_fingerprint: plan_fingerprint.to_string(),
+            kurin: env!("CARGO_PKG_VERSION").to_string(),
+        });
+    }
+
+    /// Publish `OpFinished` and report the operation's outcome.
+    fn finish(&self, result: &Result<()>) {
+        let (result, error) = match result {
+            Ok(()) => (OpResult::Succeeded, None),
+            Err(e) => (OpResult::Failed, Some(format!("{e:?}"))),
+        };
+        self.bus.publish(Body::OpFinished {
+            result,
+            ms: self.started.elapsed().as_millis() as u64,
+            error,
+        });
+    }
 }
 
 /// Resolve the download zone: `KURIN_ZONE` env wins over config's
@@ -219,7 +350,13 @@ async fn main() -> ExitCode {
 }
 
 async fn run(cli: Cli) -> Result<()> {
+    let out = OutputOpts {
+        json: cli.json,
+        timestamps: cli.timestamps,
+        verbose: cli.verbose,
+    };
     match cli.command {
+        Commands::Logs(args) => logs_cmd(args, out).await,
         Commands::Upgrade {
             file,
             with_kubernetes,
@@ -236,101 +373,136 @@ async fn run(cli: Cli) -> Result<()> {
                 .transpose()
                 .map_err(|e| miette::miette!("invalid --with-kubernetes: {e}"))?
                 .unwrap_or_else(|| cluster.kubernetes_version.clone());
-            let pool: std::sync::Arc<dyn kurin::SessionPool> =
-                std::sync::Arc::new(kurin::ssh::SshSessionPool::from_cluster(&cluster)?);
-            // Facts first: upgrades resolve binaries per discovered arch.
-            let facts = kurin::discover::run(&cluster, &pool).await?;
-            let opts = kurin::upgrade::UpgradeOptions {
-                batch,
-                force_drain_failure,
-            };
-            if dry_run {
-                kurin::upgrade::plan(&cluster, &target, &pool, &facts).await
-            } else if let Some(offline) = offline {
-                kurin::upgrade::run_offline_with(&cluster, &target, &offline, &pool, opts, &facts)
+            let pool: Arc<dyn kurin::SessionPool> =
+                Arc::new(kurin::ssh::SshSessionPool::from_cluster(&cluster)?);
+            let op = OpSession::start(&cluster.name, out)?;
+            op.register_cluster(&cluster);
+            op.begin("upgrade", &cluster.name, "");
+            let result: Result<()> = async {
+                // Facts first: upgrades resolve binaries per discovered arch.
+                let facts = kurin::discover::run(&cluster, &pool).await?;
+                let opts = kurin::upgrade::UpgradeOptions {
+                    batch,
+                    force_drain_failure,
+                };
+                if dry_run {
+                    kurin::upgrade::plan(&cluster, &target, &pool, &facts).await
+                } else if let Some(offline) = offline {
+                    kurin::upgrade::run_offline_with(
+                        &cluster, &target, &offline, &pool, opts, &facts,
+                    )
                     .await
-            } else {
-                kurin::upgrade::run(&cluster, &target, &pool, opts, &facts).await
+                } else {
+                    kurin::upgrade::run(&cluster, &target, &pool, opts, &facts).await
+                }
             }
+            .await;
+            op.finish(&result);
+            result
         }
         Commands::Artifact {
-            out,
+            out: dir,
             arch,
             with_kubernetes,
-        } => build_artifacts(out, arch, with_kubernetes).await,
+        } => build_artifacts(dir, arch, with_kubernetes).await,
         Commands::Certs { what } => match what {
             CertsWhat::Check { file, warn_days } => {
                 let cluster = kurin_config::load(&file)?;
-                let pool: std::sync::Arc<dyn kurin::SessionPool> =
-                    std::sync::Arc::new(kurin::ssh::SshSessionPool::from_cluster(&cluster)?);
-                let reports = kurin::certs::check(&cluster, &pool, warn_days).await?;
-                kurin::certs::render(&reports, warn_days);
-                Ok(())
+                let pool: Arc<dyn kurin::SessionPool> =
+                    Arc::new(kurin::ssh::SshSessionPool::from_cluster(&cluster)?);
+                let op = OpSession::start(&cluster.name, out)?;
+                op.register_cluster(&cluster);
+                op.begin("certs-check", &cluster.name, "");
+                let result: Result<()> = async {
+                    let reports = kurin::certs::check(&cluster, &pool, warn_days).await?;
+                    kurin::certs::render(&reports, warn_days);
+                    Ok(())
+                }
+                .await;
+                op.finish(&result);
+                result
             }
             CertsWhat::Renew { file, force } => {
                 let cluster = kurin_config::load(&file)?;
-                let pool: std::sync::Arc<dyn kurin::SessionPool> =
-                    std::sync::Arc::new(kurin::ssh::SshSessionPool::from_cluster(&cluster)?);
-                kurin::certs::renew(&cluster, &pool, force).await
+                let pool: Arc<dyn kurin::SessionPool> =
+                    Arc::new(kurin::ssh::SshSessionPool::from_cluster(&cluster)?);
+                let op = OpSession::start(&cluster.name, out)?;
+                op.register_cluster(&cluster);
+                op.begin("certs-renew", &cluster.name, "");
+                let result = kurin::certs::renew(&cluster, &pool, force).await;
+                op.finish(&result);
+                result
             }
         },
-        Commands::Precheck { file, json } => {
+        Commands::Precheck { file } => {
             let cluster = kurin_config::load(&file)?;
-            let pool: std::sync::Arc<dyn kurin::SessionPool> =
-                std::sync::Arc::new(kurin::ssh::SshSessionPool::from_cluster(&cluster)?);
-            let report = kurin::precheck::run(&cluster, &pool).await?;
-            if json {
-                kurin::precheck::render_json(&report);
-            } else {
-                kurin::precheck::render(&report);
+            let pool: Arc<dyn kurin::SessionPool> =
+                Arc::new(kurin::ssh::SshSessionPool::from_cluster(&cluster)?);
+            let op = OpSession::start(&cluster.name, out)?;
+            op.register_cluster(&cluster);
+            op.begin("precheck", &cluster.name, "");
+            let result: Result<()> = async {
+                let report = kurin::precheck::run(&cluster, &pool).await?;
+                if out.json_enabled() {
+                    kurin::precheck::render_json(&report);
+                } else {
+                    kurin::precheck::render(&report);
+                }
+                match report.ok() {
+                    true => Ok(()),
+                    false => Err(miette::miette!(
+                        "precheck found {} failing check(s)",
+                        report.failures()
+                    )),
+                }
             }
-            match report.ok() {
-                true => Ok(()),
-                false => Err(miette::miette!(
-                    "precheck found {} failing check(s)",
-                    report.failures()
-                )),
-            }
+            .await;
+            op.finish(&result);
+            result
         }
-        Commands::Status { file, json } => {
+        Commands::Status { file } => {
             let cluster = kurin_config::load(&file)?;
-            let pool: std::sync::Arc<dyn kurin::SessionPool> =
-                std::sync::Arc::new(kurin::ssh::SshSessionPool::from_cluster(&cluster)?);
-            let report = kurin::status::collect(&cluster, &pool).await?;
-            if json {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&serde_json::json!({
-                        "healthy": report.healthy,
-                        "nodes": report.nodes.iter().map(|n| serde_json::json!({
-                            "name": n.name, "ready": n.ready,
-                            "kubelet_version": n.kubelet_version, "roles": n.roles,
-                        })).collect::<Vec<_>>(),
-                        "pods_not_running": report.pods_not_running,
-                        "etcd_ok": report.etcd_ok,
-                        "cert_min_days": report.cert_min_days,
-                    }))
-                    .into_diagnostic()?
-                );
-            } else {
-                kurin::status::render(&report);
+            let pool: Arc<dyn kurin::SessionPool> =
+                Arc::new(kurin::ssh::SshSessionPool::from_cluster(&cluster)?);
+            let op = OpSession::start(&cluster.name, out)?;
+            op.register_cluster(&cluster);
+            op.begin("status", &cluster.name, "");
+            let result: Result<()> = async {
+                let report = kurin::status::collect(&cluster, &pool).await?;
+                if out.json_enabled() {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&serde_json::json!({
+                            "healthy": report.healthy,
+                            "nodes": report.nodes.iter().map(|n| serde_json::json!({
+                                "name": n.name, "ready": n.ready,
+                                "kubelet_version": n.kubelet_version, "roles": n.roles,
+                            })).collect::<Vec<_>>(),
+                            "pods_not_running": report.pods_not_running,
+                            "etcd_ok": report.etcd_ok,
+                            "cert_min_days": report.cert_min_days,
+                        }))
+                        .into_diagnostic()?
+                    );
+                } else {
+                    kurin::status::render(&report);
+                }
+                if report.healthy {
+                    Ok(())
+                } else {
+                    Err(miette::miette!("cluster is not healthy"))
+                }
             }
-            if report.healthy {
-                Ok(())
-            } else {
-                Err(miette::miette!("cluster is not healthy"))
-            }
+            .await;
+            op.finish(&result);
+            result
         }
         Commands::Add(args) => match args.what {
-            AddWhat::Nodes {
-                file,
-                json,
-                offline,
-            } => add_nodes(file, json, offline).await,
+            AddWhat::Nodes { file, offline } => add_nodes(file, out, offline).await,
         },
         Commands::Delete(args) => match args.what {
-            DeleteWhat::Node { name, file } => delete_node_cmd(name, file).await,
-            DeleteWhat::Cluster { file } => delete_cluster_cmd(file).await,
+            DeleteWhat::Node { name, file } => delete_node_cmd(name, file, out).await,
+            DeleteWhat::Cluster { file } => delete_cluster_cmd(file, out).await,
         },
         Commands::Create(args) => match args.what {
             CreateWhat::Config { print_versions } => {
@@ -347,7 +519,6 @@ async fn run(cli: Cli) -> Result<()> {
                 file,
                 dry_run,
                 check,
-                json,
                 resume,
                 offline,
             } => {
@@ -357,79 +528,163 @@ async fn run(cli: Cli) -> Result<()> {
                     cluster.offline_dir = Some(dir);
                 }
                 let cp = cluster.control_plane().count();
-                if cp % 2 == 0 && cp > 1 && !json {
+                if cp % 2 == 0 && cp > 1 && !out.json_enabled() {
                     eprintln!("warn: even control-plane count ({cp}); etcd quorum prefers odd");
                 }
-                if cp > 1 && cluster.vip.is_none() && !json {
+                if cp > 1 && cluster.vip.is_none() && !out.json_enabled() {
                     eprintln!("warn: {cp} control-plane nodes without ha.vip: the first master becomes the API single point of failure");
                 }
-                let pool: std::sync::Arc<dyn kurin::SessionPool> =
-                    std::sync::Arc::new(kurin::ssh::SshSessionPool::from_cluster(&cluster)?);
-                // Facts before the plan: per-node artifact selection is
-                // facts-driven. `--dry-run` stays offline (zero network):
-                // synthetic facts come from `nodes.<n>.arch` or the
-                // control machine's arch.
-                let facts = if dry_run && !check {
-                    let facts = kurin::facts::FactsTable::synthetic(&cluster)?;
-                    let missing = cluster
-                        .nodes
-                        .iter()
-                        .filter(|n| n.arch.is_none())
-                        .map(|n| n.name.as_str())
-                        .collect::<Vec<_>>();
-                    if !missing.is_empty() && !json {
-                        eprintln!(
-                            "warn: arch not probed for {} (dry-run without --check): \
-                             using nodes.<n>.arch or the control machine's arch",
-                            missing.join(", ")
-                        );
-                    }
-                    facts
-                } else {
-                    kurin::discover::run(&cluster, &pool).await?
-                };
-                let mut plan = kurin::plan::build_with_pool(&cluster, Some(pool.clone()), &facts)?;
-                if check {
-                    kurin::executor::probe(&mut plan, &pool).await?;
-                }
-                if dry_run || !check {
-                    let tree = kurin::render::render_tree(&plan);
-                    if json {
-                        let plan = serde_json::json!({ "plan": tree });
-                        println!("{}", serde_json::to_string_pretty(&plan).into_diagnostic()?);
+                let pool: Arc<dyn kurin::SessionPool> =
+                    Arc::new(kurin::ssh::SshSessionPool::from_cluster(&cluster)?);
+                let op = OpSession::start(&cluster.name, out)?;
+                op.register_cluster(&cluster);
+                let result: Result<()> = async {
+                    // Facts before the plan: per-node artifact selection is
+                    // facts-driven. `--dry-run` stays offline (zero network):
+                    // synthetic facts come from `nodes.<n>.arch` or the
+                    // control machine's arch.
+                    let facts = if dry_run && !check {
+                        let facts = kurin::facts::FactsTable::synthetic(&cluster)?;
+                        let missing = cluster
+                            .nodes
+                            .iter()
+                            .filter(|n| n.arch.is_none())
+                            .map(|n| n.name.as_str())
+                            .collect::<Vec<_>>();
+                        if !missing.is_empty() && !out.json_enabled() {
+                            eprintln!(
+                                "warn: arch not probed for {} (dry-run without --check): \
+                                 using nodes.<n>.arch or the control machine's arch",
+                                missing.join(", ")
+                            );
+                        }
+                        facts
                     } else {
-                        print!("{tree}");
+                        kurin::discover::run(&cluster, &pool).await?
+                    };
+                    let mut plan =
+                        kurin::plan::build_with_pool(&cluster, Some(pool.clone()), &facts)?;
+                    let fingerprint =
+                        kurin::engine::sha256_hex(kurin::render::render_tree(&plan).as_bytes());
+                    op.begin("create-cluster", &cluster.name, &fingerprint);
+                    if check {
+                        kurin::executor::probe(&mut plan, &pool).await?;
                     }
-                }
-                if dry_run {
-                    return Ok(());
-                }
-
-                let mut opts =
-                    kurin::executor::RunOptions::default().with_default_state(&cluster.name);
-                opts.resume = resume;
-                let mut emit = |event: kurin::Event| {
-                    if json {
-                        println!("{}", kurin::render::event_json_line(&event));
-                    } else {
-                        use kurin::Event::*;
-                        match &event {
-                            TaskSkipped { id, .. } => eprintln!("skip  {id}"),
-                            TaskDone { id, ms, .. } => eprintln!("done  {id} ({ms}ms)"),
-                            TaskReconciled { id, .. } => eprintln!("ok    {id} (reconciled)"),
-                            TaskFailed { id, reason, .. } => eprintln!("FAIL  {id}: {reason}"),
-                            StageDone { stage } => eprintln!("-- stage {stage} complete"),
-                            _ => {}
+                    if dry_run || !check {
+                        let tree = kurin::render::render_tree(&plan);
+                        if out.json_enabled() && !out.v2() {
+                            let plan = serde_json::json!({ "plan": tree });
+                            println!("{}", serde_json::to_string_pretty(&plan).into_diagnostic()?);
+                        } else if !out.v2() {
+                            print!("{tree}");
                         }
                     }
-                };
-                kurin::executor::run_with(&mut plan, &pool, &mut emit, opts).await?;
-                if !json {
-                    eprintln!("cluster {} ready", cluster.name);
+                    if dry_run {
+                        return Ok(());
+                    }
+
+                    let mut opts =
+                        kurin::executor::RunOptions::default().with_default_state(&cluster.name);
+                    opts.resume = resume;
+                    let mut emit = |event: kurin::Event| {
+                        if out.v2() {
+                            return;
+                        }
+                        if out.json_enabled() {
+                            println!("{}", kurin::render::event_json_line(&event));
+                        } else {
+                            use kurin::Event::*;
+                            match &event {
+                                TaskSkipped { id, .. } => eprintln!("skip  {id}"),
+                                TaskDone { id, ms, .. } => eprintln!("done  {id} ({ms}ms)"),
+                                TaskReconciled { id, .. } => {
+                                    eprintln!("ok    {id} (reconciled)")
+                                }
+                                TaskFailed { id, reason, .. } => {
+                                    eprintln!("FAIL  {id}: {reason}")
+                                }
+                                StageDone { stage, .. } => {
+                                    eprintln!("-- stage {stage} complete")
+                                }
+                                _ => {}
+                            }
+                        }
+                    };
+                    kurin::executor::run_with_bus(&mut plan, &pool, &op.bus, &mut emit, opts)
+                        .await?;
+                    if !out.json_enabled() {
+                        eprintln!("cluster {} ready", cluster.name);
+                    }
+                    Ok(())
                 }
-                Ok(())
+                .await;
+                op.finish(&result);
+                result
             }
         },
+    }
+}
+
+/// `kurin logs`: read JSONL envelopes with cluster/op/node/level filters.
+async fn logs_cmd(args: LogsArgs, out: OutputOpts) -> Result<()> {
+    let min_level = match args.level.as_deref() {
+        Some(level) => Level::parse(level).ok_or_else(|| {
+            miette::miette!("invalid --level {level:?} (trace|debug|info|warn|error)")
+        })?,
+        None if out.verbose >= 2 => Level::Debug,
+        None => Level::Info,
+    };
+    let query = LogQuery {
+        min_level,
+        node: args.node.clone(),
+    };
+    let cluster = resolve_cluster(args.cluster)?;
+    // `--op` wins; otherwise (including `--last`) the newest log is read.
+    let _ = args.last;
+    let path = match &args.op {
+        Some(op) => events::find_log(&cluster, op).ok_or_else(|| {
+            miette::miette!("no operation log matching {op:?} for cluster {cluster}")
+        })?,
+        None => events::latest_log(&cluster)
+            .ok_or_else(|| miette::miette!("no operation logs for cluster {cluster}"))?,
+    };
+
+    let mut offset = 0u64;
+    loop {
+        let envelopes = events::read_log_from(&path, &mut offset)
+            .map_err(|e| miette::miette!("read {}: {e}", path.display()))?;
+        for envelope in envelopes {
+            if !query.matches(&envelope) {
+                continue;
+            }
+            if out.json_enabled() {
+                println!("{}", serde_json::to_string(&envelope).into_diagnostic()?);
+            } else {
+                println!("{}", kurin::render::format_envelope(&envelope));
+            }
+        }
+        if !args.follow {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    Ok(())
+}
+
+fn resolve_cluster(explicit: Option<String>) -> Result<String> {
+    if let Some(cluster) = explicit {
+        return Ok(cluster);
+    }
+    let mut clusters = events::list_clusters().into_diagnostic()?;
+    match clusters.len() {
+        1 => Ok(clusters.remove(0)),
+        0 => Err(miette::miette!(
+            "no operation logs yet; run a kurin operation first"
+        )),
+        _ => Err(miette::miette!(
+            "logs exist for multiple clusters ({}); pass --cluster",
+            clusters.join(", ")
+        )),
     }
 }
 
@@ -499,115 +754,142 @@ async fn build_artifacts(
     Ok(())
 }
 
-async fn add_nodes(file: PathBuf, json: bool, offline: Option<PathBuf>) -> Result<()> {
+async fn add_nodes(file: PathBuf, out: OutputOpts, offline: Option<PathBuf>) -> Result<()> {
     let mut cluster = kurin_config::load(&file)?;
     init_zone(cluster.zone.as_deref())?;
     if let Some(dir) = offline {
         cluster.offline_dir = Some(dir);
     }
-    let pool: std::sync::Arc<dyn kurin::SessionPool> =
-        std::sync::Arc::new(kurin::ssh::SshSessionPool::from_cluster(&cluster)?);
+    let pool: Arc<dyn kurin::SessionPool> =
+        Arc::new(kurin::ssh::SshSessionPool::from_cluster(&cluster)?);
+    let op = OpSession::start(&cluster.name, out)?;
+    op.register_cluster(&cluster);
+    op.begin("add-nodes", &cluster.name, "");
 
-    if let Some(first) = cluster.control_plane().next() {
-        let s = pool.get(&first.name).await?;
-        // If the cluster was initialized by this kurin (admin.conf present),
-        // refresh the token + certificate key.
-        let init = s.exec("test -f /etc/kubernetes/admin.conf").await?;
-        if init.ok() {
-            // Version threading: a cluster upgraded past the embedded table
-            // gets its running version installed on the new nodes via a
-            // dynamic manifest (dl.k8s.io checksums + registry digests).
-            let out = s
-                .exec("kubectl --kubeconfig /etc/kubernetes/admin.conf get --raw /version 2>/dev/null")
-                .await?;
-            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&out.stdout) {
-                if let Some(git) = v.get("gitVersion").and_then(|g| g.as_str()) {
-                    let server = git.trim_start_matches('v').to_string();
-                    let embedded = kurin::version::KUBERNETES_VERSION;
-                    if server != embedded {
-                        let target: semver::Version = server
-                            .parse()
-                            .map_err(|e| miette::miette!("server version {server:?}: {e}"))?;
-                        // The dynamic manifest is resolved on the
-                        // control machine (its kubeadm probe runs
-                        // locally); node binaries pick their own arch.
-                        let arch = kurin::arch::Arch::host()?;
-                        let manifest =
-                            kurin::dynamic_manifest::k8s_manifest_for_from(&target, &target, arch)
-                                .await?;
-                        kurin::artifact::set_manifest_override(manifest);
-                        eprintln!(
-                            "[add-nodes] new nodes install v{server} (dynamic manifest; embedded v{embedded})"
-                        );
+    let result: Result<()> = async {
+        if let Some(first) = cluster.control_plane().next() {
+            let s = pool.get(&first.name).await?;
+            // If the cluster was initialized by this kurin (admin.conf present),
+            // refresh the token + certificate key.
+            let init = s.exec("test -f /etc/kubernetes/admin.conf").await?;
+            if init.ok() {
+                // Version threading: a cluster upgraded past the embedded table
+                // gets its running version installed on the new nodes via a
+                // dynamic manifest (dl.k8s.io checksums + registry digests).
+                let out = s
+                    .exec("kubectl --kubeconfig /etc/kubernetes/admin.conf get --raw /version 2>/dev/null")
+                    .await?;
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&out.stdout) {
+                    if let Some(git) = v.get("gitVersion").and_then(|g| g.as_str()) {
+                        let server = git.trim_start_matches('v').to_string();
+                        let embedded = kurin::version::KUBERNETES_VERSION;
+                        if server != embedded {
+                            let target: semver::Version = server
+                                .parse()
+                                .map_err(|e| miette::miette!("server version {server:?}: {e}"))?;
+                            // The dynamic manifest is resolved on the
+                            // control machine (its kubeadm probe runs
+                            // locally); node binaries pick their own arch.
+                            let arch = kurin::arch::Arch::host()?;
+                            let manifest = kurin::dynamic_manifest::k8s_manifest_for_from(
+                                &target, &target, arch,
+                            )
+                            .await?;
+                            kurin::artifact::set_manifest_override(manifest);
+                            tracing::info!(
+                                "[add-nodes] new nodes install v{server} (dynamic manifest; embedded v{embedded})"
+                            );
+                        }
                     }
                 }
+                kurin::tasks::bootstrap::refresh_join_material(s.as_ref(), &cluster.name)
+                    .await
+                    .map_err(|e| miette::miette!("refresh join material on {}: {e}", first.name))?;
             }
-            kurin::tasks::bootstrap::refresh_join_material(s.as_ref(), &cluster.name)
-                .await
-                .map_err(|e| miette::miette!("refresh join material on {}: {e}", first.name))?;
         }
-    }
 
-    // Same plan/executor as create: converged nodes skip, new nodes
-    // install. Facts first — per-node artifact selection.
-    let facts = kurin::discover::run(&cluster, &pool).await?;
-    let mut plan = kurin::plan::build_with_pool(&cluster, Some(pool.clone()), &facts)?;
-    let mut opts = kurin::executor::RunOptions::default().with_default_state(&cluster.name);
-    opts.resume = false;
-    let mut emit = |event: kurin::Event| {
-        if json {
-            println!("{}", kurin::render::event_json_line(&event));
-        } else {
-            use kurin::Event::*;
-            match &event {
-                TaskSkipped { id, .. } => eprintln!("skip  {id}"),
-                TaskDone { id, ms, .. } => eprintln!("done  {id} ({ms}ms)"),
-                TaskReconciled { id, .. } => eprintln!("ok    {id} (reconciled)"),
-                TaskFailed { id, reason, .. } => eprintln!("FAIL  {id}: {reason}"),
-                StageDone { stage } => eprintln!("-- stage {stage} complete"),
-                _ => {}
+        // Same plan/executor as create: converged nodes skip, new nodes
+        // install. Facts first — per-node artifact selection.
+        let facts = kurin::discover::run(&cluster, &pool).await?;
+        let mut plan = kurin::plan::build_with_pool(&cluster, Some(pool.clone()), &facts)?;
+        let mut opts = kurin::executor::RunOptions::default().with_default_state(&cluster.name);
+        opts.resume = false;
+        let mut emit = |event: kurin::Event| {
+            if out.v2() {
+                return;
             }
+            if out.json_enabled() {
+                println!("{}", kurin::render::event_json_line(&event));
+            } else {
+                use kurin::Event::*;
+                match &event {
+                    TaskSkipped { id, .. } => eprintln!("skip  {id}"),
+                    TaskDone { id, ms, .. } => eprintln!("done  {id} ({ms}ms)"),
+                    TaskReconciled { id, .. } => eprintln!("ok    {id} (reconciled)"),
+                    TaskFailed { id, reason, .. } => eprintln!("FAIL  {id}: {reason}"),
+                    StageDone { stage, .. } => eprintln!("-- stage {stage} complete"),
+                    _ => {}
+                }
+            }
+        };
+        kurin::executor::run_with_bus(&mut plan, &pool, &op.bus, &mut emit, opts).await?;
+        if !out.json_enabled() {
+            eprintln!("nodes reconciled for cluster {}", cluster.name);
         }
-    };
-    kurin::executor::run_with(&mut plan, &pool, &mut emit, opts).await?;
-    if !json {
-        eprintln!("nodes reconciled for cluster {}", cluster.name);
+        Ok(())
     }
-    Ok(())
+    .await;
+    op.finish(&result);
+    result
 }
 
-async fn delete_node_cmd(name: String, file: PathBuf) -> Result<()> {
+async fn delete_node_cmd(name: String, file: PathBuf, out: OutputOpts) -> Result<()> {
     let cluster = kurin_config::load(&file)?;
     let node = cluster
         .nodes
         .iter()
         .find(|n| n.name == name)
         .ok_or_else(|| miette::miette!("node {name:?} is not declared in {}", file.display()))?;
-    let pool: std::sync::Arc<dyn kurin::SessionPool> =
-        std::sync::Arc::new(kurin::ssh::SshSessionPool::from_cluster(&cluster)?);
-    // API session: first control-plane node that is not the target itself.
-    let api = cluster
-        .control_plane()
-        .find(|n| n.name != name)
-        .map(|n| n.name.clone());
-    let api_session = match api {
-        Some(cp) => match pool.get(&cp).await {
-            Ok(s) => Some(s),
-            Err(e) => {
-                eprintln!("warn: control-plane {cp} unreachable ({e}); deleting without drain");
-                None
-            }
-        },
-        None => None,
-    };
-    kurin::teardown::delete_node(&pool, &cluster, node, api_session.as_ref()).await
+    let pool: Arc<dyn kurin::SessionPool> =
+        Arc::new(kurin::ssh::SshSessionPool::from_cluster(&cluster)?);
+    let op = OpSession::start(&cluster.name, out)?;
+    op.register_cluster(&cluster);
+    op.begin("delete-node", &cluster.name, "");
+    let result: Result<()> = async {
+        // API session: first control-plane node that is not the target itself.
+        let api = cluster
+            .control_plane()
+            .find(|n| n.name != name)
+            .map(|n| n.name.clone());
+        let api_session = match api {
+            Some(cp) => match pool.get(&cp).await {
+                Ok(s) => Some(s),
+                Err(e) => {
+                    tracing::warn!(
+                        "warn: control-plane {cp} unreachable ({e}); deleting without drain"
+                    );
+                    None
+                }
+            },
+            None => None,
+        };
+        kurin::teardown::delete_node(&pool, &cluster, node, api_session.as_ref()).await
+    }
+    .await;
+    op.finish(&result);
+    result
 }
 
-async fn delete_cluster_cmd(file: PathBuf) -> Result<()> {
+async fn delete_cluster_cmd(file: PathBuf, out: OutputOpts) -> Result<()> {
     let cluster = kurin_config::load(&file)?;
-    let pool: std::sync::Arc<dyn kurin::SessionPool> =
-        std::sync::Arc::new(kurin::ssh::SshSessionPool::from_cluster(&cluster)?);
-    kurin::teardown::delete_cluster(&pool, &cluster).await
+    let pool: Arc<dyn kurin::SessionPool> =
+        Arc::new(kurin::ssh::SshSessionPool::from_cluster(&cluster)?);
+    let op = OpSession::start(&cluster.name, out)?;
+    op.register_cluster(&cluster);
+    op.begin("delete-cluster", &cluster.name, "");
+    let result = kurin::teardown::delete_cluster(&pool, &cluster).await;
+    op.finish(&result);
+    result
 }
 
 const EXAMPLE_CONFIG: &str = include_str!("../examples/cluster.example.toml");

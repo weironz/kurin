@@ -1,0 +1,16 @@
+---
+source: kurin/tests/events_v2.rs
+expression: "serde_json::to_string_pretty(&finished).unwrap()"
+---
+{
+  "v": 2,
+  "seq": 9,
+  "ts": 1790000000123,
+  "op": "20260921T141320.123Z-4242",
+  "body": {
+    "type": "op-finished",
+    "result": "succeeded",
+    "ms": 1234,
+    "error": null
+  }
+}

@@ -50,10 +50,17 @@ impl Default for UpgradeOptions {
 fn report(node: &str, step: &str, ok: bool, detail: &str) {
     let mark = if ok { "ok" } else { "!!" };
     let detail = detail.trim();
-    if detail.is_empty() {
-        eprintln!("[{node}] {mark} {step}");
+    let line = if detail.is_empty() {
+        format!("[{node}] {mark} {step}")
     } else {
-        eprintln!("[{node}] {mark} {step}: {}", detail);
+        format!("[{node}] {mark} {step}: {detail}")
+    };
+    // Progress goes through `tracing`; the bus turns it into `Body::Log`
+    // and the terminal renderer prints the same text as before.
+    if ok {
+        tracing::info!(node = %node, "{line}");
+    } else {
+        tracing::warn!(node = %node, "{line}");
     }
 }
 
@@ -74,13 +81,13 @@ impl BinSource<'_> {
         match self {
             BinSource::Cache { store, manifest } => {
                 let spec = manifest.spec(name, arch)?;
-                eprintln!("[{node}] fetching {name} v{} ...", spec.version);
+                tracing::info!(node = %node, "[{node}] fetching {name} v{} ...", spec.version);
                 Ok(store.fetch(&spec).await?)
             }
             BinSource::Bundle(dir) => dir
                 .find(name, arch)
                 .map(|art| {
-                    eprintln!("[{node}] using bundled {name} v{}", art.version);
+                    tracing::info!(node = %node, "[{node}] using bundled {name} v{}", art.version);
                     art.file.clone()
                 })
                 .ok_or_else(|| {
@@ -104,11 +111,7 @@ async fn install_kube_bins(
     for name in KUBE_BINS {
         let local = source.locate(name, arch, &node.name).await?;
         let bytes = std::fs::read(&local).map_err(|e| miette::miette!("read {local:?}: {e}"))?;
-        eprintln!(
-            "[{}] uploading {name} ({} bytes) ...",
-            node.name,
-            bytes.len()
-        );
+        tracing::info!(node = %node.name, "[{}] uploading {name} ({} bytes) ...", node.name, bytes.len());
         let dest = format!("/usr/local/bin/{name}");
         // Never truncate a running binary: kubelet/kubeadm hold their inode,
         // `cat > dest` fails ETXTBSY while the SSH channel keeps closing,
@@ -311,10 +314,10 @@ async fn execute(
     cp: &Cp0<'_>,
 ) -> Result<()> {
     let replaced = replaced_control_plane_images(manifest)?;
-    eprintln!("control-plane images to re-pin: {replaced}");
+    tracing::info!("control-plane images to re-pin: {replaced}");
     if !cp.server.is_empty() && cp.server != target.to_string() {
-        eprintln!("cluster {}", cluster.name);
-        eprintln!("server={} -> target=v{target}", cp.server);
+        tracing::info!("cluster {}", cluster.name);
+        tracing::info!("server={} -> target=v{target}", cp.server);
     }
 
     let cp0 = cp.session.as_ref();
@@ -378,7 +381,7 @@ async fn execute(
     let batch = opts.batch.max(1);
     for (i, node) in cluster.workers().enumerate() {
         if i % batch == 0 {
-            eprintln!(
+            tracing::info!(
                 "—— worker batch {}/{} —",
                 i / batch + 1,
                 cluster.workers().count().div_ceil(batch)
@@ -389,7 +392,7 @@ async fn execute(
 
     let out = cp0.exec(&format!("{kubectl} get nodes -o wide")).await?;
     if out.ok() {
-        eprintln!("—— post-upgrade cluster ——\n{}", out.stdout);
+        tracing::info!("—— post-upgrade cluster ——\n{}", out.stdout);
     }
     Ok(())
 }
@@ -545,13 +548,13 @@ pub async fn plan(
         }
         set
     };
-    eprintln!("upgrade plan for cluster {}", cluster.name);
-    eprintln!(
+    tracing::info!("upgrade plan for cluster {}", cluster.name);
+    tracing::info!(
         "server version:  {}",
         server.as_deref().unwrap_or("<unknown>")
     );
-    eprintln!("target version:   v{target} ({})", arches.join("+"));
-    eprintln!("ordering:         init node -> control plane (serial) -> workers (batches)");
+    tracing::info!("target version:   v{target} ({})", arches.join("+"));
+    tracing::info!("ordering:         init node -> control plane (serial) -> workers (batches)");
     for node in &cluster.nodes {
         let kv = kubectl_kubelet_version(cp0.as_ref(), &node.name, kubectl).await?;
         let role = if node.role == kurin_config::NodeRole::ControlPlane {
@@ -565,7 +568,7 @@ pub async fn plan(
         } else {
             "upgrade"
         };
-        eprintln!("  {:<16} kubelet={:<12} {role:14} {todo}", node.name, kv);
+        tracing::info!("  {:<16} kubelet={:<12} {role:14} {todo}", node.name, kv);
     }
     Ok(())
 }

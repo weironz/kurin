@@ -57,6 +57,27 @@
 | `artifact --out <dir>` | ✅ | `--arch arm64` |
 | `install.sh` | ✅ | ✅ |
 
+## logs
+
+每次操作（`create cluster`、`add nodes`、`delete node/cluster`、`upgrade`、
+`certs check/renew`、`precheck`、`status`）都会把事件信封写入
+`$XDG_STATE_HOME/kurin/logs/<cluster>/<op-id>.jsonl`（回退
+`~/.local/state`），并在操作开始时把路径打印到 stderr 一次。
+
+| 参数 | 行为 |
+|---|---|
+| `--cluster C` | 指定集群；只有一个集群有日志时可省略 |
+| `--op ID` | 按操作 id（或唯一前缀）选择日志文件 |
+| `--last` | 读取最新一次操作（缺省行为） |
+| `--follow` | 持续输出新追加的信封 |
+| `--node N` | 只显示属于该节点的行（含远端 stdout/stderr） |
+| `--level L` | `trace`/`debug`/`info`/`warn`/`error`，缺省 `info`；`-vv` 等价于 `debug` |
+| `--json` | 每行输出一个完整 v2 信封，便于管道处理 |
+
+全局参数：`--timestamps`（终端日志加 UTC 时间戳）、`-v`（info 级进度 + 每条命令的远端输出摘要）、
+`-vv`（全部远端 stdout/stderr）、`--json`/`--json=v1`（冻结的 v1 事件，
+新增 `ts` 字段）、`--json=v2`（完整信封）。
+
 ## 矩阵之外的恒真约束
 
 - 所有 kubectl/k3s 命令经 session 下发到锚点节点执行；控制机（跑 kurin 的机器）无需安装任何集群组件。

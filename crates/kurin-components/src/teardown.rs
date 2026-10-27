@@ -119,10 +119,17 @@ fn stop_services_cmd(cluster: &Cluster) -> String {
 fn report(node: &str, step: &str, ok: bool, detail: &str) {
     let mark = if ok { "ok" } else { "!!" };
     let detail = detail.trim();
-    if detail.is_empty() {
-        eprintln!("[{node}] {mark} {step}");
+    let line = if detail.is_empty() {
+        format!("[{node}] {mark} {step}")
     } else {
-        eprintln!("[{node}] {mark} {step}: {detail}");
+        format!("[{node}] {mark} {step}: {detail}")
+    };
+    // Progress goes through `tracing`; the bus turns it into `Body::Log`
+    // and the terminal renderer prints the same text as before.
+    if ok {
+        tracing::info!(node = %node, "{line}");
+    } else {
+        tracing::warn!(node = %node, "{line}");
     }
 }
 
@@ -251,7 +258,9 @@ pub async fn delete_cluster(pool: &Arc<dyn SessionPool>, cluster: &Cluster) -> R
         Some(name) => match session_of(pool, name).await {
             Ok(s) => Some(s),
             Err(e) => {
-                eprintln!("warn: first control-plane unreachable, skipping API-level drains: {e}");
+                tracing::warn!(
+                    "warn: first control-plane unreachable, skipping API-level drains: {e}"
+                );
                 None
             }
         },
@@ -272,7 +281,7 @@ pub async fn delete_cluster(pool: &Arc<dyn SessionPool>, cluster: &Cluster) -> R
     if let Some(state) = kurin_core::state::RunState::default_path(&cluster.name) {
         let _ = std::fs::remove_file(&state);
     }
-    eprintln!("cluster {} deleted", cluster.name);
+    tracing::info!("cluster {} deleted", cluster.name);
     Ok(())
 }
 

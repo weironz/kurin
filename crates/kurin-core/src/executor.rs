@@ -2,22 +2,33 @@
 //! parallelize across nodes. Every task follows check -> apply -> verify;
 //! `Unknown` outcomes are re-probed, never blind-retried.
 //!
-//! Event flow: the parent task owns the `emit` callback and drains the
-//! per-stage event channel *while* the workers run (`tokio::select!` between
-//! `JoinSet::join_next` and `rx.recv()`), so events stream to the caller in
-//! near real time instead of arriving after the whole stage joins. Every task
-//! produces exactly one terminal event after its `TaskStart`:
+//! Event flow: tasks publish [`Body`](crate::events::Body) envelopes to the
+//! operation's [`EventBus`]; the executor subscribes and adapts them to the
+//! frozen v1 [`Event`] stream (`--json` and the terminal) while the workers
+//! run (`tokio::select!` between `JoinSet::join_next` and `rx.recv()`), so
+//! events stream to the caller in near real time. Every task produces
+//! exactly one terminal event after its `TaskStart`:
 //! `TaskSkipped | TaskDone | TaskReconciled | TaskFailed`.
+//!
+//! Remote output: each task's session is wrapped in a [`LoggingSession`]
+//! that publishes every `exec` line as `Body::Log { stream, level: Debug }`,
+//! so `kurin logs -vv` can show `kubeadm init` output without any task
+//! knowing about the bus.
 
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 
 use miette::Result;
-use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
 use tokio::task::JoinSet;
+use tracing::Instrument;
 
-use crate::engine::{Drift, Event, Outcome, PlannedTask, Session, TransportLost};
+use crate::engine::{
+    Cmd, Drift, Event, ExecOutput, LocalForward, Outcome, PlannedTask, RemoteForward, Session,
+    Stage, TransportLost, UploadReport, UploadSource,
+};
+use crate::events::{Body, Envelope, EventBus, Level, Stream as EventStream};
 use crate::plan::Plan;
 use crate::state::RunState;
 
@@ -49,6 +60,9 @@ pub struct RunOptions {
     pub state_file: Option<PathBuf>,
     /// Load (rather than reset) records from `state_file`.
     pub resume: bool,
+    /// Operation id carried by the envelopes this run publishes. Empty when
+    /// the caller uses [`run_with_bus`] with a bus that already has one.
+    pub op_id: String,
 }
 
 impl RunOptions {
@@ -75,41 +89,70 @@ pub async fn run_with(
     emit: &mut impl FnMut(Event),
     opts: RunOptions,
 ) -> Result<()> {
+    let bus = Arc::new(EventBus::new(opts.op_id.clone()));
+    run_with_bus(plan, pool, &bus, emit, opts).await
+}
+
+/// Run with a caller-owned bus. The CLI attaches the terminal renderer, the
+/// JSONL writer and `--json=v2` sink to this bus before calling; library
+/// callers use [`run_with`], which creates a bare bus.
+pub async fn run_with_bus(
+    plan: &mut Plan,
+    pool: &Arc<dyn SessionPool>,
+    bus: &Arc<EventBus>,
+    emit: &mut impl FnMut(Event),
+    opts: RunOptions,
+) -> Result<()> {
     let mut state = match opts.state_file {
         Some(path) => RunState::open(path, opts.cluster, opts.resume)?,
         None => RunState::disabled(),
     };
+    // One subscription for the whole run: stages are serial, and the
+    // executor drains it while tasks run, so the bound is never reached in
+    // practice (lagging consumers are the Web/SSE case, which resumes from
+    // JSONL).
+    let mut rx = bus.subscribe();
 
     for &idx in &plan.stages {
         let node = &mut plan.graph[idx];
         let stage = node.stage;
+        let phase = stage.label().to_string();
         let tasks = std::mem::take(&mut node.tasks);
+        bus.publish(Body::PhaseStarted {
+            phase: phase.clone(),
+        });
         if tasks.is_empty() {
-            emit(Event::StageDone {
-                stage: stage.label(),
+            bus.publish(Body::PhaseDone {
+                phase: phase.clone(),
+                ms: 0,
             });
             node.tasks = tasks;
             continue;
         }
 
-        // Unbounded so workers never block on the event sink; ordering within
-        // a single task is preserved (one producer per task).
-        let (tx, mut rx) = unbounded_channel::<Event>();
+        let started = Instant::now();
         let mut set: JoinSet<Result<()>> = JoinSet::new();
         for planned in tasks.iter().cloned() {
-            set.spawn(execute_one(planned, Arc::clone(pool), tx.clone()));
+            set.spawn(execute_one(planned, Arc::clone(pool), Arc::clone(bus)));
         }
-        drop(tx);
 
         // Fail-fast between stages, but in-flight siblings settle first:
-        // every failure is collected, the first is propagated.
+        // every failure is collected, the first is propagated. Events are
+        // drained concurrently so the v1 stream keeps its live ordering.
         let mut first_err: Option<miette::Report> = None;
         let mut failures = 0usize;
-        let mut rx_open = true;
-        while rx_open || !set.is_empty() {
+        loop {
+            if set.is_empty() {
+                // Every task has published its terminal event by the time
+                // its join completes; drain what is still queued.
+                while let Ok(envelope) = rx.try_recv() {
+                    handle_envelope(&envelope, emit, &mut state);
+                }
+                break;
+            }
             tokio::select! {
                 biased;
-                res = set.join_next(), if !set.is_empty() => {
+                res = set.join_next() => {
                     match res {
                         Some(Ok(Ok(()))) => {}
                         Some(Ok(Err(e))) => {
@@ -123,25 +166,9 @@ pub async fn run_with(
                         None => {}
                     }
                 }
-                ev = rx.recv(), if rx_open => {
-                    match ev {
-                        Some(ev) => {
-                            // Persist eagerly so a SIGINT between tasks finds
-                            // a complete snapshot on disk.
-                            match &ev {
-                                Event::TaskDone { id, .. }
-                                | Event::TaskReconciled { id, .. }
-                                | Event::TaskSkipped { id, .. } => {
-                                    state.mark_done(id);
-                                    if let Err(e) = state.flush() {
-                                        eprintln!("warn: {e:?}");
-                                    }
-                                }
-                                _ => {}
-                            }
-                            emit(ev);
-                        }
-                        None => rx_open = false,
+                ev = rx.recv() => {
+                    if let Some(envelope) = ev {
+                        handle_envelope(&envelope, emit, &mut state);
                     }
                 }
             }
@@ -159,14 +186,100 @@ pub async fn run_with(
             }
             return Err(err);
         }
-        emit(Event::StageDone {
-            stage: stage.label(),
+        bus.publish(Body::PhaseDone {
+            phase,
+            ms: started.elapsed().as_millis() as u64,
         });
     }
 
     state.flush()?;
-    emit(Event::ClusterReady);
+    bus.publish(Body::ClusterReady);
+    // The terminal envelopes were published after the last stage loop;
+    // drain them so the v1 stream still ends with `cluster-ready`.
+    while let Ok(envelope) = rx.try_recv() {
+        handle_envelope(&envelope, emit, &mut state);
+    }
     Ok(())
+}
+
+/// Persist done records eagerly (a SIGINT between tasks must find a complete
+/// snapshot) and adapt the envelope to the frozen v1 event stream.
+fn handle_envelope(envelope: &Envelope, emit: &mut impl FnMut(Event), state: &mut RunState) {
+    match &envelope.body {
+        Body::TaskDone { key, .. }
+        | Body::TaskReconciled { key, .. }
+        | Body::TaskSkipped { key, .. } => {
+            state.mark_done(key);
+            if let Err(e) = state.flush() {
+                eprintln!("warn: {e:?}");
+            }
+        }
+        _ => {}
+    }
+    if let Some(event) = v1_event(&envelope.body, envelope.ts.millis()) {
+        emit(event);
+    }
+}
+
+/// Map a v2 body onto the frozen v1 [`Event`] shape, adding only `ts`.
+/// Bodies without a v1 counterpart (logs, warnings, op boundaries) are
+/// skipped.
+fn v1_event(body: &Body, ts: u64) -> Option<Event> {
+    fn stage(phase: &str) -> &'static str {
+        Stage::from_label(phase)
+            .map(Stage::label)
+            .unwrap_or("unknown")
+    }
+    Some(match body {
+        Body::TaskStart { key, node, phase } => Event::TaskStart {
+            id: key.clone(),
+            node: node.clone(),
+            stage: stage(phase),
+            ts,
+        },
+        Body::TaskSkipped { key, node, phase } => Event::TaskSkipped {
+            id: key.clone(),
+            node: node.clone(),
+            stage: stage(phase),
+            ts,
+        },
+        Body::TaskDone {
+            key,
+            node,
+            phase,
+            ms,
+        } => Event::TaskDone {
+            id: key.clone(),
+            node: node.clone(),
+            stage: stage(phase),
+            ms: u128::from(*ms),
+            ts,
+        },
+        Body::TaskReconciled { key, node, phase } => Event::TaskReconciled {
+            id: key.clone(),
+            node: node.clone(),
+            stage: stage(phase),
+            ts,
+        },
+        Body::TaskFailed {
+            key,
+            node,
+            phase,
+            reason,
+        } => Event::TaskFailed {
+            id: key.clone(),
+            node: node.clone(),
+            stage: stage(phase),
+            reason: reason.clone(),
+            ts,
+        },
+        Body::PhaseDone { phase, .. } => Event::StageDone {
+            stage: stage(phase),
+            ts,
+        },
+        Body::ClusterReady => Event::ClusterReady { ts },
+        _ => return None,
+    })
 }
 
 /// Find a [`TransportLost`] anywhere in the error chain (tasks may add
@@ -177,92 +290,280 @@ fn transport_lost_reason(err: &miette::Report) -> Option<String> {
         .map(|lost| lost.to_string())
 }
 
+/// Map the transport's stream tag onto the event stream tag.
+fn event_stream(stream: crate::engine::Stream) -> EventStream {
+    match stream {
+        crate::engine::Stream::Stdout => EventStream::Stdout,
+        crate::engine::Stream::Stderr => EventStream::Stderr,
+    }
+}
+
+/// Session decorator that publishes every remote output line as a
+/// `Body::Log` at debug level, plus the command's declared secrets into the
+/// bus redactor. Tasks stay unaware of the event system.
+struct LoggingSession {
+    inner: Arc<dyn Session>,
+    bus: Arc<EventBus>,
+    node: String,
+    task: String,
+}
+
+impl LoggingSession {
+    fn new(inner: Arc<dyn Session>, bus: Arc<EventBus>, node: String, task: String) -> Self {
+        Self {
+            inner,
+            bus,
+            node,
+            task,
+        }
+    }
+
+    fn publish_line(&self, stream: EventStream, line: &str) {
+        self.bus.publish(Body::Log {
+            level: Level::Debug,
+            node: Some(self.node.clone()),
+            task: Some(self.task.clone()),
+            stream,
+            line: line.to_string(),
+        });
+    }
+
+    fn register_secrets(&self, cmd: &Cmd) {
+        for secret in &cmd.redact {
+            self.bus.redactor().register(secret.clone());
+        }
+    }
+
+    /// Replay a captured output into the event stream (read-only probes,
+    /// which use the retrying `exec_cmd` path).
+    fn publish_captured(&self, out: &ExecOutput) {
+        let mut stdout = 0usize;
+        let mut stderr = 0usize;
+        for line in out.stdout.lines() {
+            stdout += 1;
+            self.publish_line(EventStream::Stdout, line);
+        }
+        for line in out.stderr.lines() {
+            stderr += 1;
+            self.publish_line(EventStream::Stderr, line);
+        }
+        self.publish_summary(stdout, stderr);
+    }
+
+    fn publish_summary(&self, stdout: usize, stderr: usize) {
+        if stdout + stderr == 0 {
+            return;
+        }
+        // Debug + Kurin stream: hidden by default, shown by `-v` as the
+        // remote-output summary, and always present in the JSONL file.
+        self.bus.publish(Body::Log {
+            level: Level::Debug,
+            node: Some(self.node.clone()),
+            task: Some(self.task.clone()),
+            stream: EventStream::Kurin,
+            line: format!(
+                "[{}] {}: {stdout} stdout line(s), {stderr} stderr line(s)",
+                self.node, self.task
+            ),
+        });
+    }
+
+    /// Run `cmd` through the inner transport's streaming path, publishing
+    /// every line and a one-line summary (`-v`) when the command produced
+    /// output. `forward` receives the lines the task itself asked for.
+    async fn run_streamed(
+        &self,
+        cmd: &Cmd,
+        forward: &mut (dyn for<'a> FnMut(crate::engine::Stream, &'a str) + Send),
+    ) -> Result<ExecOutput> {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        self.register_secrets(cmd);
+        let stdout_lines = AtomicUsize::new(0);
+        let stderr_lines = AtomicUsize::new(0);
+        let out = {
+            let mut sink = |stream: crate::engine::Stream, line: &str| {
+                match stream {
+                    crate::engine::Stream::Stdout => {
+                        stdout_lines.fetch_add(1, Ordering::Relaxed);
+                    }
+                    crate::engine::Stream::Stderr => {
+                        stderr_lines.fetch_add(1, Ordering::Relaxed);
+                    }
+                }
+                self.publish_line(event_stream(stream), line);
+                forward(stream, line);
+            };
+            self.inner.exec_stream(cmd, &mut sink).await
+        };
+
+        self.publish_summary(
+            stdout_lines.load(Ordering::Relaxed),
+            stderr_lines.load(Ordering::Relaxed),
+        );
+        out
+    }
+}
+
+#[async_trait::async_trait]
+impl Session for LoggingSession {
+    async fn exec(&self, command: &str) -> Result<ExecOutput> {
+        self.exec_cmd(&Cmd::new(command)).await
+    }
+
+    async fn exec_cmd(&self, cmd: &Cmd) -> Result<ExecOutput> {
+        if cmd.mutating {
+            // Mutating commands must never be retried after a transport
+            // loss (WP-08); the streaming path has exactly those semantics.
+            return self.run_streamed(cmd, &mut |_, _| {}).await;
+        }
+        // Read-only probes keep the transport's single transparent retry;
+        // their (small) output is replayed into the event stream afterwards.
+        self.register_secrets(cmd);
+        let out = self.inner.exec_cmd(cmd).await?;
+        self.publish_captured(&out);
+        Ok(out)
+    }
+
+    async fn exec_stream(
+        &self,
+        cmd: &Cmd,
+        sink: &mut (dyn for<'a> FnMut(crate::engine::Stream, &'a str) + Send),
+    ) -> Result<ExecOutput> {
+        self.run_streamed(cmd, sink).await
+    }
+
+    async fn write_file(&self, path: &str, contents: &[u8]) -> Result<()> {
+        self.inner.write_file(path, contents).await
+    }
+
+    async fn write_file_mode(&self, path: &str, contents: &[u8], mode: u32) -> Result<()> {
+        self.inner.write_file_mode(path, contents, mode).await
+    }
+
+    async fn upload(&self, src: UploadSource, dst: &str, mode: u32) -> Result<UploadReport> {
+        self.inner.upload(src, dst, mode).await
+    }
+
+    async fn file_sha256(&self, path: &str) -> Result<Option<String>> {
+        self.inner.file_sha256(path).await
+    }
+
+    async fn service_active(&self, name: &str) -> Result<bool> {
+        self.inner.service_active(name).await
+    }
+
+    async fn forward_local(&self, remote_addr: SocketAddr) -> Result<LocalForward> {
+        self.inner.forward_local(remote_addr).await
+    }
+
+    async fn forward_remote(&self, local_addr: SocketAddr) -> Result<RemoteForward> {
+        self.inner.forward_remote(local_addr).await
+    }
+}
+
 async fn execute_one(
     planned: PlannedTask,
     pool: Arc<dyn SessionPool>,
-    tx: UnboundedSender<Event>,
+    bus: Arc<EventBus>,
 ) -> Result<()> {
     let task = planned.task;
     let id = task.id();
     let node = task.node().to_string();
     let stage = task.stage().label();
+    let phase = stage.to_string();
 
-    // Emitted before anything can fail, so every task always starts its
-    // event sequence — a session failure still yields TaskFailed.
-    let _ = tx.send(Event::TaskStart {
-        id: id.clone(),
-        node: node.clone(),
-        stage,
-    });
+    // The span carries op/phase/task/node so `tracing` logs emitted by the
+    // task (and by any helper it calls) inherit the context.
+    let span = tracing::info_span!(
+        "task",
+        op = %bus.op(),
+        phase = stage,
+        task = %id,
+        node = %node,
+    );
 
-    let result: Result<()> = async {
-        let session = pool.get(&node).await?;
+    async move {
+        // Published before anything can fail, so every task always starts
+        // its event sequence — a session failure still yields TaskFailed.
+        bus.publish(Body::TaskStart {
+            key: id.clone(),
+            node: node.clone(),
+            phase: phase.clone(),
+        });
 
-        match task.check(session.as_ref()).await? {
-            Drift::InSync => {
-                // Covers the resume path: a recorded-done task that is still
-                // in sync is skipped exactly like a fresh no-op.
-                let _ = tx.send(Event::TaskSkipped {
-                    id: id.clone(),
-                    node: node.clone(),
-                    stage,
-                });
-                return Ok(());
+        let result: Result<()> = async {
+            let session = pool.get(&node).await?;
+            let session = LoggingSession::new(session, Arc::clone(&bus), node.clone(), id.clone());
+
+            match task.check(&session).await? {
+                Drift::InSync => {
+                    // Covers the resume path: a recorded-done task that is
+                    // still in sync is skipped exactly like a fresh no-op.
+                    bus.publish(Body::TaskSkipped {
+                        key: id.clone(),
+                        node: node.clone(),
+                        phase: phase.clone(),
+                    });
+                    return Ok(());
+                }
+                Drift::Drifted(_reason) => {}
             }
-            Drift::Drifted(_reason) => {}
-        }
 
-        let started = Instant::now();
-        let outcome = match task.apply(session.as_ref()).await {
-            Ok(outcome) => outcome,
-            // A lost connection during a mutating apply means the remote
-            // state is unknown: re-probe instead of blindly retrying.
-            Err(err) => match transport_lost_reason(&err) {
-                Some(reason) => Outcome::Unknown(reason),
-                None => return Err(err),
-            },
-        };
-        let ms = started.elapsed().as_millis();
+            let started = Instant::now();
+            let outcome = match task.apply(&session).await {
+                Ok(outcome) => outcome,
+                // A lost connection during a mutating apply means the remote
+                // state is unknown: re-probe instead of blindly retrying.
+                Err(err) => match transport_lost_reason(&err) {
+                    Some(reason) => Outcome::Unknown(reason),
+                    None => return Err(err),
+                },
+            };
+            let ms = started.elapsed().as_millis() as u64;
 
-        match outcome {
-            Outcome::Verified => {
-                let _ = tx.send(Event::TaskDone {
-                    id: id.clone(),
-                    node: node.clone(),
-                    stage,
-                    ms,
-                });
-                Ok(())
-            }
-            Outcome::Unknown(reason) => {
-                // Recovery rule: probe again before deciding anything.
-                match task.check(session.as_ref()).await? {
-                    Drift::InSync => {
-                        let _ = tx.send(Event::TaskReconciled {
-                            id: id.clone(),
-                            node: node.clone(),
-                            stage,
-                        });
-                        Ok(())
+            match outcome {
+                Outcome::Verified => {
+                    bus.publish(Body::TaskDone {
+                        key: id.clone(),
+                        node: node.clone(),
+                        phase: phase.clone(),
+                        ms,
+                    });
+                    Ok(())
+                }
+                Outcome::Unknown(reason) => {
+                    // Recovery rule: probe again before deciding anything.
+                    match task.check(&session).await? {
+                        Drift::InSync => {
+                            bus.publish(Body::TaskReconciled {
+                                key: id.clone(),
+                                node: node.clone(),
+                                phase: phase.clone(),
+                            });
+                            Ok(())
+                        }
+                        Drift::Drifted(still) => Err(miette::miette!(
+                            "apply reported unknown ({reason}) and re-probe shows drift: {still}"
+                        )),
                     }
-                    Drift::Drifted(still) => Err(miette::miette!(
-                        "apply reported unknown ({reason}) and re-probe shows drift: {still}"
-                    )),
                 }
             }
         }
-    }
-    .await;
+        .await;
 
-    if let Err(err) = &result {
-        let _ = tx.send(Event::TaskFailed {
-            id,
-            node,
-            stage,
-            reason: err.to_string(),
-        });
+        if let Err(err) = &result {
+            bus.publish(Body::TaskFailed {
+                key: id,
+                node,
+                phase,
+                reason: err.to_string(),
+            });
+        }
+        result
     }
-    result
+    .instrument(span)
+    .await
 }
 
 /// `--dry-run --check`: probe every task concurrently and annotate the plan
@@ -348,6 +649,117 @@ mod tests {
 
     fn pool() -> Arc<dyn SessionPool> {
         Arc::new(MockPool)
+    }
+
+    /// A session that answers with fixed output, exercising the streaming
+    /// decorator without a transport.
+    struct OutputSession;
+
+    #[async_trait::async_trait]
+    impl Session for OutputSession {
+        async fn exec(&self, _command: &str) -> Result<ExecOutput> {
+            Ok(ExecOutput {
+                exit_code: 0,
+                stdout: "one\ntwo\n".into(),
+                stderr: "warn\n".into(),
+            })
+        }
+        async fn write_file(&self, _path: &str, _contents: &[u8]) -> Result<()> {
+            Ok(())
+        }
+        async fn file_sha256(&self, _path: &str) -> Result<Option<String>> {
+            Ok(None)
+        }
+        async fn service_active(&self, _name: &str) -> Result<bool> {
+            Ok(false)
+        }
+    }
+
+    /// Every remote line is published at debug, the per-command summary at
+    /// debug/Kurin, and `Cmd.redact` values are scrubbed before publication.
+    #[tokio::test]
+    async fn logging_session_publishes_lines_summary_and_redacts() {
+        const SECRET: &str = "fake-command-secret-not-real";
+        struct SecretSession;
+        #[async_trait::async_trait]
+        impl Session for SecretSession {
+            async fn exec(&self, _command: &str) -> Result<ExecOutput> {
+                Ok(ExecOutput {
+                    exit_code: 0,
+                    stdout: format!("token {SECRET}\n"),
+                    stderr: String::new(),
+                })
+            }
+            async fn write_file(&self, _path: &str, _contents: &[u8]) -> Result<()> {
+                Ok(())
+            }
+            async fn file_sha256(&self, _path: &str) -> Result<Option<String>> {
+                Ok(None)
+            }
+            async fn service_active(&self, _name: &str) -> Result<bool> {
+                Ok(false)
+            }
+        }
+
+        let bus = Arc::new(EventBus::new("op"));
+        let mut rx = bus.subscribe();
+        let session = LoggingSession::new(
+            Arc::new(OutputSession),
+            Arc::clone(&bus),
+            "n1".into(),
+            "bootstrap/kubeadm@n1".into(),
+        );
+        let out = session.exec("run").await.unwrap();
+        assert_eq!(out.stdout, "one\ntwo\n");
+
+        let mut bodies = Vec::new();
+        while let Ok(envelope) = rx.try_recv() {
+            bodies.push(envelope.body);
+        }
+        assert_eq!(bodies.len(), 4, "three lines plus one summary: {bodies:?}");
+        assert!(matches!(
+            &bodies[0],
+            Body::Log {
+                level: Level::Debug,
+                stream: EventStream::Stdout,
+                ..
+            }
+        ));
+        assert!(matches!(
+            &bodies[2],
+            Body::Log {
+                stream: EventStream::Stderr,
+                ..
+            }
+        ));
+        match &bodies[3] {
+            Body::Log {
+                level: Level::Debug,
+                stream: EventStream::Kurin,
+                line,
+                ..
+            } => {
+                assert!(line.contains("2 stdout line(s), 1 stderr line(s)"));
+            }
+            other => panic!("expected summary, got {other:?}"),
+        }
+
+        let bus = Arc::new(EventBus::new("op"));
+        let mut rx = bus.subscribe();
+        let session = LoggingSession::new(
+            Arc::new(SecretSession),
+            Arc::clone(&bus),
+            "n1".into(),
+            "task@n1".into(),
+        );
+        session
+            .exec_cmd(&Cmd::new("run").redact(SECRET))
+            .await
+            .unwrap();
+        while let Ok(envelope) = rx.try_recv() {
+            let text = serde_json::to_string(&envelope).unwrap();
+            assert!(!text.contains(SECRET), "secret leaked: {text}");
+        }
     }
 
     /// Hand-scripted task: pops check/apply results in order; no network.
@@ -701,6 +1113,7 @@ mod tests {
                 cluster: "demo".into(),
                 state_file: Some(path.clone()),
                 resume: true,
+                op_id: String::new(),
             },
         )
         .await
@@ -738,6 +1151,7 @@ mod tests {
                 cluster: "demo".into(),
                 state_file: Some(path.clone()),
                 resume: false,
+                op_id: String::new(),
             },
         )
         .await

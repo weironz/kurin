@@ -21,6 +21,7 @@ miette.workspace = true
 tokio.workspace = true
 clap.workspace = true
 semver.workspace = true
+tracing.workspace = true
 
 [dev-dependencies]
 async-trait.workspace = true
@@ -28,4 +29,5 @@ serde_json.workspace = true
 sha2.workspace = true
 tempfile.workspace = true
 insta = { version = "1", features = ["yaml", "json"] }
+petgraph.workspace = true
 regex = "1"

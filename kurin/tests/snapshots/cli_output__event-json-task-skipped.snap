@@ -2,4 +2,4 @@
 source: kurin/tests/cli_output.rs
 expression: event_json_line(event)
 ---
-{"type":"task-skipped","id":"preflight/n1","node":"n1","stage":"preflight"}
+{"type":"task-skipped","id":"preflight/n1","node":"n1","stage":"preflight","ts":1790000000123}

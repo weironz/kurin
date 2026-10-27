@@ -59,10 +59,17 @@ pub struct NodeCerts {
 fn report(node: &str, step: &str, ok: bool, detail: &str) {
     let mark = if ok { "ok" } else { "!!" };
     let detail = detail.trim();
-    if detail.is_empty() {
-        eprintln!("[{node}] {mark} {step}");
+    let line = if detail.is_empty() {
+        format!("[{node}] {mark} {step}")
     } else {
-        eprintln!("[{node}] {mark} {step}: {detail}");
+        format!("[{node}] {mark} {step}: {detail}")
+    };
+    // Progress goes through `tracing`; the bus turns it into `Body::Log`
+    // and the terminal renderer prints the same text as before.
+    if ok {
+        tracing::info!(node = %node, "{line}");
+    } else {
+        tracing::warn!(node = %node, "{line}");
     }
 }
 

@@ -1,0 +1,5 @@
+---
+source: kurin/tests/events_v2.rs
+expression: renderer.render(&remote).unwrap()
+---
+2026-09-21T14:13:20.123Z [n1] [init] Using Kubernetes version: v1.33.1

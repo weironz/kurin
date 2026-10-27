@@ -25,6 +25,9 @@ use kurin::render::event_json_line;
 use kurin::{plan, Event};
 use support::{Reply, Rule, ScriptedPool, ScriptedSession};
 
+/// Fixed timestamp for the `--json` snapshots (the envelope's `ts`).
+const TS: u64 = 1_790_000_000_123;
+
 /// The admin.conf a converged control plane serves over `cat` (fake
 /// credentials only, rule R8). Valid YAML with the arrays
 /// `KubeconfigPull::merge_into` rewrites; >100 bytes so apply accepts it.
@@ -158,7 +161,7 @@ fn render_like_main(events: &[Event]) -> String {
             Event::TaskFailed { id, reason, .. } => {
                 stage_lines.push(format!("FAIL  {id}: {reason}"));
             }
-            Event::StageDone { stage } => {
+            Event::StageDone { stage, .. } => {
                 stage_lines.sort();
                 for line in &stage_lines {
                     out.push_str(line);
@@ -208,7 +211,7 @@ async fn create_cluster_output_and_event_lines() {
         .await
         .expect("the scripted run converges");
 
-    assert!(matches!(events.last(), Some(Event::ClusterReady)));
+    assert!(matches!(events.last(), Some(Event::ClusterReady { .. })));
     assert!(
         events
             .iter()
@@ -284,31 +287,39 @@ async fn create_cluster_output_and_event_lines() {
             id: "prepare/sysctl@n1".into(),
             node: "n1".into(),
             stage: "prepare",
+            ts: TS,
         },
         Event::TaskSkipped {
             id: "preflight/n1".into(),
             node: "n1".into(),
             stage: "preflight",
+            ts: TS,
         },
         Event::TaskDone {
             id: "prepare/sysctl@n1".into(),
             node: "n1".into(),
             stage: "prepare",
             ms: 12,
+            ts: TS,
         },
         Event::TaskFailed {
             id: "cni/calico-operator@n1".into(),
             node: "n1".into(),
             stage: "cni",
             reason: "calico apply failed: connection refused".into(),
+            ts: TS,
         },
         Event::TaskReconciled {
             id: "join/kubeadm@n2".into(),
             node: "n2".into(),
             stage: "join",
+            ts: TS,
         },
-        Event::StageDone { stage: "post" },
-        Event::ClusterReady,
+        Event::StageDone {
+            stage: "post",
+            ts: TS,
+        },
+        Event::ClusterReady { ts: TS },
     ];
     for event in &representatives {
         insta::assert_snapshot!(
@@ -355,11 +366,17 @@ async fn create_cluster_output_and_event_lines() {
         "the sysctl task must be the recorded failure"
     );
     assert!(
-        !events
-            .iter()
-            .any(|e| matches!(e, Event::StageDone { stage: "prepare" })),
+        !events.iter().any(|e| matches!(
+            e,
+            Event::StageDone {
+                stage: "prepare",
+                ..
+            }
+        )),
         "a failed stage never completes"
     );
-    assert!(!events.iter().any(|e| matches!(e, Event::ClusterReady)));
+    assert!(!events
+        .iter()
+        .any(|e| matches!(e, Event::ClusterReady { .. })));
     insta::assert_snapshot!("single.sysctl-failure", render_like_main(&events));
 }

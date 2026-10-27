@@ -2,4 +2,4 @@
 source: kurin/tests/cli_output.rs
 expression: event_json_line(event)
 ---
-{"type":"task-failed","id":"cni/calico-operator@n1","node":"n1","stage":"cni","reason":"calico apply failed: connection refused"}
+{"type":"task-failed","id":"cni/calico-operator@n1","node":"n1","stage":"cni","reason":"calico apply failed: connection refused","ts":1790000000123}

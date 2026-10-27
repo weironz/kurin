@@ -161,6 +161,7 @@ fn events_are_serde_representable() {
         id: "a".into(),
         node: "n".into(),
         stage: Stage::Prepare.label(),
+        ts: 1_790_000_000_123,
     };
     let js = serde_json::to_string(&ev).unwrap();
     assert!(js.contains("task-start"));

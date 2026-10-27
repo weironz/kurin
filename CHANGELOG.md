@@ -49,8 +49,37 @@ All notable changes to kurin. Format follows Keep a Changelog; semver.
   binds `127.0.0.1:0`, one `direct-tcpip` channel per connection, stops on
   `Drop`) and `Session::forward_remote` (`ssh -R`, returns the assigned
   port). These are the ClusterApi tunnel building blocks.
+- Event v2 and operation logs (WP-06): `kurin-core::events` defines the
+  `Envelope { v, seq, ts, op, body }` / `Body` schema, a monotonic
+  `EventBus` with synchronous `EventSink`s (terminal renderer, JSONL
+  writer, `--json=v2`) and bounded async subscribers that never block a
+  publisher (a lagging subscriber resumes from JSONL by `seq`). Every
+  operation writes `$XDG_STATE_HOME/kurin/logs/<cluster>/<op-id>.jsonl`
+  (fallback `~/.local/state`) one envelope per line, flushed per event,
+  and prints the path once at start. `kurin logs [--cluster C]
+  [--op ID|--last] [--follow] [--node N] [--level L] [--json]` reads and
+  filters those files.
+- `tracing` is the task/logging bridge: a custom `tracing-subscriber`
+  layer turns span fields (`op`/`phase`/`task`/`node`) and messages into
+  `Body::Log`; the executor opens one span per task and wraps each session
+  so every remote stdout/stderr line is published at debug level. Tasks
+  and the upgrade/teardown/certs progress reporters use `tracing` instead
+  of `eprintln!`.
+- Global CLI flags: `--timestamps` (UTC timestamp prefix on terminal log
+  lines), `-v` (info-level progress), `-vv` (every remote stdout/stderr
+  line), and `--json=v2` (full envelopes). `--json` / `--json=v1` keep the
+  frozen v1 event stream.
+- Redaction: the bus carries a `Redactor` populated from the cluster's
+  SSH, sudo and registry secrets; registered values are replaced with
+  `******` in every log line, warning, task failure and operation error
+  before publication.
 
 ### Changed
+- `--json` v1 events gain exactly one field, `ts` (UTC milliseconds from
+  the v2 envelope). The frozen v1 field sets are otherwise unchanged
+  (docs/v1.0-gates.md §2 allows additive fields). The default terminal
+  output is byte-identical to the WP-00 snapshots: remote stdout/stderr is
+  hidden unless `-vv`, and `--timestamps` is opt-in.
 - Mutating SSH commands are no longer transparently retried after a
   transport loss: the remote side may already have executed them. The
   transport returns a typed `kurin::transport_lost` error and the executor

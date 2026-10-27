@@ -1,0 +1,17 @@
+---
+source: kurin/tests/events_v2.rs
+expression: "serde_json::to_string_pretty(&done).unwrap()"
+---
+{
+  "v": 2,
+  "seq": 7,
+  "ts": 1790000000123,
+  "op": "20260921T141320.123Z-4242",
+  "body": {
+    "type": "task-done",
+    "key": "prepare/sysctl@n1",
+    "node": "n1",
+    "phase": "prepare",
+    "ms": 42
+  }
+}

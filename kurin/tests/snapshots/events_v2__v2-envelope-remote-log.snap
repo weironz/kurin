@@ -1,0 +1,18 @@
+---
+source: kurin/tests/events_v2.rs
+expression: "serde_json::to_string_pretty(&log).unwrap()"
+---
+{
+  "v": 2,
+  "seq": 8,
+  "ts": 1790000000123,
+  "op": "20260921T141320.123Z-4242",
+  "body": {
+    "type": "log",
+    "level": "debug",
+    "node": "n1",
+    "task": "bootstrap/kubeadm@n1",
+    "stream": "stdout",
+    "line": "[init] Using Kubernetes version: v1.33.1"
+  }
+}
