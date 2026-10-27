@@ -1,24 +1,31 @@
-//! Planner: Cluster -> task DAG. Zero I/O by contract (template rendering
-//! is in-memory; artifact hashes come from the version table).
+//! Planner: Cluster + facts -> task DAG. Zero I/O by contract (template
+//! rendering is in-memory; artifact hashes come from the version table).
 //!
 //! [`Plan`] and [`StageNode`] are engine data (see [`kurin_core::plan`]);
 //! this module only assembles them from the built-in components.
+//!
+//! Facts come from discovery (or [`FactsTable::synthetic`] for
+//! `--dry-run`): every artifact-resolving task picks its node's arch
+//! from them, which is what makes mixed-architecture clusters work.
 
 use std::sync::Arc;
 
 use kurin_config::Cluster;
+use kurin_core::facts::FactsTable;
 use miette::Result;
 use petgraph::stable_graph::StableDiGraph;
 
 use kurin_core::engine::{PlannedTask, Stage, Task};
 use kurin_core::plan::{Plan, StageNode};
 
+use crate::discover::Discover;
 use crate::tasks;
 
-/// Linear stage chain (M1): preflight -> prepare -> bootstrap -> join -> cni -> post.
-/// The graph shape is ready for M2 branching (air-gap, upgrade).
-pub fn build(cluster: &Cluster) -> Result<Plan> {
-    build_with_pool(cluster, None)
+/// Linear stage chain (M1): discover -> preflight -> prepare ->
+/// bootstrap -> join -> cni -> post. The graph shape is ready for M2
+/// branching (air-gap, upgrade).
+pub fn build(cluster: &Cluster, facts: &FactsTable) -> Result<Plan> {
+    build_with_pool(cluster, None, facts)
 }
 
 /// Same as [`build`], but registers tasks that need live sessions
@@ -26,8 +33,10 @@ pub fn build(cluster: &Cluster) -> Result<Plan> {
 pub fn build_with_pool(
     cluster: &Cluster,
     pool: Option<Arc<dyn kurin_core::executor::SessionPool>>,
+    facts: &FactsTable,
 ) -> Result<Plan> {
     let stages = [
+        Stage::Discover,
         Stage::Preflight,
         Stage::Artifacts,
         Stage::Prepare,
@@ -59,13 +68,17 @@ pub fn build_with_pool(
         })
     };
 
+    // Discover: one display-only task per node recording what the
+    // pre-plan discovery probed (arch/OS/CPU/mem).
+    for node in &cluster.nodes {
+        let facts_for_node = facts
+            .get(&node.name)
+            .ok_or_else(|| miette::miette!("no discovered facts for node {}", node.name))?;
+        push(0, Arc::new(Discover::new(node, facts_for_node)));
+    }
+
     // Preflight, Artifacts & Prepare: every node.
-    // Rust's ARCH names differ from Go-style artifact arch names.
-    let arch = match std::env::consts::ARCH {
-        "x86_64" => kurin_artifact::artifact::Arch::Amd64,
-        "aarch64" => kurin_artifact::artifact::Arch::Arm64,
-        other => panic!("unsupported build architecture: {other}"),
-    };
+    // Artifacts are selected per node arch from the facts table.
     // K3s: same preflight/artifacts, then the distribution task set.
     // containerd/kubelet units and kubeadm tasks do not apply.
     if cluster.distribution == kurin_config::Distribution::K3s {
@@ -75,19 +88,19 @@ pub fn build_with_pool(
                 kurin_config::NodeRole::Lb | kurin_config::NodeRole::Registry
             )
         }) {
-            push(0, Arc::new(tasks::preflight::Preflight::new(node)));
+            push(1, Arc::new(tasks::preflight::Preflight::new(node)));
             push(
-                1,
+                2,
                 Arc::new(tasks::install::ArtifactsInstall::new(
                     node,
-                    arch,
+                    facts.arch(&node.name)?,
                     cluster.offline_dir.clone(),
                     cluster.runtime,
                 )),
             );
-            push(2, Arc::new(tasks::os_baseline::OsBaseline::new(node)));
-            push(2, Arc::new(tasks::prepare::Sysctl::new(node)));
-            push(2, Arc::new(tasks::kernel_deps::KernelDeps::new(node)));
+            push(3, Arc::new(tasks::os_baseline::OsBaseline::new(node)));
+            push(3, Arc::new(tasks::prepare::Sysctl::new(node)));
+            push(3, Arc::new(tasks::kernel_deps::KernelDeps::new(node)));
         }
         // ExternalLb for kurin-lb comes from stage_tasks itself.
         for (stage, task) in tasks::k3s::stage_tasks(cluster)? {
@@ -120,46 +133,46 @@ pub fn build_with_pool(
             .iter()
             .filter(|n| n.role == kurin_config::NodeRole::Registry)
         {
-            push(0, Arc::new(tasks::preflight::Preflight::new(node)));
+            push(1, Arc::new(tasks::preflight::Preflight::new(node)));
             push(
-                1,
+                2,
                 Arc::new(tasks::install::ArtifactsInstall::new(
                     node,
-                    arch,
+                    facts.arch(&node.name)?,
                     cluster.offline_dir.clone(),
                     cluster.runtime,
                 )),
             );
-            push(2, Arc::new(tasks::os_baseline::OsBaseline::new(node)));
+            push(3, Arc::new(tasks::os_baseline::OsBaseline::new(node)));
         }
     }
     for node in &k8s_nodes {
         let node = *node;
-        push(0, Arc::new(tasks::preflight::Preflight::new(node)));
+        push(1, Arc::new(tasks::preflight::Preflight::new(node)));
         push(
-            1,
+            2,
             Arc::new(tasks::install::ArtifactsInstall::new(
                 node,
-                arch,
+                facts.arch(&node.name)?,
                 cluster.offline_dir.clone(),
                 cluster.runtime,
             )),
         );
-        push(2, Arc::new(tasks::os_baseline::OsBaseline::new(node)));
-        push(2, Arc::new(tasks::prepare::Sysctl::new(node)));
-        push(2, Arc::new(tasks::kernel_deps::KernelDeps::new(node)));
+        push(3, Arc::new(tasks::os_baseline::OsBaseline::new(node)));
+        push(3, Arc::new(tasks::prepare::Sysctl::new(node)));
+        push(3, Arc::new(tasks::kernel_deps::KernelDeps::new(node)));
         if cluster.runtime == kurin_config::RuntimeKind::Containerd {
             push(
-                2,
+                3,
                 Arc::new(tasks::prepare::ContainerdConfig::new(
                     node,
                     kurin_artifact::version::PAUSE_IMAGE,
                 )),
             );
-            push(2, Arc::new(tasks::prepare::ContainerdUnit::new(node)));
+            push(3, Arc::new(tasks::prepare::ContainerdUnit::new(node)));
         }
         push(
-            2,
+            3,
             Arc::new(tasks::prepare::KubeletUnit::new(
                 node,
                 kurin_artifact::version::PAUSE_IMAGE,
@@ -179,15 +192,18 @@ pub fn build_with_pool(
             match node.role {
                 kurin_config::NodeRole::Registry => {
                     push(
-                        3,
+                        4,
                         Arc::new(tasks::registry::RegistryInstall::new(
-                            cluster, node, arch, &ca,
+                            cluster,
+                            node,
+                            facts.arch(&node.name)?,
+                            &ca,
                         )?),
                     );
                 }
                 kurin_config::NodeRole::ControlPlane | kurin_config::NodeRole::Worker => {
                     push(
-                        3,
+                        4,
                         Arc::new(tasks::registry::RegistryTrust::new(cluster, node, &ca)?),
                     );
                 }
@@ -196,8 +212,13 @@ pub fn build_with_pool(
         }
         if let Some(cp1) = cluster.control_plane().next() {
             push(
-                3,
-                Arc::new(tasks::registry::RegistrySeed::new(cluster, cp1, arch, &ca)?),
+                4,
+                Arc::new(tasks::registry::RegistrySeed::new(
+                    cluster,
+                    cp1,
+                    facts.arch(&cp1.name)?,
+                    &ca,
+                )?),
             );
         }
     }
@@ -207,10 +228,10 @@ pub fn build_with_pool(
     for node in &k8s_nodes {
         let node = *node;
         push(
-            4,
+            5,
             Arc::new(tasks::images::ImagesImport::new(
                 node,
-                arch,
+                facts.arch(&node.name)?,
                 cluster.offline_dir.clone(),
                 cluster.cni.clone(),
             )),
@@ -220,7 +241,7 @@ pub fn build_with_pool(
     // Runtime tasks (CRI-O): prepare-stage tasks returned by the
     // runtime implementation (skipped above when containerd is the runtime).
     if cluster.runtime == kurin_config::RuntimeKind::Crio {
-        let mapped: Vec<(usize, Arc<dyn Task>)> = tasks::cri_o::runtime_tasks(cluster)?
+        let mapped: Vec<(usize, Arc<dyn Task>)> = tasks::cri_o::runtime_tasks(cluster, facts)?
             .into_iter()
             .map(|(stage, task)| {
                 let i = stages
@@ -239,7 +260,7 @@ pub fn build_with_pool(
     if cluster.ha_mode == kurin_config::HaMode::KubeVip {
         for node in cluster.control_plane() {
             if let Some(kubevip) = tasks::bootstrap::KubeVip::new(cluster, node) {
-                push(5, Arc::new(kubevip));
+                push(6, Arc::new(kubevip));
             }
         }
     }
@@ -251,20 +272,20 @@ pub fn build_with_pool(
             .enumerate()
         {
             push(
-                4,
+                5,
                 Arc::new(tasks::external_lb::ExternalLb::new(cluster, lb, ordinal)?),
             );
         }
     }
     if let Some(first) = cluster.control_plane().next() {
         push(
-            5,
+            6,
             Arc::new(tasks::bootstrap::KubeadmInit::new(cluster, first)),
         );
         // ApiReady: the VIP-backed API must serve before any join. join's
         // discovery hits the VIP, which requires kube-vip's lease + 6443
         // forwarding to be live (seconds after init on a fresh node).
-        push(6, Arc::new(tasks::bootstrap::ApiReady::new(cluster, first)));
+        push(7, Arc::new(tasks::bootstrap::ApiReady::new(cluster, first)));
     }
     // Join: workers and additional control-plane members.
     for node in cluster.nodes.iter().filter(|n| {
@@ -280,16 +301,16 @@ pub fn build_with_pool(
         if is_first_cp {
             continue;
         }
-        push(7, Arc::new(tasks::join::KubeadmJoin::new(cluster, node)));
+        push(8, Arc::new(tasks::join::KubeadmJoin::new(cluster, node)));
     }
     // CNI + post.
-    push(9, tasks::cni::plugin_task(cluster)?);
+    push(10, tasks::cni::plugin_task(cluster, facts)?);
     if cluster.storage_kind.is_some() {
-        push(9, Arc::new(tasks::storage::StorageInstall::new(cluster)?));
+        push(10, Arc::new(tasks::storage::StorageInstall::new(cluster)?));
     }
-    push(10, Arc::new(tasks::post::KubeconfigPull::new(cluster)));
+    push(11, Arc::new(tasks::post::KubeconfigPull::new(cluster)));
     if let Some(summary) = pool {
-        push(10, Arc::new(tasks::post::Summary::new(cluster, summary)));
+        push(11, Arc::new(tasks::post::Summary::new(cluster, summary)));
     }
     // Config-declared node labels (kubeadm ignores nodeRegistration.labels
     // since v1beta4); converged through the API from the first CP.
@@ -299,7 +320,7 @@ pub fn build_with_pool(
             kurin_config::NodeRole::Lb | kurin_config::NodeRole::Registry
         ) && !n.labels.is_empty()
     }) {
-        push(10, Arc::new(tasks::post::NodeLabels::new(cluster, node)));
+        push(11, Arc::new(tasks::post::NodeLabels::new(cluster, node)));
     }
 
     Ok(Plan { graph, stages: idx })

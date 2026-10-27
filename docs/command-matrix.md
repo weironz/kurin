@@ -49,6 +49,9 @@
 
 ## artifact / curl | sh
 
+`--arch` 接受逗号分隔列表（如 `--arch amd64,arm64`）：混合架构集群的
+离线包需要覆盖全部涉及架构；缺省为控制机架构。
+
 | | amd64 | arm64 |
 |---|---|---|
 | `artifact --out <dir>` | ✅ | `--arch arm64` |

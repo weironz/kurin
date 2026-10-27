@@ -299,7 +299,9 @@ impl ScriptedPool {
 
     /// Shared handle to a node's session, for pre-run seeding and post-run
     /// assertions. Panics when the node was never scripted — that is a test
-    /// bug, not a runtime condition.
+    /// bug, not a runtime condition. Not every test binary uses it, hence
+    /// the allow.
+    #[allow(dead_code)]
     pub fn session(&self, node: &str) -> &Arc<ScriptedSession> {
         self.sessions
             .get(node)

@@ -8,8 +8,10 @@
 // conspicuous place instead of per-fn.
 #![allow(clippy::result_large_err)]
 
+pub mod arch;
 pub mod engine;
 pub mod executor;
+pub mod facts;
 pub mod plan;
 pub mod render;
 pub mod state;

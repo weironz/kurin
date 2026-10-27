@@ -22,6 +22,7 @@ expression: view(&t)
                 },
             },
             labels: {},
+            arch: None,
         },
         Node {
             name: "master02",
@@ -39,6 +40,7 @@ expression: view(&t)
                 },
             },
             labels: {},
+            arch: None,
         },
         Node {
             name: "master03",
@@ -56,6 +58,7 @@ expression: view(&t)
                 },
             },
             labels: {},
+            arch: None,
         },
         Node {
             name: "worker01",
@@ -75,6 +78,7 @@ expression: view(&t)
             labels: {
                 "node-role.kurin.io/pool": "general",
             },
+            arch: None,
         },
     ],
 )

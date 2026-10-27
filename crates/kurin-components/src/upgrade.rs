@@ -229,8 +229,12 @@ pub async fn run(
     target: &Version,
     pool: &Arc<dyn SessionPool>,
     opts: UpgradeOptions,
+    facts: &kurin_core::facts::FactsTable,
 ) -> Result<()> {
     ensure_supported(cluster).await?;
+    // The dynamic manifest is resolved on the control machine: its
+    // kubeadm probe runs locally, so it must be the host's arch. Node
+    // binaries are then picked per discovered arch.
     let arch = host_arch()?;
     let store = ArtifactStore::open_default()?;
     let cp = connect_cp0(cluster, pool).await?;
@@ -252,44 +256,23 @@ pub async fn run(
         store: &store,
         manifest: &manifest,
     };
-    execute(cluster, target, pool, opts, arch, &manifest, &source, &cp).await
+    execute(cluster, target, pool, opts, facts, &manifest, &source, &cp).await
 }
 
 /// Air-gapped upgrade: the same walk as [`run`], but every payload comes
 /// from an offline bundle built with `kurin artifact --with-kubernetes`.
 /// The bundle's own manifest is the authority for versions and checksums —
 /// nothing is re-resolved over the network and the embedded manifest of a
-/// different release is never consulted.
-///
-/// Kept for callers that only need a batch size; [`run_offline_with`] also
-/// carries the drain policy.
-pub async fn run_offline(
-    cluster: &Cluster,
-    target: &Version,
-    offline: &Path,
-    pool: &Arc<dyn SessionPool>,
-    batch: usize,
-) -> Result<()> {
-    run_offline_with(
-        cluster,
-        target,
-        offline,
-        pool,
-        UpgradeOptions {
-            batch,
-            ..UpgradeOptions::default()
-        },
-    )
-    .await
-}
-
-/// [`run_offline`] with the full [`UpgradeOptions`] (drain policy included).
+/// different release is never consulted. Binaries are picked per node
+/// from `facts`; the bundle check below just verifies *some* kubeadm is
+/// present before any node session is opened.
 pub async fn run_offline_with(
     cluster: &Cluster,
     target: &Version,
     offline: &Path,
     pool: &Arc<dyn SessionPool>,
     opts: UpgradeOptions,
+    facts: &kurin_core::facts::FactsTable,
 ) -> Result<()> {
     ensure_supported(cluster).await?;
     let manifest = artifact_bundle::read_bundle_manifest(offline)?;
@@ -299,29 +282,30 @@ pub async fn run_offline_with(
     let dir = ArtifactManifest::from_dir_with(offline, &manifest)?;
     // The arch probe is a bundle problem too: kubeadm must be present for
     // some arch before any node session is opened.
-    let arch = [Arch::Amd64, Arch::Arm64]
+    let bundled = [Arch::Amd64, Arch::Arm64]
         .into_iter()
-        .find(|a| dir.find("kubeadm", *a).is_some())
-        .ok_or_else(|| {
-            miette::miette!(
-                "offline bundle contains no kubeadm binary; rebuild with \
-                 `kurin artifact --with-kubernetes v{target} --arch amd64 --out <dir>`"
-            )
-        })?;
+        .any(|a| dir.find("kubeadm", a).is_some());
+    if !bundled {
+        return Err(miette::miette!(
+            "offline bundle contains no kubeadm binary; rebuild with \
+             `kurin artifact --with-kubernetes v{target} --arch amd64 --out <dir>`"
+        ));
+    }
     let cp = connect_cp0(cluster, pool).await?;
     let source = BinSource::Bundle(&dir);
-    execute(cluster, target, pool, opts, arch, &manifest, &source, &cp).await
+    execute(cluster, target, pool, opts, facts, &manifest, &source, &cp).await
 }
 
 /// The upgrade walk shared by the online ([`run`]) and offline
-/// ([`run_offline`]) entry points — only the binary source differs.
+/// ([`run_offline_with`]) entry points — only the binary source differs.
+/// Every node's binaries are resolved for its discovered arch.
 #[allow(clippy::too_many_arguments)] // grouped context; args mirror the two call sites
 async fn execute(
     cluster: &Cluster,
     target: &Version,
     pool: &Arc<dyn SessionPool>,
     opts: UpgradeOptions,
-    arch: Arch,
+    facts: &kurin_core::facts::FactsTable,
     manifest: &ArtifactManifest,
     source: &BinSource<'_>,
     cp: &Cp0<'_>,
@@ -338,7 +322,7 @@ async fn execute(
     let ctx = NodeCtx {
         pool: pool.as_ref(),
         source,
-        arch,
+        facts,
         cp0,
         kubectl,
         target,
@@ -352,7 +336,7 @@ async fn execute(
         if kv.as_deref() == Some(target.to_string().as_str()) && cp.server == target.to_string() {
             report(&n.name, "up-to-date", true, &format!("already v{target}"));
         } else {
-            install_kube_bins(cp0, source, n, arch).await?;
+            install_kube_bins(cp0, source, n, facts.arch(&n.name)?).await?;
             report(&n.name, "binaries", true, "");
             let out = cp0.exec(&format!("kubeadm upgrade plan v{target}")).await?;
             report(
@@ -417,7 +401,8 @@ async fn execute(
 pub struct NodeCtx<'a> {
     pub pool: &'a dyn SessionPool,
     pub source: &'a BinSource<'a>,
-    pub arch: Arch,
+    /// Discovered facts; each node's binaries resolve for its own arch.
+    pub facts: &'a kurin_core::facts::FactsTable,
     pub cp0: &'a dyn Session,
     pub kubectl: &'a str,
     pub target: &'a Version,
@@ -502,7 +487,13 @@ pub async fn upgrade_one_node(ctx: &NodeCtx<'_>, node: &Node) -> Result<()> {
     drain_node(ctx.cp0, ctx.kubectl, &node.name, ctx.force_drain_failure).await?;
 
     let session = ctx.pool.get(&node.name).await?;
-    install_kube_bins(session.as_ref(), ctx.source, node, ctx.arch).await?;
+    install_kube_bins(
+        session.as_ref(),
+        ctx.source,
+        node,
+        ctx.facts.arch(&node.name)?,
+    )
+    .await?;
     report(&node.name, "binaries", true, "");
     let out = session.exec("kubeadm upgrade node").await?;
     if !out.ok() {
@@ -526,9 +517,13 @@ pub async fn upgrade_one_node(ctx: &NodeCtx<'_>, node: &Node) -> Result<()> {
 }
 
 /// Report the upgrade that would happen (reads, no mutations).
-pub async fn plan(cluster: &Cluster, target: &Version, pool: &Arc<dyn SessionPool>) -> Result<()> {
+pub async fn plan(
+    cluster: &Cluster,
+    target: &Version,
+    pool: &Arc<dyn SessionPool>,
+    facts: &kurin_core::facts::FactsTable,
+) -> Result<()> {
     ensure_supported(cluster).await?;
-    let arch = host_arch()?;
     let first_cp = cluster
         .control_plane()
         .next()
@@ -537,12 +532,25 @@ pub async fn plan(cluster: &Cluster, target: &Version, pool: &Arc<dyn SessionPoo
     let kubectl = "kubectl --kubeconfig /etc/kubernetes/admin.conf --request-timeout=30s";
     let server = current_server_version(cp0.as_ref(), kubectl).await?;
 
+    // Distinct node arches the run will touch (mixed-arch clusters).
+    let arches: Vec<&str> = {
+        let mut set: Vec<&str> = Vec::new();
+        for node in &cluster.nodes {
+            if let Ok(a) = facts.arch(&node.name) {
+                let name = a.as_str();
+                if !set.contains(&name) {
+                    set.push(name);
+                }
+            }
+        }
+        set
+    };
     eprintln!("upgrade plan for cluster {}", cluster.name);
     eprintln!(
         "server version:  {}",
         server.as_deref().unwrap_or("<unknown>")
     );
-    eprintln!("target version:   v{target} ({})", arch.as_str());
+    eprintln!("target version:   v{target} ({})", arches.join("+"));
     eprintln!("ordering:         init node -> control plane (serial) -> workers (batches)");
     for node in &cluster.nodes {
         let kv = kubectl_kubelet_version(cp0.as_ref(), &node.name, kubectl).await?;

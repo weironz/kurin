@@ -197,7 +197,8 @@ fn seed_bundle(bytes: &[u8]) -> (tempfile::TempDir, ArtifactManifest) {
 #[test]
 fn runtime_tasks_plans_three_prepare_tasks_per_member() {
     let cluster = cluster();
-    let tasks = cri_o::runtime_tasks(&cluster).expect("runtime tasks plan");
+    let facts = kurin::facts::FactsTable::synthetic(&cluster).unwrap();
+    let tasks = cri_o::runtime_tasks(&cluster, &facts).expect("runtime tasks plan");
     assert_eq!(tasks.len(), 3, "install + config + unit per node");
     assert!(tasks.iter().all(|(s, _)| *s == Stage::Prepare));
     let ids: Vec<String> = tasks.iter().map(|(_, t)| t.id()).collect();

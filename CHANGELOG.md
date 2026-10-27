@@ -28,8 +28,18 @@ All notable changes to kurin. Format follows Keep a Changelog; semver.
   `Stream::Stdout`/`Stderr`) with per-line redaction, 8 KiB line
   truncation and a 16 MiB capture cap, and uploads no longer buffer whole
   files: `Session::upload` streams `UploadSource::File` in 64 KiB chunks,
-  verifies the remote sha256 before installing, and returns an
   `UploadReport` (bytes, digest, duration).
+- Mixed-architecture clusters and facts-based precheck (WP-04): a new
+  `discover` phase runs before the plan on `create cluster` / `add nodes`
+  / `upgrade`, collecting per-node facts (arch, os-release, kernel,
+  cgroup, CPU/mem/disk, sudo capability, existing kubelet/k3s/containerd)
+  with one read-only script per node; artifacts, images, CRI-O and CNI
+  payloads are then selected per discovered node arch, so an x86_64
+  control machine can install arm64 nodes. `kurin precheck` renders its
+  unchanged ok/warn/FAIL rows from the same probe. `nodes.<n>.arch`
+  (amd64|arm64) is the `--dry-run` fallback (warned when unset), and
+  `kurin artifact --arch amd64,arm64` builds an offline bundle covering
+  every architecture.
 
 ### Fixed
 - `kurin upgrade`: a failed `kubectl drain` now aborts that node's upgrade

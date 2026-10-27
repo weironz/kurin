@@ -538,6 +538,7 @@ mod tests {
                 },
             },
             labels: BTreeMap::new(),
+            arch: None,
         }
     }
 

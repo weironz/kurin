@@ -1,19 +1,21 @@
 //! `kurin precheck`: read-only host audit before `create cluster`.
 //!
-//! Every probe runs over the same SSH session the executor uses, issues no
-//! mutations, and reports one row per (node, check) with `ok` / `warn` /
-//! `fail`. `fail` means "create cluster will break here"; `warn` means
-//! "works, but you should know". Exit code is 2 when any check fails.
+//! The checks are facts-based: they ride the discover script (same SSH
+//! session, one read-only round trip per node) and `run` renders the
+//! retained `check` lines — one row per (node, check) with `ok` /
+//! `warn` / `fail`. `fail` means "create cluster will break here";
+//! `warn` means "works, but you should know". Exit code is 2 when any
+//! check fails.
 //!
 //! Design notes:
-//! - One `exec` per node, one shell script, tab-separated output: N nodes
-//!   cost N round trips, not N × checks.
-//! - Probe list mirrors the failure modes actually seen in kurin's e2e runs
-//!   (swap on, br_netfilter missing, port 6443 held by a stale apiserver,
-//!   disk too small for images, clock skew breaking TLS).
-//! - Anything kurin itself will fix during `prepare` (sysctl values, kernel
-//!   modules that are merely not loaded) is reported as `ok` with the
-//!   current value, and only fails when it *cannot* be fixed.
+//! - One `exec` per node, one shell script, tab-separated output: N
+//!   nodes cost N round trips, not N × checks.
+//! - Probe list mirrors the failure modes actually seen in kurin's e2e
+//!   runs (swap on, br_netfilter missing, port 6443 held by a stale
+//!   apiserver, disk too small for images, clock skew breaking TLS).
+//! - Anything kurin itself will fix during `prepare` (sysctl values,
+//!   kernel modules that are merely not loaded) is reported as `ok`
+//!   with the current value, and only fails when it *cannot* be fixed.
 
 use std::fmt::Write as _;
 use std::sync::Arc;
@@ -21,7 +23,6 @@ use std::sync::Arc;
 use kurin_config::{BecomeMode, Cluster, Node, NodeRole};
 use miette::Result;
 
-use kurin_core::engine::Cmd;
 use kurin_core::executor::SessionPool;
 
 /// One probe outcome.
@@ -82,46 +83,39 @@ impl PrecheckReport {
     }
 }
 
-/// Probe every node in the config concurrently.
+/// Probe every node in the config concurrently. The checks ride the
+/// discover script (one round trip per node: facts + checks); this
+/// renders the retained `check` lines. `Check { name, level, detail }`
+/// rows and their JSON shape are the frozen WP-00 contract.
 pub async fn run(cluster: &Cluster, pool: &Arc<dyn SessionPool>) -> Result<PrecheckReport> {
-    let mut handles = Vec::new();
-    for node in &cluster.nodes {
-        let script = probe_script(cluster, node);
-        let pool = Arc::clone(pool);
-        let node = node.clone();
-        handles.push(tokio::spawn(async move {
-            let session = pool.get(&node.name).await?;
-            // Unprivileged: the probe must see the node as the login user
-            // does (its own sudo capability is part of what it measures).
-            let out = session.exec_cmd(&Cmd::probe(script).unprivileged()).await?;
-            Ok::<_, miette::Report>((node, out))
-        }));
-    }
+    let outputs = crate::discover::run_script_all(cluster, pool).await?;
     let mut report = PrecheckReport::default();
-    for handle in handles {
-        let (node, out) = handle
-            .await
-            .map_err(|e| miette::miette!("precheck task panicked: {e}"))??;
-        for line in out.stdout.lines() {
-            let mut parts = line.splitn(3, '\t');
+    for output in outputs {
+        for line in output.out.stdout.lines() {
+            let mut parts = line.splitn(4, '\t');
+            if parts.next() != Some("check") {
+                continue; // fact lines belong to discover
+            }
             let (Some(name), Some(level), Some(detail)) =
                 (parts.next(), parts.next(), parts.next())
             else {
                 continue;
             };
             report.checks.push(Check {
-                node: node.name.clone(),
+                node: output.node.name.clone(),
                 name: name.to_string(),
                 level: Level::parse(level),
                 detail: detail.trim().to_string(),
             });
         }
-        if out.stdout.trim().is_empty() && !out.ok() {
+        // A node that produced no checks at all: the probe itself is
+        // the failure (defensive — the script ends in `true`).
+        if output.out.stdout.trim().is_empty() {
             report.checks.push(Check {
-                node: node.name.clone(),
+                node: output.node.name.clone(),
                 name: "probe".into(),
                 level: Level::Fail,
-                detail: format!("probe script failed: {}", out.stderr.trim()),
+                detail: format!("probe script failed: {}", output.out.stderr.trim()),
             });
         }
     }
@@ -137,17 +131,18 @@ fn required_ports(node: &Node) -> Vec<u16> {
     }
 }
 
-/// The per-node probe. Values that `prepare` will set anyway (sysctl,
-/// kernel modules that exist but are not loaded) report `ok`; only
-/// unfixable conditions fail.
-fn probe_script(cluster: &Cluster, node: &Node) -> String {
+/// The checks half of the discover script. Lines go through `emit`,
+/// which the discover prologue defines to print the `check` prefix —
+/// `precheck::run` parses exactly those lines back out. The check rows
+/// (names, levels, details) are the frozen precheck output; only the
+/// transport changed.
+///
+/// Values that `prepare` will set anyway (sysctl, kernel modules that
+/// exist but are not loaded) report `ok`; only unfixable conditions
+/// fail.
+pub(crate) fn checks_script(cluster: &Cluster, node: &Node) -> String {
     let ports: Vec<String> = required_ports(node).iter().map(u16::to_string).collect();
     let mut s = String::new();
-    s.push_str(
-        r#"set -u
-emit() { printf '%s\t%s\t%s\n' "$1" "$2" "$3"; }
-"#,
-    );
     // -- privileges -------------------------------------------------------
     // The script runs as the login user (unprivileged), so `sudo -n true`
     // here exercises exactly the path kurin's become wrapping will take.
@@ -299,9 +294,7 @@ fi
 "#,
     );
     // -- end --------------------------------------------------------------
-    let _ = node;
     let _ = cluster;
-    s.push_str("true\n");
     s
 }
 
@@ -428,7 +421,7 @@ role = "control-plane"
     }
 
     fn first_script(c: &Cluster) -> String {
-        probe_script(c, &c.nodes[0])
+        checks_script(c, &c.nodes[0])
     }
 
     #[test]
@@ -494,7 +487,7 @@ role = "control-plane"
             .iter()
             .find(|n| n.role == NodeRole::ControlPlane)
             .expect("cp");
-        let s = probe_script(&c, cp);
+        let s = checks_script(&c, cp);
         for p in ["6443", "2379", "2380", "10257", "10259"] {
             assert!(s.contains(p), "missing port {p}");
         }
@@ -510,7 +503,7 @@ role = "control-plane"
             .iter()
             .find(|n| n.role == NodeRole::Worker)
             .expect("worker");
-        let s = probe_script(&c, w);
+        let s = checks_script(&c, w);
         assert!(s.contains("10250"));
         assert!(!s.contains("2379"));
     }

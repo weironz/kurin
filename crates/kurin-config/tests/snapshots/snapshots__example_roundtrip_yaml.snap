@@ -37,6 +37,7 @@ nodes:
     become-password: null
     auth: null
     labels: {}
+    arch: null
   master02:
     address: '192.168.10.12'
     internal-address: null
@@ -47,6 +48,7 @@ nodes:
     become-password: null
     auth: null
     labels: {}
+    arch: null
   master03:
     address: '192.168.10.13'
     internal-address: null
@@ -57,6 +59,7 @@ nodes:
     become-password: null
     auth: null
     labels: {}
+    arch: null
   worker01:
     address: '192.168.10.21'
     internal-address: null
@@ -68,6 +71,7 @@ nodes:
     auth: null
     labels:
       node-role.kurin.io/pool: general
+    arch: null
 registry:
   kind: null
   port: null

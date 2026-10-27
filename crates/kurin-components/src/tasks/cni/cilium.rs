@@ -160,6 +160,7 @@ mod tests {
                 },
             },
             labels: BTreeMap::new(),
+            arch: None,
         };
         Cluster {
             name: "test".into(),

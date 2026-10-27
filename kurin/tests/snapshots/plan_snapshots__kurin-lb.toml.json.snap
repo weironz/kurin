@@ -6,6 +6,33 @@ expression: plan_matrix(&plan)
   "stages": [
     {
       "ids": [
+        "discover/facts@cp01",
+        "discover/facts@cp02",
+        "discover/facts@lb01",
+        "discover/facts@worker01"
+      ],
+      "stage": "discover",
+      "tasks": [
+        {
+          "describe": "arch=amd64 os=? cpu=0 mem=0MiB",
+          "id": "discover/facts@cp01"
+        },
+        {
+          "describe": "arch=amd64 os=? cpu=0 mem=0MiB",
+          "id": "discover/facts@cp02"
+        },
+        {
+          "describe": "arch=amd64 os=? cpu=0 mem=0MiB",
+          "id": "discover/facts@lb01"
+        },
+        {
+          "describe": "arch=amd64 os=? cpu=0 mem=0MiB",
+          "id": "discover/facts@worker01"
+        }
+      ]
+    },
+    {
+      "ids": [
         "preflight/cp01",
         "preflight/cp02",
         "preflight/worker01"

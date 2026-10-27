@@ -169,6 +169,7 @@ fn node(name: &str, role: kurin_config::NodeRole, host: u8) -> kurin_config::Nod
             },
         },
         labels: BTreeMap::new(),
+        arch: None,
     }
 }
 

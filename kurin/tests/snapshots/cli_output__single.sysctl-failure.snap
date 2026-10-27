@@ -2,6 +2,9 @@
 source: kurin/tests/cli_output.rs
 expression: render_like_main(&events)
 ---
+skip  discover/facts@master01
+skip  discover/facts@worker01
+-- stage discover complete
 skip  preflight/master01
 skip  preflight/worker01
 -- stage preflight complete

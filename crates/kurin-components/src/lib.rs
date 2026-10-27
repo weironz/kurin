@@ -3,6 +3,7 @@
 #![allow(clippy::result_large_err)]
 
 pub mod certs;
+pub mod discover;
 pub mod plan;
 pub mod precheck;
 pub mod status;

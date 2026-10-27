@@ -221,6 +221,11 @@ pub struct NodeConfig {
     pub auth: Option<SshAuth>,
     #[serde(default)]
     pub labels: BTreeMap<String, String>,
+
+    /// CPU architecture (`amd64` | `arm64`); the discovered value wins
+    /// when nodes are probed, this is the `--dry-run` fallback.
+    #[serde(default)]
+    pub arch: Option<String>,
 }
 
 /// How a non-root SSH login gains root for the commands that need it.

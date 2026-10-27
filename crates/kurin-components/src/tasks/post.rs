@@ -617,6 +617,7 @@ kind: Config
                 },
             },
             labels: BTreeMap::new(),
+            arch: None,
         };
         Cluster {
             name: "kfc".into(),
@@ -729,6 +730,7 @@ mod summary_tests {
                 },
             },
             labels: BTreeMap::new(),
+            arch: None,
         };
         Cluster {
             name: "kfc".into(),

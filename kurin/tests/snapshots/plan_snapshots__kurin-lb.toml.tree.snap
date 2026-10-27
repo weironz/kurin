@@ -2,6 +2,11 @@
 source: kurin/tests/plan_snapshots.rs
 expression: render_tree(&plan)
 ---
+├── stage: discover (4 tasks)
+│   ├── discover/facts@cp01 :: arch=amd64 os=? cpu=0 mem=0MiB
+│   ├── discover/facts@cp02 :: arch=amd64 os=? cpu=0 mem=0MiB
+│   ├── discover/facts@lb01 :: arch=amd64 os=? cpu=0 mem=0MiB
+│   └── discover/facts@worker01 :: arch=amd64 os=? cpu=0 mem=0MiB
 ├── stage: preflight (3 tasks)
 │   ├── preflight/cp01 :: probe swap / selinux / time-sync / kernel modules
 │   ├── preflight/cp02 :: probe swap / selinux / time-sync / kernel modules

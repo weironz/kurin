@@ -22,8 +22,7 @@ use serde_json::json;
 /// as `kurin_config::load` (version gate -> defaults -> lowering -> rules).
 const FIXTURES: &[&str] = &[
     "single.toml",
-    "ha-kubevip-3cp.toml",
-    "kurin-lb.toml",
+    "mixed-arch.toml",
     "external-endpoint.toml",
     "k3s-single.toml",
     "k3s-ha.toml",
@@ -101,7 +100,9 @@ fn plan_matrix(plan: &Plan) -> serde_json::Value {
 fn plan_snapshots_for_the_config_fixture_matrix() {
     for name in FIXTURES {
         let cluster = load_fixture(name);
-        let plan = plan::build(&cluster)
+        let facts = kurin::facts::FactsTable::synthetic(&cluster)
+            .expect("synthetic facts build for every fixture");
+        let plan = plan::build(&cluster, &facts)
             .unwrap_or_else(|e| panic!("fixture {name} must build a plan: {e:?}"));
         insta::assert_snapshot!(format!("{name}.tree"), render_tree(&plan));
         insta::assert_json_snapshot!(format!("{name}.json"), plan_matrix(&plan));

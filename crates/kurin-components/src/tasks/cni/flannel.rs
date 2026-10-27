@@ -18,10 +18,13 @@ pub struct Flannel {
     node_name: String,
     pod_cidr: String,
     offline: Option<PathBuf>,
+    /// Arch the pinned manifest is resolved for (the control-plane
+    /// node this task runs on).
+    arch: Arch,
 }
 
 impl Flannel {
-    pub fn new(cluster: &Cluster) -> Self {
+    pub fn new(cluster: &Cluster, arch: Arch) -> Self {
         Self {
             node_name: cluster
                 .control_plane()
@@ -30,23 +33,20 @@ impl Flannel {
                 .unwrap_or_default(),
             pod_cidr: cluster.pod_cidr.to_string(),
             offline: cluster.offline_dir.clone(),
+            arch,
         }
     }
 
     /// Fetch the pinned manifest (online via artifact store, or from the
-    /// offline bundle) and patch the pod network.
+    /// offline bundle) and patch the pod network. Resolved for this
+    /// task's node arch (the control plane it applies through).
     async fn render(&self) -> Result<String> {
         let manifest = ArtifactManifest::embedded()?;
-        let arch = match std::env::consts::ARCH {
-            "x86_64" => Arch::Amd64,
-            "aarch64" => Arch::Arm64,
-            other => return Err(miette::miette!("unsupported arch {other}")),
-        };
-        let spec = manifest.spec("flannel", arch)?;
+        let spec = manifest.spec("flannel", self.arch)?;
         let path = match &self.offline {
             Some(dir) => {
                 let dm = ArtifactManifest::from_dir(dir)?;
-                dm.find("flannel", arch)
+                dm.find("flannel", self.arch)
                     .map(|a| a.file.clone())
                     .ok_or_else(|| miette::miette!("offline bundle lacks the flannel manifest"))?
             }

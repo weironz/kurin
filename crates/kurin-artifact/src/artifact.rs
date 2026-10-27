@@ -62,37 +62,10 @@ impl fmt::Display for Os {
     }
 }
 
-/// Target CPU architecture for node artifacts.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Arch {
-    Amd64,
-    Arm64,
-}
-
-impl Arch {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Arch::Amd64 => "amd64",
-            Arch::Arm64 => "arm64",
-        }
-    }
-
-    /// Parse an arch name (`amd64` / `arm64`), e.g. from a cache dir name.
-    pub fn parse(name: &str) -> Option<Arch> {
-        match name {
-            "amd64" => Some(Arch::Amd64),
-            "arm64" => Some(Arch::Arm64),
-            _ => None,
-        }
-    }
-}
-
-impl fmt::Display for Arch {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
+/// Target CPU architecture for node artifacts. Moved to
+/// [`kurin_core::arch`] (node facts own it); re-exported here so
+/// existing `kurin_artifact::artifact::Arch` imports keep compiling.
+pub use kurin_core::arch::Arch;
 
 /// What kind of payload an artifact carries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]

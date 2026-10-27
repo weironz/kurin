@@ -11,6 +11,9 @@
 // conspicuous place instead of per-fn.
 #![allow(clippy::result_large_err)]
 
+pub mod arch {
+    pub use kurin_core::arch::*;
+}
 pub mod artifact {
     pub use kurin_artifact::artifact::*;
 }
@@ -20,6 +23,9 @@ pub mod artifact_bundle {
 pub mod certs {
     pub use kurin_components::certs::*;
 }
+pub mod discover {
+    pub use kurin_components::discover::*;
+}
 pub mod dynamic_manifest {
     pub use kurin_artifact::dynamic_manifest::*;
 }
@@ -28,6 +34,9 @@ pub mod engine {
 }
 pub mod executor {
     pub use kurin_core::executor::*;
+}
+pub mod facts {
+    pub use kurin_core::facts::*;
 }
 pub mod plan {
     pub use kurin_components::plan::{build, build_with_pool};

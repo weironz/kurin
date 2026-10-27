@@ -26,6 +26,9 @@ pub struct Node {
     pub internal_address: IpAddr,
     pub ssh: ResolvedSsh,
     pub labels: BTreeMap<String, String>,
+    /// Declared CPU architecture (`amd64` | `arm64`), when the operator
+    /// knows it; discovery overrides, dry-run falls back to it.
+    pub arch: Option<String>,
 }
 
 /// Fully-resolved SSH access for one node (node override > [ssh] default).
@@ -184,6 +187,7 @@ impl Cluster {
                     auth,
                 },
                 labels: n.labels,
+                arch: n.arch,
             });
         }
         nodes.sort_by(|a, b| a.name.cmp(&b.name));
@@ -290,9 +294,17 @@ impl Cluster {
                      underscore hostnames break kubeadm installs)"
                 )));
             }
+            // Arch is a dry-run fallback (discovery overrides it at run
+            // time); typos must fail at load, not mid-install.
+            if let Some(a) = &n.arch {
+                if !matches!(a.as_str(), "amd64" | "arm64") {
+                    return Err(invalid(format!(
+                        "node {name}: arch must be \"amd64\" or \"arm64\" (got {a:?})"
+                    )));
+                }
+            }
             // A password nobody will ever read is a config smell; reject at
             // load time. `become = "none"` with a non-root user is allowed
-            // here — precheck is what reports that combination.
             if n.ssh.r#become == BecomeMode::None && n.ssh.become_password.is_some() {
                 return Err(invalid(format!(
                     "node {name}: ssh.become-password is set but become = \"none\"; remove \

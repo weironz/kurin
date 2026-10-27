@@ -28,7 +28,7 @@ use miette::Result;
 
 use crate::tasks::prepare::sha256_hex;
 use crate::templates;
-use kurin_artifact::artifact::{Arch, ArtifactManifest, ArtifactSpec, ArtifactStore};
+use kurin_artifact::artifact::{ArtifactManifest, ArtifactSpec, ArtifactStore};
 use kurin_core::engine::{Drift, Outcome, Session, Stage, Task};
 
 /// Socket kubeadm's `criSocket` must point at for this runtime. The
@@ -61,22 +61,21 @@ rm -rf "$pkg" /tmp/kurin-crio.tar.gz
 "#;
 
 /// CRI-O-specific tasks with their stage assignment, for the integrator's
-/// runtime branch in `plan.rs`. All are `Prepare` and per node; LB nodes are
-/// not part of the k8s artifact set (the vip stage owns them).
-pub fn runtime_tasks(cluster: &Cluster) -> Result<Vec<(Stage, Arc<dyn Task>)>> {
-    let arch = match std::env::consts::ARCH {
-        "x86_64" => Arch::Amd64,
-        "aarch64" => Arch::Arm64,
-        other => return Err(miette::miette!("unsupported build architecture: {other}")),
-    };
+/// runtime branch in `plan.rs`. All are `Prepare` and per node; LB nodes
+/// are not part of the k8s artifact set (the vip stage owns them). The
+/// pinned package is resolved per node arch from the facts table.
+pub fn runtime_tasks(
+    cluster: &Cluster,
+    facts: &kurin_core::facts::FactsTable,
+) -> Result<Vec<(Stage, Arc<dyn Task>)>> {
     let manifest = kurin_artifact::artifact::install_manifest()
         .map_err(|e| miette::miette!("load artifact manifest: {e}"))?;
-    let spec = manifest
-        .spec("crio", arch)
-        .map_err(|e| miette::miette!("crio artifact entry: {e}"))?;
 
     let mut out: Vec<(Stage, Arc<dyn Task>)> = Vec::new();
     for node in cluster.nodes.iter().filter(|n| n.role != NodeRole::Lb) {
+        let spec = manifest
+            .spec("crio", facts.arch(&node.name)?)
+            .map_err(|e| miette::miette!("crio artifact entry: {e}"))?;
         out.push((
             Stage::Prepare,
             Arc::new(CrioInstall::new(

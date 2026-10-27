@@ -1568,6 +1568,7 @@ dependencies = [
 name = "kurin-artifact"
 version = "0.4.0"
 dependencies = [
+ "kurin-core",
  "miette",
  "oci-spec",
  "semver",

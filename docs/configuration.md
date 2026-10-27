@@ -76,6 +76,8 @@ user   = "root"                 # 节点级覆盖（缺省继承 [ssh]）
 port   = 22
 become = "auto"                  # 节点级提权覆盖（缺省继承 [ssh]）
 become-password = "…"            # 节点级 sudo 密码覆盖（缺省继承 [ssh]）
+arch = "amd64"                   # 可选："amd64" | "arm64"。仅作 --dry-run 回退；
+                                 # 实际运行时 discover 阶段探测的架构优先。
 labels = { "env" = "prod" }    # 生效方式见下  节点标签
 
 [nodes.master01.auth]           # 节点级鉴权覆盖（结构同 [ssh.auth]）
@@ -285,6 +287,23 @@ become-password = "s3cret"     # 该节点的 sudo 需要密码
 - 每次 `create cluster` 都会把 config 的 labels 收敛到集群（改的、删的同步）；
 - 幂等：一致时跳过；
 - 只影响 config 声明的节点（`role = "lb"` 排除）。
+
+### `arch`（节点架构）与混合架构集群
+
+`nodes.<n>.arch` 可选（`"amd64"` | `"arm64"`，其它值在加载期报错），语义：
+
+- **真实运行**（`create cluster` / `add nodes` / `upgrade`）先跑 discover
+  阶段：对每个节点执行一段只读脚本（`uname -m`、`/etc/os-release`、
+  cgroup、CPU/内存/磁盘、sudo 能力等），制品按**探测到的**架构逐节点选择。
+  该配置字段被探测值覆盖。任一节点探测失败则整体失败，错误信息列出全部
+  失败节点。
+- **`--dry-run`（不带 `--check`）保持零网络**：不 SSH，用
+  `nodes.<n>.arch`；未配置的节点回退控制机架构，并在 stderr 打印
+  `warn: arch not probed for <节点列表>` 提示。`--dry-run --check` 会真连
+  节点探测。
+- 混合架构集群（如 x86 控制面 + arm64 worker）自动被支持：每个节点拿
+  自己架构的 kubeadm/kubelet/kubectl/containerd/CNI 插件与镜像。离线包
+  需要覆盖所有涉及的架构：`kurin artifact --arch amd64,arm64 ...`。
 
 ### 节点名
 

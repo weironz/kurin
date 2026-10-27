@@ -23,12 +23,18 @@ pub struct CalicoOperator {
     pod_cidr: String,
     /// Offline bundle: read the pinned manifest from there, no downloads.
     offline: Option<std::path::PathBuf>,
+    /// Arch the pinned operator manifest is resolved for (the
+    /// control-plane node this task runs on).
+    arch: Arch,
 }
 
 impl CalicoOperator {
-    pub fn new(cluster: &Cluster) -> Self {
+    pub fn new(cluster: &Cluster, arch: Arch) -> Self {
         Self {
             offline: cluster.offline_dir.clone(),
+            // The pinned operator manifest is resolved for the arch of
+            // the control-plane node this task applies through.
+            arch,
             // Applied through the first control-plane session.
             node_name: cluster
                 .control_plane()
@@ -54,19 +60,15 @@ impl CalicoOperator {
     }
 
     /// Operator manifest comes from the artifact store (online) or the
-    /// offline bundle, so both share one verified source.
+    /// offline bundle, so both share one verified source. Resolved for
+    /// this task's node arch (the control plane it applies through).
     async fn operator_manifest(&self) -> miette::Result<Vec<u8>> {
         let manifest = ArtifactManifest::embedded()?;
-        let arch = match std::env::consts::ARCH {
-            "x86_64" => Arch::Amd64,
-            "aarch64" => Arch::Arm64,
-            other => return Err(miette::miette!("unsupported arch: {other}")),
-        };
-        let spec = manifest.spec("calico-operator", arch)?;
+        let spec = manifest.spec("calico-operator", self.arch)?;
         let path = match &self.offline {
             Some(dir) => {
                 let dm = ArtifactManifest::from_dir(dir)?;
-                dm.find("calico-operator", arch)
+                dm.find("calico-operator", self.arch)
                     .map(|a| a.file.clone())
                     .ok_or_else(|| {
                         miette::miette!("offline bundle lacks calico-operator manifest")
@@ -168,6 +170,7 @@ mod tests {
                 },
             },
             labels: BTreeMap::new(),
+            arch: None,
         };
         Cluster {
             name: "test".into(),
@@ -198,7 +201,7 @@ mod tests {
 
     #[test]
     fn installation_cr_renders_pod_cidr_and_encapsulation() {
-        let cr = CalicoOperator::new(&cluster("10.244.0.0/16")).installation_cr();
+        let cr = CalicoOperator::new(&cluster("10.244.0.0/16"), Arch::Amd64).installation_cr();
         assert!(cr.contains("kind: Installation"));
         assert!(cr.contains("cidr: 10.244.0.0/16"));
         assert!(cr.contains("encapsulation: VXLANCrossSubnet"));

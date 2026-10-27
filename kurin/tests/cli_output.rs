@@ -200,8 +200,8 @@ async fn create_cluster_output_and_event_lines() {
     master.seed_file("/etc/kubernetes/admin.conf", ADMIN_CONF.as_bytes());
     let pool = Arc::new(ScriptedPool::new(vec![master, worker]));
     let dyn_pool: Arc<dyn kurin::SessionPool> = pool.clone();
-
-    let mut plan = plan::build_with_pool(&cluster, Some(dyn_pool.clone())).unwrap();
+    let facts = kurin::facts::FactsTable::synthetic(&cluster).unwrap();
+    let mut plan = plan::build_with_pool(&cluster, Some(dyn_pool.clone()), &facts).unwrap();
     let mut events = Vec::new();
     let mut emit = |event: Event| events.push(event);
     run_with(&mut plan, &dyn_pool, &mut emit, RunOptions::default())
@@ -336,7 +336,8 @@ async fn create_cluster_output_and_event_lines() {
     let worker = ScriptedSession::new("worker01", rules());
     let pool = Arc::new(ScriptedPool::new(vec![master, worker]));
     let dyn_pool: Arc<dyn kurin::SessionPool> = pool.clone();
-    let mut plan = plan::build_with_pool(&cluster, Some(dyn_pool.clone())).unwrap();
+    let facts = kurin::facts::FactsTable::synthetic(&cluster).unwrap();
+    let mut plan = plan::build_with_pool(&cluster, Some(dyn_pool.clone()), &facts).unwrap();
     let mut events = Vec::new();
     let mut emit = |event: Event| events.push(event);
     let err = run_with(&mut plan, &dyn_pool, &mut emit, RunOptions::default())

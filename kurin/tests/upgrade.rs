@@ -124,6 +124,7 @@ fn worker(name: &str) -> Node {
             },
         },
         labels: BTreeMap::new(),
+        arch: None,
     }
 }
 
@@ -193,10 +194,12 @@ async fn drain_failure_aborts_node_upgrade() {
     let manifest = bundle(dir.path());
     let source = BinSource::Bundle(&manifest);
     let target = target();
+    let mut facts = kurin::facts::FactsTable::new();
+    facts.insert(NODE, kurin::facts::NodeFacts::minimal(Arch::Amd64));
     let ctx = NodeCtx {
         pool: &pool,
         source: &source,
-        arch: Arch::Amd64,
+        facts: &facts,
         cp0: cp0.as_ref(),
         kubectl: KUBECTL,
         target: &target,
@@ -247,10 +250,12 @@ async fn forced_drain_failure_continues() {
     let manifest = bundle(dir.path());
     let source = BinSource::Bundle(&manifest);
     let target = target();
+    let mut facts = kurin::facts::FactsTable::new();
+    facts.insert(NODE, kurin::facts::NodeFacts::minimal(Arch::Amd64));
     let ctx = NodeCtx {
         pool: &pool,
         source: &source,
-        arch: Arch::Amd64,
+        facts: &facts,
         cp0: cp0.as_ref(),
         kubectl: KUBECTL,
         target: &target,

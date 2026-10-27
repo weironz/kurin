@@ -139,12 +139,13 @@ role = "worker"
 async fn run_offline_requires_the_bundle_manifest() {
     let dir = tempfile::tempdir().unwrap();
     let pool: Arc<dyn kurin::SessionPool> = Arc::new(NoSessions);
-    let err = kurin::upgrade::run_offline(
+    let err = kurin::upgrade::run_offline_with(
         &cluster(),
         &Version::parse("1.34.12").unwrap(),
         dir.path(),
         &pool,
-        1,
+        kurin::upgrade::UpgradeOptions::default(),
+        &kurin::facts::FactsTable::synthetic(&cluster()).unwrap(),
     )
     .await
     .unwrap_err();
@@ -169,12 +170,13 @@ async fn run_offline_reports_a_bundle_without_kubeadm() {
     );
 
     let pool: Arc<dyn kurin::SessionPool> = Arc::new(NoSessions);
-    let err = kurin::upgrade::run_offline(
+    let err = kurin::upgrade::run_offline_with(
         &cluster(),
         &Version::parse("1.34.12").unwrap(),
         dir.path(),
         &pool,
-        1,
+        kurin::upgrade::UpgradeOptions::default(),
+        &kurin::facts::FactsTable::synthetic(&cluster()).unwrap(),
     )
     .await
     .unwrap_err();

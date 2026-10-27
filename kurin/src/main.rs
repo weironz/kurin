@@ -70,7 +70,9 @@ enum Commands {
         /// Output directory (created if missing).
         #[arg(short, long)]
         out: PathBuf,
-        /// Architecture to build for (default: this machine's).
+        /// Architecture(s) to build for, comma-separated (default: this
+        /// machine's). A mixed-architecture cluster needs every arch its
+        /// nodes use, e.g. `--arch amd64,arm64`.
         #[arg(long)]
         arch: Option<String>,
         /// Kubernetes version to pin binaries and control-plane images for
@@ -236,16 +238,19 @@ async fn run(cli: Cli) -> Result<()> {
                 .unwrap_or_else(|| cluster.kubernetes_version.clone());
             let pool: std::sync::Arc<dyn kurin::SessionPool> =
                 std::sync::Arc::new(kurin::ssh::SshSessionPool::from_cluster(&cluster)?);
+            // Facts first: upgrades resolve binaries per discovered arch.
+            let facts = kurin::discover::run(&cluster, &pool).await?;
             let opts = kurin::upgrade::UpgradeOptions {
                 batch,
                 force_drain_failure,
             };
             if dry_run {
-                kurin::upgrade::plan(&cluster, &target, &pool).await
+                kurin::upgrade::plan(&cluster, &target, &pool, &facts).await
             } else if let Some(offline) = offline {
-                kurin::upgrade::run_offline_with(&cluster, &target, &offline, &pool, opts).await
+                kurin::upgrade::run_offline_with(&cluster, &target, &offline, &pool, opts, &facts)
+                    .await
             } else {
-                kurin::upgrade::run(&cluster, &target, &pool, opts).await
+                kurin::upgrade::run(&cluster, &target, &pool, opts, &facts).await
             }
         }
         Commands::Artifact {
@@ -360,7 +365,30 @@ async fn run(cli: Cli) -> Result<()> {
                 }
                 let pool: std::sync::Arc<dyn kurin::SessionPool> =
                     std::sync::Arc::new(kurin::ssh::SshSessionPool::from_cluster(&cluster)?);
-                let mut plan = kurin::plan::build_with_pool(&cluster, Some(pool.clone()))?;
+                // Facts before the plan: per-node artifact selection is
+                // facts-driven. `--dry-run` stays offline (zero network):
+                // synthetic facts come from `nodes.<n>.arch` or the
+                // control machine's arch.
+                let facts = if dry_run && !check {
+                    let facts = kurin::facts::FactsTable::synthetic(&cluster)?;
+                    let missing = cluster
+                        .nodes
+                        .iter()
+                        .filter(|n| n.arch.is_none())
+                        .map(|n| n.name.as_str())
+                        .collect::<Vec<_>>();
+                    if !missing.is_empty() && !json {
+                        eprintln!(
+                            "warn: arch not probed for {} (dry-run without --check): \
+                             using nodes.<n>.arch or the control machine's arch",
+                            missing.join(", ")
+                        );
+                    }
+                    facts
+                } else {
+                    kurin::discover::run(&cluster, &pool).await?
+                };
+                let mut plan = kurin::plan::build_with_pool(&cluster, Some(pool.clone()), &facts)?;
                 if check {
                     kurin::executor::probe(&mut plan, &pool).await?;
                 }
@@ -411,51 +439,62 @@ async fn build_artifacts(
     with_kubernetes: Option<String>,
 ) -> Result<()> {
     init_zone(None)?;
-    let arch = match arch.as_deref() {
-        Some("amd64" | "x86_64") => kurin::artifact::Arch::Amd64,
-        Some("arm64" | "aarch64") => kurin::artifact::Arch::Arm64,
-        Some(other) => return Err(miette::miette!("unknown arch {other:?} (amd64|arm64)")),
-        None => match std::env::consts::ARCH {
-            "x86_64" => kurin::artifact::Arch::Amd64,
-            "aarch64" => kurin::artifact::Arch::Arm64,
-            other => return Err(miette::miette!("unsupported host arch {other}")),
-        },
+    // `--arch amd64,arm64` builds every listed arch (mixed-architecture
+    // clusters need one bundle covering all of them); the default is
+    // the control machine's arch.
+    let arches: Vec<kurin::arch::Arch> = match arch.as_deref() {
+        Some(list) => list
+            .split(',')
+            .map(|a| a.trim())
+            .filter(|a| !a.is_empty())
+            .map(|a| match a {
+                "amd64" | "x86_64" => Ok(kurin::arch::Arch::Amd64),
+                "arm64" | "aarch64" => Ok(kurin::arch::Arch::Arm64),
+                other => Err(miette::miette!("unknown arch {other:?} (amd64|arm64)")),
+            })
+            .collect::<miette::Result<Vec<_>>>()?,
+        None => vec![kurin::arch::Arch::host()?],
     };
-    let manifest = match &with_kubernetes {
-        Some(v) => {
-            let target: semver::Version = v
-                .trim_start_matches('v')
-                .parse()
-                .map_err(|e| miette::miette!("--with-kubernetes {v:?}: {e}"))?;
-            kurin::dynamic_manifest::k8s_manifest_for(&target, arch).await?
-        }
-        None => kurin::artifact::ArtifactManifest::embedded()?,
-    };
-    let store = kurin::artifact::ArtifactStore::open_default()?;
-    std::fs::create_dir_all(&out).into_diagnostic()?;
-    for entry in manifest.artifacts() {
-        let spec = manifest.spec(&entry.name, arch)?;
-        let dir = store.artifact_dir(&spec);
-        std::fs::create_dir_all(&dir).into_diagnostic()?;
-        let dest = store.fetch(&spec).await?;
-        // Copy the artifact directory into the bundle layout.
-        let target = out.join(format!("{}-{}-{}", spec.name, spec.version, arch.as_str()));
-        std::fs::create_dir_all(&target).into_diagnostic()?;
-        for f in std::fs::read_dir(&dir).into_diagnostic()? {
-            let f = f.into_diagnostic()?;
-            let name = f.file_name();
-            if name.to_string_lossy().ends_with(".part") {
-                continue;
+    // De-duplicate while preserving order.
+    let mut arches = arches;
+    arches.dedup();
+    for arch in arches {
+        let manifest = match &with_kubernetes {
+            Some(v) => {
+                let target: semver::Version = v
+                    .trim_start_matches('v')
+                    .parse()
+                    .map_err(|e| miette::miette!("--with-kubernetes {v:?}: {e}"))?;
+                kurin::dynamic_manifest::k8s_manifest_for(&target, arch).await?
             }
-            std::fs::copy(f.path(), target.join(&name)).into_diagnostic()?;
+            None => kurin::artifact::ArtifactManifest::embedded()?,
+        };
+        let store = kurin::artifact::ArtifactStore::open_default()?;
+        std::fs::create_dir_all(&out).into_diagnostic()?;
+        for entry in manifest.artifacts() {
+            let spec = manifest.spec(&entry.name, arch)?;
+            let dir = store.artifact_dir(&spec);
+            std::fs::create_dir_all(&dir).into_diagnostic()?;
+            let dest = store.fetch(&spec).await?;
+            // Copy the artifact directory into the bundle layout.
+            let target = out.join(format!("{}-{}-{}", spec.name, spec.version, arch.as_str()));
+            std::fs::create_dir_all(&target).into_diagnostic()?;
+            for f in std::fs::read_dir(&dir).into_diagnostic()? {
+                let f = f.into_diagnostic()?;
+                let name = f.file_name();
+                if name.to_string_lossy().ends_with(".part") {
+                    continue;
+                }
+                std::fs::copy(f.path(), target.join(&name)).into_diagnostic()?;
+            }
+            eprintln!("bundled {} {} ({})", spec.name, spec.version, arch.as_str());
+            let _ = &dest;
         }
-        eprintln!("bundled {} {} ({})", spec.name, spec.version, arch.as_str());
-        let _ = &dest;
+        // Sidecar checksums are included by the copy above; the dir name
+        // layout is exactly what ArtifactManifest::from_dir expects.
+        kurin::artifact_bundle::write_bundle_manifest(&out, &manifest)
+            .map_err(|e| miette::miette!("bundle manifest: {e}"))?;
     }
-    // Sidecar checksums are included by the copy above; the dir name layout
-    // is exactly what ArtifactManifest::from_dir expects.
-    kurin::artifact_bundle::write_bundle_manifest(&out, &manifest)
-        .map_err(|e| miette::miette!("bundle manifest: {e}"))?;
     eprintln!("offline bundle written to {}", out.display());
     Ok(())
 }
@@ -489,11 +528,10 @@ async fn add_nodes(file: PathBuf, json: bool, offline: Option<PathBuf>) -> Resul
                         let target: semver::Version = server
                             .parse()
                             .map_err(|e| miette::miette!("server version {server:?}: {e}"))?;
-                        let arch = match std::env::consts::ARCH {
-                            "x86_64" => kurin::artifact::Arch::Amd64,
-                            "aarch64" => kurin::artifact::Arch::Arm64,
-                            other => return Err(miette::miette!("unsupported arch {other}")),
-                        };
+                        // The dynamic manifest is resolved on the
+                        // control machine (its kubeadm probe runs
+                        // locally); node binaries pick their own arch.
+                        let arch = kurin::arch::Arch::host()?;
                         let manifest =
                             kurin::dynamic_manifest::k8s_manifest_for_from(&target, &target, arch)
                                 .await?;
@@ -510,13 +548,10 @@ async fn add_nodes(file: PathBuf, json: bool, offline: Option<PathBuf>) -> Resul
         }
     }
 
-    // Same plan/executor as create: converged nodes skip, new nodes install.
-    let mut plan = kurin::plan::build_with_pool(
-        &cluster,
-        Some(std::sync::Arc::new(
-            kurin::ssh::SshSessionPool::from_cluster(&cluster)?,
-        )),
-    )?;
+    // Same plan/executor as create: converged nodes skip, new nodes
+    // install. Facts first — per-node artifact selection.
+    let facts = kurin::discover::run(&cluster, &pool).await?;
+    let mut plan = kurin::plan::build_with_pool(&cluster, Some(pool.clone()), &facts)?;
     let mut opts = kurin::executor::RunOptions::default().with_default_state(&cluster.name);
     opts.resume = false;
     let mut emit = |event: kurin::Event| {

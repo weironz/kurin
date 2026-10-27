@@ -99,8 +99,10 @@ impl Cmd {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 pub enum Stage {
+    /// Node facts collection; runs before plan construction — the task
+    /// recorded here only displays what was probed.
+    Discover,
     Preflight,
-    /// Binary-first distribution: fetch + install pinned binaries.
     Artifacts,
     Prepare,
     /// Private registry install/trust/seed (only when role = "registry").
@@ -121,6 +123,7 @@ pub enum Stage {
 impl Stage {
     pub fn label(self) -> &'static str {
         match self {
+            Stage::Discover => "discover",
             Stage::Preflight => "preflight",
             Stage::Artifacts => "artifacts",
             Stage::Prepare => "prepare",
