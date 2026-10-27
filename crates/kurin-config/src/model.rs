@@ -31,7 +31,7 @@ use crate::secret::SecretRef;
 pub const DEFAULT_KUBERNETES_VERSION: &str = "1.33.1";
 
 /// Cluster-wide SSH defaults after default merging.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct SshDefaultsSpec {
     pub user: String,
     pub port: u16,
@@ -44,7 +44,7 @@ pub struct SshDefaultsSpec {
 /// Fully-resolved node: defaults already merged. Secret fields still hold
 /// their reference; resolution happens once in
 /// [`ClusterSpec::resolve_secrets`].
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Node {
     pub name: String,
     pub role: NodeRole,
@@ -58,7 +58,7 @@ pub struct Node {
 }
 
 /// Fully-resolved SSH access for one node (node override > `[ssh]` default).
-#[derive(Clone, Serialize)]
+#[derive(Clone, PartialEq, Serialize)]
 pub struct ResolvedSsh {
     pub user: String,
     pub port: u16,
@@ -90,9 +90,11 @@ impl fmt::Debug for ResolvedSsh {
 }
 
 /// Private registry on `role = "registry"` nodes (component-owned section).
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct RegistrySpec {
     pub kind: Option<RegistryKind>,
+    /// Endpoint of an external registry (`kind = "external"`, reserved).
+    pub address: Option<String>,
     pub port: u16,
     pub username: Option<String>,
     pub password: Option<SecretRef>,
@@ -103,6 +105,7 @@ impl Default for RegistrySpec {
     fn default() -> Self {
         Self {
             kind: None,
+            address: None,
             port: 5000,
             username: None,
             password: None,
@@ -112,7 +115,7 @@ impl Default for RegistrySpec {
 }
 
 /// Dynamic storage provisioning (component-owned section).
-#[derive(Debug, Clone, Default, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub struct StorageSpec {
     pub kind: Option<StorageKind>,
     pub default: bool,
@@ -120,16 +123,83 @@ pub struct StorageSpec {
     pub path: Option<String>,
 }
 
-/// Where node payloads come from: online (download) or a prepared offline
-/// bundle directory.
-#[derive(Debug, Clone, Default, Serialize)]
+/// v1alpha1 `[storage]` lowers into the same addon entries a v1alpha2
+/// document would declare, so both versions produce one model (and the
+/// WP-47 cutover changes nothing for existing configs).
+fn storage_addons(storage: &StorageSpec) -> BTreeMap<String, AddonSpec> {
+    let mut out = BTreeMap::new();
+    let mut values = toml::map::Map::new();
+    values.insert(
+        "default-class".into(),
+        toml::Value::Boolean(storage.default),
+    );
+    match storage.kind {
+        Some(StorageKind::LocalPath) => {
+            out.insert(
+                "local-path".into(),
+                AddonSpec::builtin(Some(toml::Value::Table(values))),
+            );
+        }
+        Some(StorageKind::Nfs) => {
+            if let Some(server) = &storage.server {
+                values.insert("server".into(), toml::Value::String(server.clone()));
+            }
+            if let Some(path) = &storage.path {
+                values.insert("path".into(), toml::Value::String(path.clone()));
+            }
+            out.insert(
+                "nfs-subdir".into(),
+                AddonSpec::builtin(Some(toml::Value::Table(values))),
+            );
+        }
+        None => {}
+    }
+    out
+}
+
+/// Where node payloads come from: online (download), a prepared offline
+/// bundle directory, or v1alpha2 package sources.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub struct PackageSources {
     pub offline_dir: Option<PathBuf>,
     pub zone: Option<String>,
+    /// Base package URI (`oci://`, `file://`, `oci-layout://`); unset uses
+    /// the built-in manifest.
+    pub base: Option<String>,
+    /// Per-OS package URIs; empty means "match the node facts".
+    pub os: Vec<String>,
+    pub delivery: crate::v1alpha2::Delivery,
+    pub verify: crate::v1alpha2::Verify,
+    pub trusted_keys: Vec<PathBuf>,
+}
+
+/// One declarative addon, lowered from `[addons.<name>]`.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct AddonSpec {
+    pub enabled: bool,
+    pub version: Option<String>,
+    pub source: Option<String>,
+    /// Values validated against the addon's values schema (WP-41).
+    pub values: Option<toml::Value>,
+    /// Unvalidated Helm values passthrough.
+    pub raw_values: Option<toml::Value>,
+}
+
+impl AddonSpec {
+    /// A built-in addon with no user values.
+    fn builtin(values: Option<toml::Value>) -> Self {
+        Self {
+            enabled: true,
+            version: None,
+            source: None,
+            values,
+            raw_values: None,
+        }
+    }
 }
 
 /// The cluster model every operation sees (ADR-15).
-#[derive(Clone, Serialize)]
+#[derive(Clone, PartialEq, Serialize)]
 pub struct ClusterSpec {
     pub name: String,
     pub labels: BTreeMap<String, String>,
@@ -147,10 +217,13 @@ pub struct ClusterSpec {
     pub ssh: SshDefaultsSpec,
     /// Component-owned section: private registry.
     pub registry: RegistrySpec,
-    /// Component-owned section: dynamic storage.
+    /// Component-owned section: dynamic storage (derived from the storage
+    /// addons in v1alpha2; WP-47 removes it).
     pub storage: StorageSpec,
     /// Artifact sources: offline bundle directory and mirror zone.
     pub packages: PackageSources,
+    /// Declarative addons (v1alpha2; v1alpha1 `[storage]` maps into it).
+    pub addons: BTreeMap<String, AddonSpec>,
     /// Original config text, retained so validation can render spans.
     /// Never serialized or Debug-printed: it contains secrets.
     #[serde(skip)]
@@ -183,12 +256,24 @@ impl fmt::Debug for ClusterSpec {
             .field("registry", &self.registry)
             .field("storage", &self.storage)
             .field("packages", &self.packages)
+            .field("addons", &self.addons)
             .field("source", &"<redacted>")
             .finish()
     }
 }
 
 impl ClusterSpec {
+    /// Deep equality ignoring the original source text, which necessarily
+    /// differs between a v1alpha1 file and its migrated v1alpha2 form.
+    /// Used by `kurin config migrate` and the equivalence tests.
+    pub fn same_spec(&self, other: &Self) -> bool {
+        let mut a = self.clone();
+        let mut b = other.clone();
+        a.source.clear();
+        b.source.clear();
+        a == b
+    }
+
     pub fn control_plane(&self) -> impl Iterator<Item = &Node> {
         self.nodes
             .iter()
@@ -314,7 +399,7 @@ impl ClusterSpec {
         let distribution = cfg.kubernetes.distribution;
         let ha_mode = cfg.ha.mode;
         let runtime = cfg.kubernetes.runtime;
-        Ok(ClusterSpec {
+        let mut spec = ClusterSpec {
             name: cfg.name,
             labels: BTreeMap::new(),
             kubernetes_version,
@@ -337,6 +422,7 @@ impl ClusterSpec {
             },
             registry: RegistrySpec {
                 kind: registry_kind,
+                address: None,
                 port: registry_port,
                 username: cfg.registry.username,
                 password: cfg.registry.password,
@@ -351,9 +437,16 @@ impl ClusterSpec {
                 server: cfg.storage.server,
                 path: cfg.storage.path,
             },
-            packages: PackageSources { offline_dir, zone },
+            packages: PackageSources {
+                offline_dir,
+                zone,
+                ..PackageSources::default()
+            },
+            addons: BTreeMap::new(),
             source: String::new(),
-        })
+        };
+        spec.addons = storage_addons(&spec.storage);
+        Ok(spec)
     }
 
     /// Resolve every secret reference exactly once.
@@ -421,6 +514,17 @@ impl ClusterSpec {
         }
         if self.nodes.is_empty() {
             return Err(invalid("at least one node is required in [nodes]".into()));
+        }
+        // Addon names are a closed set until WP-40 ships the catalog;
+        // an external addon package is the documented escape hatch.
+        for (name, addon) in &self.addons {
+            if !crate::v1alpha2::BUILTIN_ADDONS.contains(&name.as_str()) && addon.source.is_none() {
+                return Err(invalid(format!(
+                    "unknown addon {name:?}; known addons: {} (an external addon package must \
+                     set source = \"oci://…\")",
+                    crate::v1alpha2::BUILTIN_ADDONS.join(", ")
+                )));
+            }
         }
         for n in &self.nodes {
             let name = &n.name;
@@ -657,8 +761,20 @@ pub fn check_version(cfg: &ClusterConfig) -> Result<()> {
         return Err(ConfigError::invalid(
             String::new(),
             format!(
-                "unsupported config version {:?}; this build requires {CONFIG_VERSION}",
-                cfg.version
+                "unsupported config version {:?}; supported versions are {CONFIG_VERSION} and {}",
+                cfg.version,
+                crate::v1alpha2::CONFIG_VERSION
+            ),
+        ));
+    }
+    // `external` is a v1alpha2 addition; accepting it here would silently
+    // change what a v1alpha1 document means.
+    if cfg.registry.kind == Some(RegistryKind::External) {
+        return Err(ConfigError::invalid(
+            String::new(),
+            format!(
+                "registry.kind = \"external\" requires version = \"{}\"",
+                crate::v1alpha2::CONFIG_VERSION
             ),
         ));
     }

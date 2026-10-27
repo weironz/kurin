@@ -394,6 +394,7 @@ fn bundle_spec() -> Cluster {
         },
         registry: kurin_config::RegistrySpec {
             kind: None,
+            address: None,
             port: 5000,
             username: None,
             password: None,
@@ -402,8 +403,9 @@ fn bundle_spec() -> Cluster {
         storage: kurin_config::StorageSpec::default(),
         packages: kurin_config::PackageSources {
             offline_dir: Some(std::path::PathBuf::new()),
-            zone: None,
+            ..Default::default()
         },
+        addons: Default::default(),
         source: String::new(),
     }
 }

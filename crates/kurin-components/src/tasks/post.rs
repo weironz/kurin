@@ -983,7 +983,9 @@ kind: Config
             packages: kurin_config::PackageSources {
                 offline_dir: None,
                 zone: None,
+                ..Default::default()
             },
+            addons: Default::default(),
             source: String::new(),
         }
     }
@@ -1105,7 +1107,9 @@ mod summary_tests {
             packages: kurin_config::PackageSources {
                 offline_dir: None,
                 zone: None,
+                ..Default::default()
             },
+            addons: Default::default(),
             source: String::new(),
         }
     }

@@ -48,6 +48,7 @@ tempfile = "3.27.0"
 rcgen = "0.14"
 bcrypt = "0.17"
 toml = "0.8"
+toml_edit = "0.22"
 ipnet = { version = "2", features = ["serde"] }
 secrecy = "0.10"
 insta = { version = "1", features = ["toml"] }

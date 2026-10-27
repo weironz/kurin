@@ -1,0 +1,46 @@
+---
+source: crates/kurin-config/tests/migrate.rs
+expression: snapshot
+---
+# WP-00 baseline fixture: 3 control-plane nodes behind a kube-vip VIP
+# (default ha.mode), plus one worker.
+version = "v1alpha2"
+name = "ha-kubevip"
+
+[kubernetes]
+version = "1.33.1"
+
+[network]
+pod-cidr = "10.233.64.0/18"
+service-cidr = "10.233.0.0/18"
+dns-domain = "cluster.local"
+
+[network.cni]
+kind = "calico"
+
+[ssh]
+user = "root"
+port = 22
+
+[ssh.auth]
+method = "private_key"
+key-path = "/root/.ssh/id_ed25519"
+
+[ha]
+vip = "192.168.10.100"
+
+[nodes.master01]
+address = "192.168.10.11"
+role = "control-plane"
+
+[nodes.master02]
+address = "192.168.10.12"
+role = "control-plane"
+
+[nodes.master03]
+address = "192.168.10.13"
+role = "control-plane"
+
+[nodes.worker01]
+address = "192.168.10.21"
+role = "worker"

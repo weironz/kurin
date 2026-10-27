@@ -2,4 +2,4 @@
 source: kurin-config/tests/snapshots.rs
 expression: reason(&err)
 ---
-unsupported config version "v1alpha0"; this build requires v1alpha1
+unsupported config version "v1alpha0"; supported versions are v1alpha1 and v1alpha2

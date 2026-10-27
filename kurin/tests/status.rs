@@ -201,7 +201,9 @@ fn cluster_one_cp() -> kurin_config::Cluster {
         packages: kurin_config::PackageSources {
             offline_dir: None,
             zone: None,
+            ..Default::default()
         },
+        addons: Default::default(),
         source: String::new(),
     }
 }

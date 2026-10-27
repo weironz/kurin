@@ -10,6 +10,7 @@ description = "Declarative cluster configuration schema for kurin (parse, don't 
 serde.workspace = true
 serde_yml.workspace = true
 toml.workspace = true
+toml_edit.workspace = true
 thiserror.workspace = true
 miette.workspace = true
 semver.workspace = true

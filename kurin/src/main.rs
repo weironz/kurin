@@ -60,6 +60,11 @@ impl From<JsonArg> for JsonMode {
 enum Commands {
     /// Create resources.
     Create(CreateArgs),
+    /// Configuration utilities.
+    Config {
+        #[command(subcommand)]
+        what: ConfigWhat,
+    },
     /// Inspect or rotate control-plane certificates.
     Certs {
         #[command(subcommand)]
@@ -202,6 +207,29 @@ enum DeleteWhat {
     },
 }
 
+#[derive(Subcommand)]
+enum ConfigWhat {
+    /// Rewrite a v1alpha1 config as v1alpha2, preserving comments and order.
+    /// Without `-o` the migrated document is printed to stdout.
+    Migrate {
+        /// Config file to migrate (.toml).
+        #[arg(short, long)]
+        file: PathBuf,
+        /// Write the migrated document here instead of stdout.
+        #[arg(short, long)]
+        out: Option<PathBuf>,
+    },
+}
+
+/// Schema version printed by `create config`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum SchemaVersion {
+    #[value(name = "v1alpha1")]
+    V1Alpha1,
+    #[value(name = "v1alpha2")]
+    V1Alpha2,
+}
+
 #[derive(clap::Args)]
 struct CreateArgs {
     #[command(subcommand)]
@@ -230,6 +258,9 @@ enum CreateWhat {
     },
     /// Print an annotated example config.
     Config {
+        /// Schema version of the printed example (default: v1alpha2).
+        #[arg(long, value_enum, default_value_t = SchemaVersion::V1Alpha2)]
+        schema_version: SchemaVersion,
         /// Print the pinned component versions this build would install.
         #[arg(long)]
         print_versions: bool,
@@ -426,15 +457,42 @@ async fn run(cli: Cli) -> Result<()> {
                 .await
             }
         },
+        Commands::Config { what } => match what {
+            ConfigWhat::Migrate { file, out } => {
+                let src = std::fs::read_to_string(&file)
+                    .map_err(|e| miette::miette!("failed to read {}: {e}", file.display()))?;
+                let migrated = kurin_config::migrate::migrate_str(&file, &src)?;
+                match out {
+                    Some(path) => {
+                        std::fs::write(&path, &migrated).map_err(|e| {
+                            miette::miette!("failed to write {}: {e}", path.display())
+                        })?;
+                        eprintln!("[config] migrated {} -> {}", file.display(), path.display());
+                        Ok(())
+                    }
+                    None => {
+                        print!("{migrated}");
+                        Ok(())
+                    }
+                }
+            }
+        },
         Commands::Create(args) => match args.what {
-            CreateWhat::Config { print_versions } => {
+            CreateWhat::Config {
+                schema_version,
+                print_versions,
+            } => {
                 if print_versions {
                     for (name, v) in kurin::version::component_versions() {
                         println!("{name}: {v}");
                     }
                     return Ok(());
                 }
-                print!("{}", EXAMPLE_CONFIG);
+                let example = match schema_version {
+                    SchemaVersion::V1Alpha1 => EXAMPLE_CONFIG_V1ALPHA1,
+                    SchemaVersion::V1Alpha2 => EXAMPLE_CONFIG_V1ALPHA2,
+                };
+                print!("{example}");
                 Ok(())
             }
             CreateWhat::Cluster {
@@ -472,4 +530,5 @@ async fn run_op(req: OpRequest, out: OutputOpts) -> Result<()> {
     Ok(())
 }
 
-const EXAMPLE_CONFIG: &str = include_str!("../examples/cluster.example.toml");
+const EXAMPLE_CONFIG_V1ALPHA1: &str = include_str!("../examples/cluster.example.toml");
+const EXAMPLE_CONFIG_V1ALPHA2: &str = include_str!("../examples/cluster.example.v1alpha2.toml");

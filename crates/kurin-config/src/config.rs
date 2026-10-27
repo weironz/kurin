@@ -55,6 +55,9 @@ pub enum RegistryKind {
     Zot,
     /// Harbor v2 offline installer (single registry node only).
     Harbor,
+    /// Reserved (v1alpha2 only): an operator-managed registry. kurin
+    /// installs nothing and only uses `address` + credentials. WP-49.
+    External,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
@@ -267,7 +270,7 @@ pub enum BecomeMode {
 
 /// Mutually exclusive authentication forms; a password and a key are not
 /// both representable, and `method` picks the variant at parse time.
-#[derive(Clone, Deserialize, Serialize)]
+#[derive(Clone, PartialEq, Deserialize, Serialize)]
 #[serde(tag = "method", rename_all = "snake_case", deny_unknown_fields)]
 pub enum SshAuth {
     Password {

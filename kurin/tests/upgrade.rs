@@ -210,7 +210,9 @@ fn cluster(name: &str, cps: usize, workers: usize) -> Cluster {
         packages: kurin_config::PackageSources {
             offline_dir: None,
             zone: None,
+            ..Default::default()
         },
+        addons: Default::default(),
         source: String::new(),
     }
 }

@@ -1,10 +1,106 @@
-# 配置参考（schema v1alpha1）
+# 配置参考（schema v1alpha1 / v1alpha2）
 
 配置是**声明式**的：只描述"想要什么"，执行顺序由 planner 决定。TOML 为主格式，
 YAML（`.yaml`/`.yml`）同构支持。未知字段直接报错（防拼写错误静默生效），
-版本不匹配报错（`version = "v1alpha1"` 是当前唯一值）。
+未知版本报错（当前接受 `v1alpha1` 与 `v1alpha2`，见下节）。
 
-完整字段一览，按段组织：
+## 版本与迁移
+
+当前构建同时接受两个 schema 版本。加载器按 `version` 字段分派（不看扩展名），
+两者都转换为同一个内部模型 `ClusterSpec`，因此所有操作、计划与快照对两个版本
+完全一致。
+
+| 版本 | 状态 | 说明 |
+|---|---|---|
+| `v1alpha1` | 继续支持（长期可读，行为不变） | 本文其余章节描述的字段 |
+| `v1alpha2` | 新配置的默认版本 | `kurin create config` 默认输出；见下方对照表 |
+
+```bash
+kurin config migrate -f old.toml            # 打印到 stdout
+kurin config migrate -f old.toml -o new.toml
+```
+
+迁移用 `toml_edit` 做结构化重写，**保留注释、空行与键顺序**。写盘前会验证：
+迁移后的文件必须能加载，且加载出的 `ClusterSpec` 与原始 v1alpha1 完全相等。
+无法自动迁移的字段直接报错并给出人工步骤（例如 YAML 输入、`[storage]` 写了
+`kind = "nfs"` 却缺 `server`/`path`、`[storage]` 有 server/path 却没有 kind）。
+
+### v1alpha1 → v1alpha2 对照表
+
+| 主题 | v1alpha1 | v1alpha2 |
+|---|---|---|
+| 版本 | `version = "v1alpha1"` | `version = "v1alpha2"` |
+| 发行版 | `[kubernetes] distribution = "k8s" \| "k3s"` | `"kubeadm" \| "k3s"`（`"k8s"` 仍作为别名接受） |
+| 容器运行时 | `[kubernetes] runtime = "containerd" \| "crio"` | `[runtime] kind = "containerd" \| "crio"` |
+| 动态存储 | `[storage] kind/default/server/path` | `[addons.local-path]` / `[addons.nfs-subdir]`；`values` 中写 `default-class`、`server`、`path` |
+| addon | 无 | `[addons.<name>] enabled/version/source/values/raw-values` |
+| 包来源 | `[artifacts] offline-dir/zone` | `[packages] base/os/delivery/verify/trusted-keys`；`[artifacts]` 继续接受 |
+| 私有仓库 | `[registry] kind = docker-registry \| zot \| harbor` | 同上，另加预留的 `kind = "external"`（需 `address`） |
+| SSH 提权/主机密钥 | `[ssh] become/become-password/known-hosts` | 相同 |
+| network / ha / nodes / ssh.auth | — | 相同 |
+
+v1alpha2 示例（`kurin create config` 的输出）：
+
+```toml
+version = "v1alpha2"
+name = "prod"
+
+[kubernetes]
+version = "1.33.1"
+distribution = "kubeadm"        # "kubeadm"（原 "k8s"）| "k3s"
+
+[runtime]
+kind = "containerd"             # "containerd" | "crio"
+
+[network.cni]
+kind = "calico"
+
+[ssh]
+user = "root"
+
+[ssh.auth]
+method = "password"
+password = { env = "KURIN_SSH_PASSWORD" }
+
+[nodes.cp-1]
+address = "192.168.10.11"
+role = "control-plane"
+
+[addons.metrics-server]
+enabled = true
+
+[addons.local-path]             # 取代 v1alpha1 的 [storage]
+enabled = true
+values = { default-class = true }
+```
+
+### `[addons.<name>]`（v1alpha2）
+
+| 字段 | 含义 |
+|---|---|
+| `enabled` | 是否安装；声明该表即默认 `true`，写 `false` 可关闭 |
+| `version` | addon 版本；不写取内置目录/包里的默认版本 |
+| `source` | 外部 addon 包（`oci://…`、`file://…`） |
+| `values` | 受 addon 的 values schema 校验的参数（WP-41） |
+| `raw-values` | 透传给 Helm、**不校验**的高级参数 |
+
+内置 addon 名单（WP-46 起提供具体内容）：`metrics-server`、`local-path`、
+`nfs-subdir`、`ingress-nginx`、`cert-manager`、`metallb`、`headlamp`、
+`kube-prometheus-stack`。名单之外的名字必须带 `source`（外部包），否则加载期
+报 `unknown addon`。`addons.local-path` 与 `addons.nfs-subdir` 不能同时启用
+（一个集群只有一个动态存储 provisioner）。
+
+### `[packages]`（v1alpha2）
+
+| 字段 | 含义 |
+|---|---|
+| `base` | base 包 URI（`oci://` / `file://` / `oci-layout://`）；不写用内置清单 |
+| `os` | 按 OS 的包 URI 列表；不写按节点 facts 自动匹配 |
+| `delivery` | `auto`（默认）\| `preload` \| `registry` |
+| `verify` | `none`（默认）\| `digest` \| `signature` |
+| `trusted-keys` | cosign 公钥路径；`verify = "signature"` 时必填 |
+
+完整字段一览（v1alpha1），按段组织：
 
 ```toml
 version = "v1alpha1"          # 必填，schema 版本
@@ -144,7 +240,12 @@ join 时 CLI 显式警告）。
   控制面镜像走 `imageRepository`（seed 到 `library` 项目）
 - 离线：zot / docker-registry / harbor 的安装包都进 `kurin artifact` bundle
 
-### `[storage]`（动态存储）
+### `[storage]`（动态存储，仅 v1alpha1）
+
+> v1alpha2 移除了 `[storage]`：同一配置写成 `[addons.local-path]` 或
+> `[addons.nfs-subdir]`（`values = { default-class, server, path }`）。
+> `kurin config migrate` 自动完成映射；加载 v1alpha1 时 `[storage]` 也会被
+> 转换为对应的 addon 条目，所以两个版本得到同一个 `ClusterSpec`。
 
 | kind | StorageClass | 说明 |
 |---|---|---|

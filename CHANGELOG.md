@@ -3,6 +3,24 @@
 All notable changes to kurin. Format follows Keep a Changelog; semver.
 
 ### Added
+- Schema `v1alpha2` (WP-21): new configs may use `version = "v1alpha2"`
+  with `[runtime] kind` (replacing `kubernetes.runtime`),
+  `kubernetes.distribution = "kubeadm" | "k3s"` (`"k8s"` remains an
+  alias), `[packages]`, `[addons.<name>]`
+  (`enabled/version/source/values/raw-values`, unknown names rejected),
+  `[registry] kind = "external"` (reserved) and no `[storage]`
+  (`addons.local-path` / `addons.nfs-subdir` replace it). The loader
+  dispatches on `version`; both versions lower to the same `ClusterSpec`,
+  so v1alpha1 files keep loading and behaving identically.
+- `kurin config migrate -f old.toml [-o new.toml]`: rewrites a v1alpha1
+  document as v1alpha2 with `toml_edit`, preserving comments, blank lines
+  and key order. The result is verified to load to an identical
+  `ClusterSpec`; fields without an automatic mapping fail with the manual
+  step. Without `-o` the document is printed to stdout.
+- `kurin create config` now prints the v1alpha2 example by default;
+  `--schema-version v1alpha1` prints the old one.
+- `docs/configuration.md`: v1alpha1/v1alpha2 comparison table and the
+  v1alpha2 `[addons]` / `[packages]` reference.
 - Secret references (WP-20): every secret config field (`ssh.auth.password`,
   `ssh.auth.passphrase`, `ssh.become-password`, node overrides and
   `registry.password`) now accepts `{ env = "VAR" }` and

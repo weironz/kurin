@@ -199,6 +199,8 @@ impl RegistryInstall {
             RegistryKind::DockerRegistry => "docker-registry",
             RegistryKind::Zot => "zot",
             RegistryKind::Harbor => "harbor-installer",
+            // Reserved: an external registry installs nothing on nodes.
+            RegistryKind::External => "external",
         }
     }
 
@@ -252,6 +254,8 @@ impl RegistryInstall {
                 // values with sed instead of writing a partial file.
                 vec![]
             }
+            // Reserved: nothing is installed for an external registry.
+            RegistryKind::External => vec![],
         }
     }
 }
@@ -413,6 +417,12 @@ impl Task for RegistryInstall {
                         out.stderr.trim()
                     ));
                 }
+            }
+            RegistryKind::External => {
+                return Err(miette::miette!(
+                    "registry.kind = \"external\" installs nothing on nodes; \
+                     remove the role = \"registry\" node or pick a hosted kind"
+                ))
             }
             RegistryKind::Harbor => {
                 // The offline installer carries its images; docker itself is
