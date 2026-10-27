@@ -31,7 +31,7 @@ oci-spec.workspace = true
 schemars.workspace = true
 jsonschema.workspace = true
 thiserror.workspace = true
+tempfile.workspace = true
 
 [dev-dependencies]
-tempfile.workspace = true
 insta.workspace = true

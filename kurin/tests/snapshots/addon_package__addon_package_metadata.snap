@@ -1,0 +1,78 @@
+---
+source: kurin/tests/addon_package.rs
+expression: meta
+---
+{
+  "schema": 1,
+  "name": "metrics-server",
+  "kind": "addon",
+  "version": "1.0.0",
+  "kurin": ">=0.4.0, <0.6.0",
+  "created": "2026-10-28T00:00:00Z",
+  "distribution": "addon",
+  "arch": [
+    "amd64"
+  ],
+  "components": [
+    {
+      "id": "addon/metrics-server",
+      "version": "1.0.0"
+    }
+  ],
+  "artifacts": [
+    {
+      "name": "addon.yaml",
+      "kind": "manifest",
+      "version": "1.0.0",
+      "arch": "amd64",
+      "digest": "sha256:b5ba5ec5d76b6a01eedc612f7fe506d3727a2efafe72610714920e9c9bf755fb",
+      "size": 715,
+      "upstream": "<addon dir>"
+    },
+    {
+      "name": "README.md",
+      "kind": "manifest",
+      "version": "1.0.0",
+      "arch": "amd64",
+      "digest": "sha256:bc70e26f40b8816eb177813dda1f5f529a27a4641d45aa19cae2348a8c6a5fe9",
+      "size": 7,
+      "upstream": "<addon dir>"
+    },
+    {
+      "name": "charts/demo-1.0.0.tgz",
+      "kind": "manifest",
+      "version": "1.0.0",
+      "arch": "amd64",
+      "digest": "sha256:28b546d1e3acd12edaec4ae4ddd92b6f16454938e50a272358822deb251a6d43",
+      "size": 18,
+      "upstream": "<addon dir>"
+    },
+    {
+      "name": "values.schema.json",
+      "kind": "manifest",
+      "version": "1.0.0",
+      "arch": "amd64",
+      "digest": "sha256:857b428d04777dcb6a8dcad508f234ba54252458c630d64b3adc5e2ed3cf8f64",
+      "size": 131,
+      "upstream": "<addon dir>"
+    },
+    {
+      "name": "values.yaml.j2",
+      "kind": "manifest",
+      "version": "1.0.0",
+      "arch": "amd64",
+      "digest": "sha256:53a65b4465b74a3352243645efea4f9e3d76eec6bb2de0ee56853cb6836b0243",
+      "size": 38,
+      "upstream": "<addon dir>"
+    }
+  ],
+  "images": [],
+  "charts": [
+    {
+      "name": "demo",
+      "version": "1.0.0",
+      "digest": "sha256:28b546d1e3acd12edaec4ae4ddd92b6f16454938e50a272358822deb251a6d43"
+    }
+  ],
+  "os": []
+}

@@ -126,28 +126,35 @@ pub fn resolve_selection(
             continue;
         }
         let addon = match &user.source {
-            Some(source) => Addon::from_source(source)?,
+            Some(source) => load_addon_source(source, name)?,
             None => match embedded.take(name) {
                 Some(addon) => addon,
-                // The built-in catalog lands in WP-46; until then a known
-                // built-in name is deferred instead of failing every
-                // quick-create config that enables it.
-                None if kurin_config::v1alpha2::BUILTIN_ADDONS.contains(&name.as_str()) => {
-                    tracing::warn!(
-                        addon = %name,
-                        "built-in addon catalog is empty until WP-46; skipping this addon"
-                    );
-                    continue;
-                }
-                None => {
-                    return Err(AddonError::invalid(
-                        name,
-                        format!(
-                            "addon `{name}` is enabled but not provided by the built-in catalog \
-                             (empty until WP-46); set `source = \"dir:///…\"` or pull an addon package"
-                        ),
-                    ))
-                }
+                // `package create base --addons` embeds the selected
+                // addons under `addons/<name>/` (WP-45), so an offline
+                // base package provides them without a separate source.
+                None => match load_addon_from_base(cluster, name) {
+                    Some(result) => result?,
+                    None => {
+                        // The built-in catalog lands in WP-46; until then a
+                        // known built-in name is deferred instead of failing
+                        // every quick-create config that enables it.
+                        if kurin_config::v1alpha2::BUILTIN_ADDONS.contains(&name.as_str()) {
+                            tracing::warn!(
+                                addon = %name,
+                                "built-in addon catalog is empty until WP-46; skipping this addon"
+                            );
+                            continue;
+                        }
+                        return Err(AddonError::invalid(
+                            name,
+                            format!(
+                                "addon `{name}` is enabled but not provided by the built-in catalog \
+                                 (empty until WP-46) or the selected base package; set \
+                                 `source = \"dir:///…\"` or pull an addon package"
+                            ),
+                        ));
+                    }
+                },
             },
         };
         if addon.name() != name {
@@ -184,6 +191,27 @@ pub fn resolve_selection(
     }
     validate_selection(cluster, facts, &selected)?;
     Ok(selected)
+}
+
+/// Load an addon from an explicit `source`: a directory, an addon
+/// package, or a **base** package that embedded it under
+/// `addons/<name>/` (WP-45).
+fn load_addon_source(source: &str, name: &str) -> Result<Addon, AddonError> {
+    match Addon::from_source(source) {
+        Ok(addon) => Ok(addon),
+        Err(first) => Addon::from_base_package(source, name).map_err(|_| first),
+    }
+}
+
+/// Load an addon from the cluster's selected base package, when one is
+/// configured (WP-45: `package create base --addons` embeds it). `None`
+/// means no base package is selected.
+fn load_addon_from_base(cluster: &Cluster, name: &str) -> Option<Result<Addon, AddonError>> {
+    let base = cluster.packages.base.as_deref()?;
+    if let Some(package) = kurin_artifact::preload::cached_package(base) {
+        return Some(Addon::from_opened_base(package, base, name));
+    }
+    Some(Addon::from_base_package(base, name))
 }
 
 /// The cross-addon rules no single addon can violate alone (03 §4.5).
@@ -422,13 +450,43 @@ fn add_install_tasks(b: &mut PlanBuilder<'_>) -> Result<()> {
     let selected =
         resolve_selection(b.cluster(), Some(b.facts())).map_err(|err| miette::miette!("{err}"))?;
     let phase = b.phase("addons");
+    // Preload delivery (04 §5.1): every Kubernetes node imports the
+    // addon's images before the addon is applied. Registry delivery
+    // (04 §5.2) pushes them once in the registry phase instead.
+    let preload = crate::tasks::effective_delivery(b.cluster(), b.run().sources.as_ref())
+        == kurin_config::v1alpha2::Delivery::Preload
+        && (b.run().sources.is_offline() || b.run().sources.zone == kurin_core::zone::Zone::Cn);
+    let nodes: Vec<(kurin_config::Node, Arch)> = if preload {
+        b.nodes()
+            .k8s()
+            .map(|node| Ok((node.clone(), b.facts().arch(&node.name)?)))
+            .collect::<Result<Vec<_>>>()?
+    } else {
+        Vec::new()
+    };
     let mut indices: BTreeMap<String, TaskIdx> = BTreeMap::new();
     let mut requires: Vec<(String, Vec<String>)> = Vec::new();
     for entry in selected {
         let name = entry.addon.name().to_string();
+        let images = entry.addon.manifest().spec.images.clone();
         requires.push((name.clone(), entry.addon.manifest().spec.requires.clone()));
         let task = AddonInstallTask::new(b.cluster(), b.run(), b.op(), entry.addon, entry.user);
-        indices.insert(name, b.add(phase, Arc::new(task)));
+        let install = b.add(phase, Arc::new(task));
+        indices.insert(name.clone(), install);
+        if !images.is_empty() {
+            for (node, arch) in &nodes {
+                let image_task = crate::addon::images::AddonImagesTask::new(
+                    b.cluster(),
+                    node,
+                    *arch,
+                    &name,
+                    images.clone(),
+                    b.run(),
+                );
+                let images_idx = b.add(phase, Arc::new(image_task));
+                b.after(install, images_idx);
+            }
+        }
     }
     for (name, deps) in &requires {
         let Some(&task) = indices.get(name) else {

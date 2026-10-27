@@ -35,7 +35,9 @@
 pub mod apply;
 pub mod engine;
 pub mod error;
+pub mod images;
 pub mod load;
+pub mod package;
 pub mod render;
 pub mod schema;
 pub mod source;
@@ -51,7 +53,9 @@ pub use engine::{
 };
 
 pub use error::AddonError;
+pub use images::AddonImagesTask;
 pub use load::{embedded_from, Addon, Catalog};
+pub use package::{addon_extras, create_addon, AddonPackageError, AddonPackageOptions};
 pub use render::{RenderRequest, RenderedAddon, RenderedManifest, RenderedValues};
 pub use schema::{schema, schema_json};
 pub use source::{AddonFiles, BuiltinCatalog, DirFiles, EmbeddedFiles, PackageFiles};

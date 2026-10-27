@@ -85,6 +85,18 @@ pub async fn open_package(uri: &str) -> Result<Arc<PackageSource>, PreloadError>
     Ok(package)
 }
 
+/// Look up a package already opened by this process (see
+/// [`open_package`]). The run resolves its payload source before planning,
+/// so a registry-backed base package is available here without a second
+/// pull (WP-45: addon definitions embedded in the base package).
+pub fn cached_package(uri: &str) -> Option<Arc<PackageSource>> {
+    PACKAGES
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(uri)
+        .cloned()
+}
+
 /// One blob a registry push needs: a local file plus its digest/size and
 /// whether it is a manifest (uploaded through the manifests API) or a
 /// content blob.
@@ -332,6 +344,77 @@ impl PayloadSet {
             PayloadSet::Package { package } => image_from_package(package, spec),
         }
     }
+
+    /// One digest-pinned image **reference** (addon `spec.images`, WP-45)
+    /// as the selected platform's single-image payload.
+    ///
+    /// Addon images are declared by reference rather than by artifact
+    /// manifest entry, so they are resolved by reference: from the cache
+    /// (online), from the package's image list, or not at all (a legacy
+    /// bundle predates addons).
+    ///
+    /// # Errors
+    ///
+    /// [`PreloadError::MissingImage`] when the source does not carry the
+    /// image (or this architecture's sub-manifest).
+    pub async fn image_ref(
+        &self,
+        reference: &str,
+        arch: Arch,
+    ) -> Result<ImagePayload, PreloadError> {
+        match self {
+            PayloadSet::Online { store, zone } => {
+                let dir = store.fetch_image_ref(reference, arch, *zone).await?;
+                let (_, digest) = split_reference_digest(reference)?;
+                image_from_cache_dir(&dir, reference, arch, &digest)
+            }
+            PayloadSet::Legacy { .. } => Err(PreloadError::MissingImage {
+                reference: reference.to_string(),
+            }),
+            PayloadSet::Package { package } => image_from_package_ref(package, reference, arch),
+        }
+    }
+
+    /// One digest-pinned image reference as a registry push payload (the
+    /// registry delivery strategy, 04 §5.2).
+    ///
+    /// # Errors
+    ///
+    /// [`PreloadError::MissingImage`] when the source does not carry the
+    /// image.
+    pub async fn image_for_push_ref(
+        &self,
+        reference: &str,
+        arch: Arch,
+    ) -> Result<ImagePushPayload, PreloadError> {
+        match self {
+            PayloadSet::Online { store, zone } => {
+                let dir = store.fetch_image_ref(reference, arch, *zone).await?;
+                image_push_from_dir(&dir, reference)
+            }
+            PayloadSet::Legacy { .. } => Err(PreloadError::MissingImage {
+                reference: reference.to_string(),
+            }),
+            PayloadSet::Package { package } => {
+                image_push_from_package_ref(package, reference, arch)
+            }
+        }
+    }
+}
+
+/// Split a digest-pinned reference into its name and sha256 hex.
+fn split_reference_digest(reference: &str) -> Result<(String, String), PreloadError> {
+    let (name, digest) = reference
+        .split_once('@')
+        .ok_or_else(|| PreloadError::MissingImage {
+            reference: reference.to_string(),
+        })?;
+    let hex = digest
+        .strip_prefix("sha256:")
+        .ok_or_else(|| PreloadError::MissingImage {
+            reference: reference.to_string(),
+        })?;
+    Ok((name.to_string(), hex.to_string()))
 }
 
 /// One image resolved for one architecture: everything needed to write a
@@ -474,19 +557,29 @@ fn image_from_cache(
     spec: &ArtifactSpec,
     expected_index: &str,
 ) -> Result<ImagePayload, PreloadError> {
-    let chain = image_chain(dir, spec.arch, expected_index)?;
+    image_from_cache_dir(dir, &spec.url(), spec.arch, expected_index)
+}
+
+/// [`image_from_cache`] for a reference-declared image (addon images).
+fn image_from_cache_dir(
+    dir: &Path,
+    reference: &str,
+    arch: Arch,
+    expected_index: &str,
+) -> Result<ImagePayload, PreloadError> {
+    let chain = image_chain(dir, arch, expected_index)?;
     let index_bytes = std::fs::read(dir.join("index.json"))?;
-    let (manifest, media_type, size) = platform_entry(&index_bytes, spec.arch)?;
+    let (manifest, media_type, size) = platform_entry(&index_bytes, arch)?;
     let mut blobs = Vec::with_capacity(chain.blobs.len());
     for digest in &chain.blobs {
         blobs.push(digest_from_hex(digest)?);
     }
     Ok(ImagePayload {
-        reference: spec.url(),
+        reference: reference.to_string(),
         manifest,
         manifest_media_type: media_type,
         manifest_size: size,
-        arch: spec.arch,
+        arch,
         blobs,
         source: BlobDir::Cache {
             dir: dir.to_path_buf(),
@@ -500,19 +593,27 @@ fn image_from_package(
     package: &PackageSource,
     spec: &ArtifactSpec,
 ) -> Result<ImagePayload, PreloadError> {
+    image_from_package_ref(package, &spec.url(), spec.arch)
+}
+
+/// [`image_from_package`] for a reference-declared image (addon images).
+fn image_from_package_ref(
+    package: &PackageSource,
+    reference: &str,
+    arch: Arch,
+) -> Result<ImagePayload, PreloadError> {
     let meta = package.manifest()?;
-    let reference = spec.url();
     let image = meta
         .images
         .iter()
         .find(|i| i.reference == reference)
         .ok_or_else(|| PreloadError::MissingImage {
-            reference: reference.clone(),
+            reference: reference.to_string(),
         })?;
-    if !image.arch.iter().any(|a| a == spec.arch.as_str()) {
+    if !image.arch.iter().any(|a| a == arch.as_str()) {
         return Err(PreloadError::MissingImagePlatform {
-            reference,
-            arch: spec.arch.as_str().to_string(),
+            reference: reference.to_string(),
+            arch: arch.as_str().to_string(),
         });
     }
     let index_digest = package_digest(image)?;
@@ -522,7 +623,7 @@ fn image_from_package(
         .blobs()
         .open_blob(&index_digest)?
         .read_to_end(&mut index_bytes)?;
-    let (manifest_entry, media_type, size) = platform_entry(&index_bytes, spec.arch)?;
+    let (manifest_entry, media_type, size) = platform_entry(&index_bytes, arch)?;
 
     // The selected manifest names the config and layers to carry.
     let mut manifest_bytes = Vec::new();
@@ -540,11 +641,11 @@ fn image_from_package(
         blobs.push(layer.digest().clone());
     }
     Ok(ImagePayload {
-        reference,
+        reference: reference.to_string(),
         manifest: manifest_entry,
         manifest_media_type: media_type,
         manifest_size: size,
-        arch: spec.arch,
+        arch,
         blobs,
         source: BlobDir::Store(layout.blobs().clone()),
     })
@@ -599,28 +700,28 @@ fn image_push_from_package(
     package: &PackageSource,
     spec: &ArtifactSpec,
 ) -> Result<ImagePushPayload, PreloadError> {
+    image_push_from_package_ref(package, &spec.url(), spec.arch)
+}
+
+/// [`image_push_from_package`] for a reference-declared image (addon
+/// images).
+fn image_push_from_package_ref(
+    package: &PackageSource,
+    reference: &str,
+    _arch: Arch,
+) -> Result<ImagePushPayload, PreloadError> {
     let meta = package.manifest()?;
-    let reference = spec.url();
     let image = meta
         .images
         .iter()
         .find(|i| i.reference == reference)
         .ok_or_else(|| PreloadError::MissingImage {
-            reference: reference.clone(),
+            reference: reference.to_string(),
         })?;
     let index_digest = package_digest(image)?;
     let source = PushSource::Store(package.layout().blobs().clone());
-    let index_bytes = source.read(&index_digest)?;
-    let mut blobs = Vec::new();
-    let mut seen = std::collections::HashSet::new();
-    collect_index(&index_bytes, &source, &mut blobs, &mut seen)?;
-    Ok(ImagePushPayload {
-        reference,
-        index_digest: index_digest.to_string(),
-        index_bytes,
-        media_type: "application/vnd.oci.image.index.v1+json".to_string(),
-        blobs,
-    })
+    let root_bytes = source.read(&index_digest)?;
+    push_payload(root_bytes, source, reference)
 }
 
 fn image_push_from_dir(dir: &Path, reference: &str) -> Result<ImagePushPayload, PreloadError> {
@@ -628,20 +729,46 @@ fn image_push_from_dir(dir: &Path, reference: &str) -> Result<ImagePushPayload, 
     let index_bytes = std::fs::read(&index_path).map_err(|e| PreloadError::Io {
         detail: format!("read {}: {e}", index_path.display()),
     })?;
+    push_payload(index_bytes, PushSource::Dir(dir.to_path_buf()), reference)
+}
+
+/// Build the push payload for one image root document: an index (every
+/// child manifest and blob) or a single-platform manifest (config and
+/// layers only).
+fn push_payload(
+    root_bytes: Vec<u8>,
+    source: PushSource,
+    reference: &str,
+) -> Result<ImagePushPayload, PreloadError> {
     let index_digest = {
         let mut hasher = Sha256::new();
-        hasher.update(&index_bytes);
+        hasher.update(&root_bytes);
         format!("sha256:{:x}", hasher.finalize())
     };
-    let source = PushSource::Dir(dir.to_path_buf());
+    let is_index = serde_json::from_slice::<serde_json::Value>(&root_bytes)
+        .ok()
+        .and_then(|v| {
+            v.get("manifests")
+                .and_then(|m| m.as_array())
+                .map(|m| !m.is_empty())
+        })
+        .unwrap_or(false);
     let mut blobs = Vec::new();
     let mut seen = std::collections::HashSet::new();
-    collect_index(&index_bytes, &source, &mut blobs, &mut seen)?;
+    if is_index {
+        collect_index(&root_bytes, &source, &mut blobs, &mut seen)?;
+    } else {
+        collect_manifest(&root_bytes, &source, &mut blobs, &mut seen)?;
+    }
     Ok(ImagePushPayload {
         reference: reference.to_string(),
         index_digest,
-        index_bytes,
-        media_type: "application/vnd.oci.image.index.v1+json".to_string(),
+        index_bytes: root_bytes,
+        media_type: if is_index {
+            "application/vnd.oci.image.index.v1+json".to_string()
+        } else {
+            "application/vnd.oci.image.manifest.v1+json".to_string()
+        },
         blobs,
     })
 }
@@ -719,10 +846,36 @@ fn package_digest(image: &PackageImageMeta) -> Result<Digest, PreloadError> {
 
 /// The platform-matched manifest descriptor of an image index: its
 /// digest, media type and size.
+///
+/// A digest-pinned image may be a single-platform manifest rather than
+/// an index (addon images, WP-45); then the document itself is the
+/// selected manifest.
 fn platform_entry(
     index_bytes: &[u8],
     arch: Arch,
 ) -> Result<(Digest, MediaType, u64), PreloadError> {
+    // Sniff the document first: a single-platform image manifest has no
+    // `manifests` array, and the index type rejects it.
+    let is_index = serde_json::from_slice::<serde_json::Value>(index_bytes)
+        .ok()
+        .and_then(|v| {
+            v.get("manifests")
+                .and_then(|m| m.as_array())
+                .map(|m| !m.is_empty())
+        })
+        .unwrap_or(false);
+    if !is_index {
+        let manifest =
+            ImageManifest::from_reader(index_bytes).map_err(|e| PreloadError::Layout {
+                detail: format!("parse image manifest: {e}"),
+            })?;
+        let digest = digest_from_hex(&format!("sha256:{:x}", Sha256::digest(index_bytes)))?;
+        let media_type = manifest
+            .media_type()
+            .clone()
+            .unwrap_or(MediaType::ImageManifest);
+        return Ok((digest, media_type, index_bytes.len() as u64));
+    }
     let index = ImageIndex::from_reader(index_bytes).map_err(|e| PreloadError::Layout {
         detail: format!("parse image index: {e}"),
     })?;

@@ -85,6 +85,7 @@
 - WP-16：`storage/*` 标为 online-only（镜像在 bundle 但 bootstrap 不预载，WP-47 接管）；`ha/kube-vip` 镜像 pin 在版本表而非 manifest，标 online-only；`capabilities` 为隐藏命令且恒出 JSON。
 - WP-50：Host 拒绝用 403 `forbidden-host`（§7 清单外）；错误/DTO 采用顶层 `{code,message,diagnostics?}` + camelCase（对齐 WP-60 前端）；默认白名单含 `[::1]`；会话 TTL 24h；新增 `GET /session` 与 `GET /api/v1/healthz`。
 - WP-39：`sigstore` crate 不可用（会引入第二套加密栈/Fulcio/rekor），按 04 §6 预案用 `p256` 实现 cosign simple-signing；新增依赖仅 `p256`（已在依赖图中）。
+- WP-45：chart 作为 file-set 层并在 `charts` 元数据行记录 digest（设计写的是标准 Helm OCI 制品）；`upstream_hosts` 签名改为 `(cluster, run)`；纯 digest 镜像以 digest 作为 mirror reference。
 - WP-38：04 §4 的 `package create base --with-os` 未实现（os 行来自独立 os 包或 base 自带 os 行）；arm64 容器路径仅由 CI/qemu 覆盖。
 - WP-37：kube-ovn 镜像 pin 取自 Docker Hub 上游 manifest；`--cni all` 的 base 包含全部 CNI 镜像（双架构）。
 - WP-36：`registry` 阶段前移到 `artifacts` 之前（节点需先从仓库取文件），所有计划快照的 phase 顺序随之变化；多架构镜像按上游完整 index 推送；Harbor 仅 kubeadm 轨道。
@@ -130,6 +131,7 @@
 （随 WP 完成追加）
 - WP-39：签名包校验、篡改 blob 拒绝、未签名包在 signature 模式拒绝（`cargo test -p kurin-artifact --test transfer`）；CI 工作流需在 tag 上人工验证。
 - WP-49：`just tier3-registry zot`、`docker-registry`、`external`（external 指向 zot）。
+- WP-45：`package create addon -f addons/ingress-nginx/addon.yaml` → `package create base --addons ingress-nginx` → 离线 tier1 create。
 - WP-38：`just tier1-rocky-offline`（先构建 os 包；或分步 `package create os` + `rocky-offline.sh`）。
 - WP-37：`just bundle` 后 `just tier1-offline-cni flannel`、`cilium`、`kube-ovn`（需 multipass）。
 - WP-36：`e2e/tier3/registry.sh zot`；完全断网 3 节点：`KURIN_DISCONNECTED=1 KURIN_BASE_PACKAGE=oci-layout:///abs/base e2e/tier3/registry.sh zot`。
@@ -144,6 +146,7 @@
 - WP-50：`kurin serve` 回环冒烟（一次性登录链接、`/session`、401/403/400、TLS h2）；`cargo clippy -p kurin --features ui`。
 - WP-39：签名包校验、篡改 blob 拒绝、未签名包在 signature 模式拒绝（`cargo test -p kurin-artifact --test transfer`）；CI 工作流需在 tag 上人工验证。
 - WP-49：`just tier3-registry zot`、`docker-registry`、`external`（external 指向 zot）。
+- WP-45：`package create addon -f addons/ingress-nginx/addon.yaml` → `package create base --addons ingress-nginx` → 离线 tier1 create。
 - WP-38：`just tier1-rocky-offline`（先构建 os 包；或分步 `package create os` + `rocky-offline.sh`）。
 - WP-37：`just bundle` 后 `just tier1-offline-cni flannel`、`cilium`、`kube-ovn`（需 multipass）。
 - WP-36：`e2e/tier3/registry.sh zot`；完全断网 3 节点：`KURIN_DISCONNECTED=1 KURIN_BASE_PACKAGE=oci-layout:///abs/base e2e/tier3/registry.sh zot`。
@@ -154,6 +157,7 @@
 - WP-53：导入 3 个集群（1 个不可达），等待一轮采集后核对总览五态与 `collect_error`；刷新去重与操作期间暂停。
 - WP-52：`cargo build -p kurin --features ui && scripts/api-smoke.sh <tier1-config.toml>`（导入 → precheck → create → SSE 日志 → status → delete）。
 - WP-51：`cargo test -p kurin-server --test store`；`rusqlite bundled` 的 musl/zig 交叉编译需在发布机验证。
+- WP-45：`kurin package create addon -f addons/ingress-nginx/addon.yaml -o oci-layout:///tmp/addons/ingress-nginx`，再 `kurin package create base --addons ingress-nginx -o oci-layout:///tmp/base`；离线 tier1 用该 base 创建集群并确认 `addons/ingress-nginx` 与镜像预载任务完成（本机未跑 multipass，包/计划路径已由 `kurin/tests/addon_package.rs` 覆盖）。
 - WP-44：tier1 `addon install/upgrade/remove metrics-server`，观察配置与 `kurin-state` 变化。
 - WP-43：tier1 带 `[addons.x]` 创建，观察 addons 阶段任务与 hooks；`kurin addon remove`（WP-44 CLI 落地后）。
 - WP-44：tier1 上 `kurin addon install metrics-server -f cfg` → `kurin addon upgrade metrics-server -f cfg` → `kurin addon remove metrics-server -f cfg`（内置目录由 WP-46 提供；在此之前用 `source = "dir://…"` 指向 addon 目录）。

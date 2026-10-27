@@ -39,7 +39,7 @@ fn plan_registry_track(
     b: &mut PlanBuilder<'_>,
     ca: Option<&tasks::registry::RegistryCa>,
 ) -> Result<()> {
-    let upstreams = tasks::registry::upstream_hosts(b.run());
+    let upstreams = tasks::registry::upstream_hosts(b.cluster(), b.run());
     let phase = b.phase("registry");
     if !b.cluster().registry_is_external() {
         for node in b.nodes().role(NodeRole::Registry).collect::<Vec<_>>() {

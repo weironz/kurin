@@ -139,6 +139,30 @@ impl RegistryRef {
     pub fn tag(&self) -> Option<&str> {
         self.reference.tag().filter(|t| !t.is_empty())
     }
+
+    /// Parse a plain registry reference without the `oci://` scheme, as
+    /// addon `spec.images` and chart references write them
+    /// (`registry.k8s.io/ingress-nginx/controller:v1.11.3@sha256:…`).
+    /// The scheme is HTTPS except for loopback hosts, exactly like
+    /// [`Self::parse`].
+    pub fn parse_plain(reference: &str) -> Result<Self, RemoteError> {
+        let body = reference.trim();
+        let host_part = registry_host_of(body);
+        if !(host_part.contains('.') || host_part.contains(':') || host_part == "localhost") {
+            return Err(RemoteError::InvalidRef {
+                input: reference.to_string(),
+                detail: "a registry host is required (host/repo[:tag][@digest])".to_string(),
+            });
+        }
+        let reference = Reference::try_from(body).map_err(|e| RemoteError::InvalidRef {
+            input: reference.to_string(),
+            detail: e.to_string(),
+        })?;
+        Ok(Self {
+            reference,
+            insecure: is_loopback_host(host_part),
+        })
+    }
 }
 
 /// The `host[:port]` part of a `host[:port]/repo…` string.
@@ -572,6 +596,51 @@ async fn pull_closure(
         }
     }
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// single-artifact pull (addon charts and images, WP-45)
+// ---------------------------------------------------------------------------
+
+/// Pull one OCI artifact — an image index/manifest, or a Helm chart
+/// artifact — by reference into `layout`, and return its root
+/// descriptor. The whole closure below the root is fetched and every
+/// digest verified by the registry client.
+///
+/// Accepts both the package spelling (`oci://host/repo[:tag]`) and a
+/// plain reference (`registry.k8s.io/ingress-nginx/controller:v1.11.3@sha256:…`),
+/// which is how addon manifests write charts and images.
+///
+/// Use [`crate::transfer::walk_closure`] afterwards to enumerate the
+/// manifest and blob digests the artifact reaches.
+pub async fn pull_artifact(uri: &str, layout: &Layout) -> Result<Descriptor, RemoteError> {
+    let reg = if uri.starts_with("oci://") {
+        RegistryRef::parse(uri)?
+    } else {
+        RegistryRef::parse_plain(uri)?
+    };
+    let auth = resolve_registry_auth(None, None, reg.registry())?;
+    let client = connect(&reg, &auth).await;
+    let reference = reg.reference();
+    let (bytes, digest) = pull_manifest_verified(&client, &auth, reference).await?;
+    let media_type = sniff_media_type(&bytes)?;
+    let size = bytes.len() as u64;
+    store_manifest(layout, &digest, &bytes)?;
+    let root = DescriptorBuilder::default()
+        .media_type(MediaType::from(media_type.as_str()))
+        .digest(digest)
+        .size(size)
+        .build()
+        .map_err(|e| RemoteError::InvalidRef {
+            input: reference.whole(),
+            detail: format!("root descriptor: {e}"),
+        })?;
+    let mut counts = TransferCounts {
+        manifests_moved: 1,
+        ..TransferCounts::default()
+    };
+    pull_closure(&client, &auth, reference, layout, &root, &mut counts).await?;
+    Ok(root)
 }
 
 // ---------------------------------------------------------------------------

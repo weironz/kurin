@@ -627,6 +627,162 @@ impl ArtifactStore {
         }
         Ok(())
     }
+
+    /// Cache directory for a digest-pinned image reference (addon
+    /// images, WP-45): `<root>/addon-images/<slug>-<hash>-<arch>`.
+    pub fn image_ref_dir(&self, reference: &str, arch: Arch) -> PathBuf {
+        let slug: String = reference
+            .chars()
+            .take(80)
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_') {
+                    c
+                } else {
+                    '_'
+                }
+            })
+            .collect();
+        let hash = sha256_hex(reference.as_bytes());
+        self.root.join("addon-images").join(format!(
+            "{}-{}-{}",
+            slug.trim_matches('_'),
+            &hash[..12],
+            arch.as_str()
+        ))
+    }
+
+    /// Pull one digest-pinned image reference (`repo:tag@sha256:…` or
+    /// `repo@sha256:…`) for one architecture into the cache, verifying
+    /// the whole digest chain, and return its cache directory.
+    ///
+    /// Addon images are declared by reference (`spec.images`, 03 §4.2
+    /// rule 1), not by manifest entry name, so they cannot go through
+    /// [`Self::fetch`]; the digest is the pin and the registry is asked
+    /// for exactly that document. Both multi-arch indexes and
+    /// single-platform manifests are accepted.
+    pub async fn fetch_image_ref(
+        &self,
+        reference: &str,
+        arch: Arch,
+        zone: crate::zone::Zone,
+    ) -> Result<PathBuf, ArtifactError> {
+        let reference = crate::zone::rewrite_image_ref(reference, zone);
+        let (name, digest_hex) = split_digest_ref(&reference)?;
+        let (registry, repo) = split_registry_repo(&name)?;
+        let host = if registry == "docker.io" {
+            "registry-1.docker.io".to_string()
+        } else {
+            registry
+        };
+        let dir = self.image_ref_dir(&reference, arch);
+        if dir.is_dir() && verify_image_dir(&dir, arch, &digest_hex).is_ok() {
+            return Ok(dir);
+        }
+        std::fs::create_dir_all(&dir)?;
+        let auth = registry_auth_headers(&host, &repo).await?;
+
+        let top_path = dir.join("index.json");
+        download_verified(
+            &format!("https://{host}/v2/{repo}/manifests/sha256:{digest_hex}"),
+            &top_path,
+            &digest_hex,
+            &reference,
+            &auth.accept_auth,
+        )
+        .await?;
+        let top_raw = std::fs::read(&top_path)?;
+        let top: serde_json::Value = serde_json::from_slice(&top_raw)?;
+        let manifest_path = dir.join("manifest.json");
+        let manifest_digest = if top
+            .get("manifests")
+            .and_then(|m| m.as_array())
+            .is_some_and(|m| !m.is_empty())
+        {
+            let index: OciIndex = serde_json::from_slice(&top_raw)?;
+            let entry = index
+                .manifests
+                .iter()
+                .find(|m| {
+                    m.platform.as_ref().is_some_and(|p| {
+                        p.os == Os::Linux.as_str() && p.architecture == arch.as_str()
+                    })
+                })
+                .ok_or_else(|| ArtifactError::MissingPlatform {
+                    image: reference.clone(),
+                    target: target_key(Os::Linux, arch),
+                })?;
+            let digest = normalize_hash(&entry.digest);
+            download_verified(
+                &format!("https://{host}/v2/{repo}/manifests/sha256:{digest}"),
+                &manifest_path,
+                &digest,
+                &reference,
+                &auth.accept_auth,
+            )
+            .await?;
+            digest
+        } else {
+            // A single-platform image: its manifest is the pinned document.
+            std::fs::write(&manifest_path, &top_raw)?;
+            digest_hex.clone()
+        };
+
+        let manifest: OciManifest = serde_json::from_slice(&std::fs::read(&manifest_path)?)?;
+        for digest in std::iter::once(&manifest.config.digest)
+            .chain(manifest.layers.iter().map(|l| &l.digest))
+        {
+            let hex = normalize_hash(digest);
+            download_verified(
+                &format!("https://{host}/v2/{repo}/blobs/sha256:{hex}"),
+                &dir.join(&hex),
+                &hex,
+                &reference,
+                &auth.bare_auth,
+            )
+            .await?;
+        }
+        let _ = manifest_digest;
+        Ok(dir)
+    }
+}
+
+/// Split a digest-pinned reference into its name part and the sha256
+/// hex: `registry.k8s.io/x/y:v1@sha256:abc` → (`registry.k8s.io/x/y:v1`, `abc`).
+fn split_digest_ref(reference: &str) -> Result<(String, String), ArtifactError> {
+    let (name, digest) =
+        reference
+            .split_once('@')
+            .ok_or_else(|| ArtifactError::InvalidImageRef {
+                reference: reference.to_string(),
+            })?;
+    let hex = digest
+        .strip_prefix("sha256:")
+        .ok_or_else(|| ArtifactError::InvalidImageRef {
+            reference: reference.to_string(),
+        })?;
+    if name.is_empty() || hex.len() != 64 || !hex.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(ArtifactError::InvalidImageRef {
+            reference: reference.to_string(),
+        });
+    }
+    Ok((name.to_string(), hex.to_ascii_lowercase()))
+}
+
+/// Split `host/repo[:tag]` into the registry host and the repository
+/// path (tag dropped): `registry.k8s.io/x/y:v1` → (`registry.k8s.io`, `x/y`).
+fn split_registry_repo(name: &str) -> Result<(String, String), ArtifactError> {
+    let bad = || ArtifactError::InvalidImageRef {
+        reference: name.to_string(),
+    };
+    let (registry, rest) = name.split_once('/').ok_or_else(bad)?;
+    let repo = match rest.rsplit_once(':') {
+        Some((repo, tag)) if !tag.contains('/') => repo,
+        _ => rest,
+    };
+    if registry.is_empty() || repo.is_empty() {
+        return Err(bad());
+    }
+    Ok((registry.to_string(), repo.to_string()))
 }
 
 /// Per-registry auth header set for anonymous pulls. ghcr.io is the one
@@ -725,6 +881,38 @@ pub fn image_chain(
         });
     }
     let index: OciIndex = serde_json::from_slice(&index_raw)?;
+    // A digest-pinned addon image may be a single-platform manifest rather
+    // than an index: then the top document *is* the selected manifest and
+    // its digest is the pin (04 §3.1 keeps whatever the upstream served).
+    if index.manifests.is_empty() {
+        let manifest: OciManifest = serde_json::from_slice(&index_raw)?;
+        let mut blobs = Vec::new();
+        for digest in std::iter::once(&manifest.config.digest)
+            .chain(manifest.layers.iter().map(|l| &l.digest))
+        {
+            let hex = normalize_hash(digest);
+            let blob_path = dir.join(&hex);
+            let actual = sha256_file(&blob_path)?;
+            if actual != hex {
+                return Err(ArtifactError::ChecksumMismatch {
+                    name: "image".to_string(),
+                    path: blob_path,
+                    expected: hex,
+                    actual,
+                });
+            }
+            blobs.push(hex);
+        }
+        return Ok(ImageChain {
+            index: expected_index.to_string(),
+            index_size: index_raw.len() as u64,
+            media_type: index
+                .media_type
+                .unwrap_or_else(|| "application/vnd.oci.image.manifest.v1+json".to_string()),
+            manifest: expected_index.to_string(),
+            blobs,
+        });
+    }
     let entry = index
         .manifests
         .iter()

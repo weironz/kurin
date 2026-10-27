@@ -2,6 +2,32 @@
 
 All notable changes to kurin. Format follows Keep a Changelog; semver.
 
+### Added (WP-45)
+- `kurin package create addon -f addons/<name>/addon.yaml` builds an
+  offline-installable addon package (04 §3.4): every addon file becomes a
+  file-set layer, an `oci://` chart is pulled into the package and
+  `addon.yaml` is rewritten to the in-package archive, and every
+  `spec.images` reference is pulled at its pinned digest (index or
+  single-platform manifest) with the selected architectures'
+  sub-manifests and blobs. `--arch` defaults to the addon's
+  `spec.compat.arch`, else the host.
+- `kurin package create base --addons a,b` embeds the selected addons:
+  their files under `addons/<name>/`, their chart rows and their images
+  join the base package, so one base package installs the selected
+  addons offline. Entries are built-in catalog names, directories,
+  `addon.yaml` paths or addon package sources.
+- offline addon delivery (04 §5): preload adds an
+  `addons/<name>/images@<node>` task per Kubernetes node that imports the
+  addon's images before the addon is applied; registry delivery pushes
+  them once in `registry/push` and adds their upstream hosts to the
+  runtime mirror set. Addon images are resolved by reference from the
+  package or the cache (`PayloadSet::image_ref` /
+  `image_for_push_ref`), including single-platform manifests.
+- coverage validation now checks the selected addons: a base package
+  missing an addon image (or its files) is refused before anything
+  touches a node, and `Addon::from_base_package` lets the selection read
+  an addon straight out of `[packages] base`.
+
 ### Changed (WP-49)
 - v1alpha2 defaults a `role = "registry"` node without an explicit
   `[registry] kind` to `zot` (the OCI-native registry that carries

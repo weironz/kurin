@@ -156,8 +156,7 @@ pub(crate) async fn validate_payload(
         let report = kurin_components::component::coverage::render_gaps(uri, &meta, &gaps);
         return Err(miette::miette!("{}", report.trim_end()));
     }
-
-    // WP-38: an offline run must find a matching os package for every
+// WP-38: an offline run must find a matching os package for every
     // node — validation time, not mid-install.
     if spec.packages.offline_dir.is_some() || spec.packages.base.is_some() {
         let sources = crate::sources_for(spec)?;
@@ -177,7 +176,49 @@ pub(crate) async fn validate_payload(
             }
         }
     }
+
+    // Addon payloads (WP-45): every enabled addon's images and files must
+    // be in the package, or the offline install would have a gap.
+    let arches = node_arches(spec, facts);
+    if let Ok(selected) = kurin_components::addon::engine::resolve_selection(spec, Some(facts)) {
+        let mut addon_gaps: Vec<String> = Vec::new();
+        for entry in &selected {
+            let prefix = format!("addons/{}/", entry.addon.name());
+            addon_gaps.extend(kurin_components::component::coverage::addon_gaps(
+                &meta,
+                &entry.addon,
+                &arches,
+                &prefix,
+            ));
+        }
+        if !addon_gaps.is_empty() {
+            let mut report = format!("base package {uri} does not cover the selected addons:");
+            for gap in &addon_gaps {
+                report.push_str("\n  - ");
+                report.push_str(gap);
+            }
+            return Err(miette::miette!("{report}"));
+        }
+    }
     Ok(())
+}
+
+/// The architectures the cluster's nodes use: discovered facts win, a
+/// node without facts falls back to its configured `arch`.
+fn node_arches(spec: &Cluster, facts: &FactsTable) -> Vec<kurin_core::arch::Arch> {
+    let mut out = Vec::new();
+    for node in &spec.nodes {
+        let arch = facts
+            .get(&node.name)
+            .map(|f| f.arch)
+            .or_else(|| node.arch.as_deref().and_then(kurin_core::arch::Arch::parse));
+        if let Some(arch) = arch {
+            if !out.contains(&arch) {
+                out.push(arch);
+            }
+        }
+    }
+    out
 }
 
 #[cfg(test)]

@@ -219,6 +219,60 @@ fn arch_nodes(spec: &Cluster, facts: &FactsTable) -> BTreeMap<Arch, Vec<String>>
     out
 }
 
+/// Gaps in the addon payloads a package must carry (WP-45): every image
+/// an enabled addon declares must be in the package for every cluster
+/// architecture, and the addon's files must be under `addons/<name>/`
+/// (a standalone addon package carries them at the root, so pass an
+/// empty `prefix`).
+///
+/// The check is by reference and architecture, exactly what the offline
+/// install needs: the preload path resolves each declared image from the
+/// package by reference, so a missing one is a hard gap.
+pub fn addon_gaps(
+    meta: &PackageManifest,
+    addon: &crate::addon::Addon,
+    arches: &[Arch],
+    prefix: &str,
+) -> Vec<String> {
+    let name = addon.name();
+    let mut gaps = Vec::new();
+    let spec = &addon.manifest().spec;
+
+    let yaml = format!("{prefix}addon.yaml");
+    if !meta.artifacts.iter().any(|a| a.name == yaml) {
+        gaps.push(format!("addon {name}: `{yaml}` is not in the package"));
+    }
+    if let Some(helm) = spec.install.helm() {
+        if !helm.chart.starts_with("oci://") {
+            let chart = format!("{prefix}{}", helm.chart);
+            if !meta.artifacts.iter().any(|a| a.name == chart) {
+                gaps.push(format!(
+                    "addon {name}: chart `{chart}` is not in the package"
+                ));
+            }
+        }
+    }
+    for reference in &spec.images {
+        let image = meta.images.iter().find(|i| i.reference == *reference);
+        match image {
+            None => gaps.push(format!(
+                "addon {name}: image {reference} is not in the package"
+            )),
+            Some(image) => {
+                for arch in arches {
+                    if !image.arch.iter().any(|a| a == arch.as_str()) {
+                        gaps.push(format!(
+                            "addon {name}: image {reference} does not cover {}",
+                            arch.as_str()
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    gaps
+}
+
 /// The package's component ids as a readable list.
 fn component_list(meta: &PackageManifest) -> String {
     let ids: Vec<&str> = meta.components.iter().map(|c| c.id.as_str()).collect();

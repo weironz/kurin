@@ -29,6 +29,78 @@ use kurin_core::run::RunContext;
 /// k3s containerd store when the service starts.
 const K3S_IMAGES_DIR: &str = "/var/lib/rancher/k3s/agent/images";
 
+/// A filesystem-safe slug for an image reference (`registry.k8s.io/x/y:v1`
+/// → `registry-k8s-io-x-y-v1`), used in remote tar names.
+pub(crate) fn image_slug(reference: &str) -> String {
+    let slug: String = reference
+        .chars()
+        .take(60)
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .collect();
+    slug.trim_matches('-').to_string()
+}
+
+/// Where one image's layout tar lands on the node.
+///
+/// The k3s name carries the pinned digest, so a package bump lands a new
+/// file and `check` sees the drift (k3s itself only reads the directory
+/// at service start).
+pub(crate) fn remote_image_tar(
+    distribution: Distribution,
+    name: &str,
+    arch: Arch,
+    reference: &str,
+) -> String {
+    let digest = reference
+        .rsplit_once('@')
+        .map(|(_, d)| d)
+        .unwrap_or(reference);
+    let short = &digest[digest.len().saturating_sub(12)..];
+    match distribution {
+        Distribution::K3s => {
+            format!(
+                "{K3S_IMAGES_DIR}/kurin-{name}-{}-{short}.tar",
+                arch.as_str()
+            )
+        }
+        Distribution::K8s => format!("/tmp/kurin-img-{name}-{}.tar", arch.as_str()),
+    }
+}
+
+/// Stream one image payload to the node and import it (containerd), or
+/// leave the tar for k3s to import at service start. Shared by the
+/// bootstrap image task and the addon image task (WP-45).
+pub(crate) async fn deliver_image(
+    session: &dyn Session,
+    distribution: Distribution,
+    image: &kurin_artifact::preload::ImagePayload,
+    label: &str,
+    remote: &str,
+) -> Result<()> {
+    // Stream the layout tar into a temp file (never into memory), then
+    // stream that file to the node.
+    let tar = image.to_temp_tar()?;
+    let uploaded = session.upload(tar.upload_source(), remote, 0o600).await;
+    let _ = std::fs::remove_file(&tar.path);
+    uploaded?;
+    if distribution == Distribution::K3s {
+        // k3s imports the directory at start; nothing to run now.
+        return Ok(());
+    }
+    let out = session
+        .exec(&format!(
+            "ctr -n k8s.io images import {remote} 2>&1 && rm -f {remote}"
+        ))
+        .await?;
+    if !out.ok() {
+        return Err(miette::miette!(
+            "import {label} failed: {}",
+            out.stderr.lines().last().unwrap_or("")
+        ));
+    }
+    Ok(())
+}
+
 pub struct ImagesImport {
     node: Node,
     arch: Arch,
@@ -195,30 +267,14 @@ impl Task for ImagesImport {
         for name in self.selected_images(&manifest) {
             let spec = manifest.spec(&name, self.arch)?;
             let image = payloads.image(&spec).await?;
-            // Stream the layout tar into a temp file (never into memory),
-            // then stream that file to the node.
-            let tar = image.to_temp_tar()?;
-            let remote = self.remote_tar(&spec);
-            let uploaded = session.upload(tar.upload_source(), &remote, 0o600).await;
-            let _ = std::fs::remove_file(&tar.path);
-            uploaded?;
-            if self.distribution == Distribution::K3s {
-                // k3s imports the directory at start; nothing to run now.
-                continue;
-            }
-            let out = session
-                .exec(&format!(
-                    "ctr -n k8s.io images import {remote} 2>&1 && rm -f {remote}"
-                ))
-                .await?;
-            if !out.ok() {
-                return Err(miette::miette!(
-                    "import {} on {} failed: {}",
-                    spec.name,
-                    self.node.name,
-                    out.stderr.lines().last().unwrap_or("")
-                ));
-            }
+            deliver_image(
+                session,
+                self.distribution,
+                &image,
+                &format!("{} on {}", spec.name, self.node.name),
+                &self.remote_tar(&spec),
+            )
+            .await?;
         }
         Ok(Outcome::Verified)
     }

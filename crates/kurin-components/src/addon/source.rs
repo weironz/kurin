@@ -19,6 +19,7 @@ use oci_spec::image::{Digest, ImageManifest};
 use rust_embed::RustEmbed;
 
 use crate::addon::error::AddonError;
+use crate::addon::spec::ADDON_FILE;
 
 /// The layer annotation carrying a file's package-relative path.
 const TITLE_ANNOTATION: &str = "org.opencontainers.image.title";
@@ -137,7 +138,10 @@ fn walk(root: &Path, rel: &str, out: &mut Vec<String>) {
 /// file tree, with every blob digest-verified on read.
 pub struct PackageFiles {
     source: String,
-    package: PackageSource,
+    package: std::sync::Arc<PackageSource>,
+    /// Package-relative prefix the addon's files live under (empty for a
+    /// standalone addon package, `addons/<name>/` inside a base package).
+    prefix: String,
     files: BTreeMap<String, Digest>,
 }
 
@@ -160,18 +164,65 @@ impl PackageFiles {
     /// package; [`AddonError::Invalid`] when the package is not an
     /// addon package or carries one file twice.
     pub fn open(source: &str) -> Result<Self, AddonError> {
-        let package = PackageSource::open(source).map_err(|e| AddonError::io(source, e))?;
+        let package = std::sync::Arc::new(
+            PackageSource::open(source).map_err(|e| AddonError::io(source, e))?,
+        );
+        Self::from_package(package, source, "", Some(PackageKind::Addon))
+    }
+
+    /// Open the addon subtree `addons/<name>/` of a base package (WP-45:
+    /// `package create base --addons` embeds addon payloads under that
+    /// prefix, so one base package carries the selected addons offline).
+    ///
+    /// # Errors
+    ///
+    /// [`AddonError::Io`] when the source cannot be opened or is not a
+    /// base package; [`AddonError::Invalid`] when it carries no
+    /// `addons/<name>/addon.yaml`.
+    pub fn open_from_base(source: &str, name: &str) -> Result<Self, AddonError> {
+        let package = std::sync::Arc::new(
+            PackageSource::open(source).map_err(|e| AddonError::io(source, e))?,
+        );
+        Self::from_package(
+            package,
+            source,
+            &format!("addons/{name}/"),
+            Some(PackageKind::Base),
+        )
+    }
+
+    /// Wrap an already-opened package (a registry source opened once per
+    /// run by the payload cache) and read one subtree of it.
+    pub fn from_package(
+        package: std::sync::Arc<PackageSource>,
+        source: &str,
+        prefix: &str,
+        expected_kind: Option<PackageKind>,
+    ) -> Result<Self, AddonError> {
         let meta = package.manifest().map_err(|e| AddonError::io(source, e))?;
-        if meta.kind != PackageKind::Addon {
+        if let Some(expected) = expected_kind {
+            if meta.kind != expected {
+                return Err(AddonError::invalid(
+                    source,
+                    format!(
+                        "package kind is `{}`, expected `{}`",
+                        meta.kind.as_str(),
+                        expected.as_str()
+                    ),
+                ));
+            }
+        }
+        let files = read_file_map(&package, source, prefix)?;
+        if !files.contains_key(ADDON_FILE) {
             return Err(AddonError::invalid(
                 source,
-                format!("package kind is `{}`, expected `addon`", meta.kind.as_str()),
+                format!("package carries no `{prefix}{ADDON_FILE}`"),
             ));
         }
-        let files = read_file_map(&package, source)?;
         Ok(PackageFiles {
             source: source.to_string(),
             package,
+            prefix: prefix.to_string(),
             files,
         })
     }
@@ -191,6 +242,7 @@ impl PackageFiles {
 fn read_file_map(
     package: &PackageSource,
     source: &str,
+    prefix: &str,
 ) -> Result<BTreeMap<String, Digest>, AddonError> {
     let root = package
         .layout()
@@ -215,8 +267,16 @@ fn read_file_map(
             else {
                 continue;
             };
+            // A base package carries every addon under its own prefix;
+            // only this addon's subtree belongs to this view.
+            let Some(rel) = title.strip_prefix(prefix) else {
+                continue;
+            };
+            if rel.is_empty() {
+                continue;
+            }
             if files
-                .insert(title.clone(), layer.digest().clone())
+                .insert(rel.to_string(), layer.digest().clone())
                 .is_some()
             {
                 return Err(AddonError::invalid(
@@ -248,11 +308,23 @@ fn read_blob_json<T: serde::de::DeserializeOwned>(
 
 impl AddonFiles for PackageFiles {
     fn origin(&self) -> String {
-        format!("package {source}", source = self.source)
+        if self.prefix.is_empty() {
+            format!("package {source}", source = self.source)
+        } else {
+            format!(
+                "package {source}#{prefix}",
+                source = self.source,
+                prefix = self.prefix
+            )
+        }
     }
 
     fn path_for(&self, rel: &str) -> String {
-        format!("{source}!{rel}", source = self.source)
+        format!(
+            "{source}!{prefix}{rel}",
+            source = self.source,
+            prefix = self.prefix
+        )
     }
 
     fn carries_charts(&self) -> bool {

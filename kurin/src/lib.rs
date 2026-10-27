@@ -36,6 +36,9 @@ pub mod certs {
 pub mod components {
     pub use kurin_components::component::*;
 }
+pub mod addon {
+    pub use kurin_components::addon::*;
+}
 pub mod discover {
     pub use kurin_components::discover::*;
 }

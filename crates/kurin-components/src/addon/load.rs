@@ -78,6 +78,37 @@ impl Addon {
         Self::from_files(files)
     }
 
+    /// Load one addon from a **base** package that embedded it
+    /// (`kurin package create base --addons`, WP-45): its files live
+    /// under `addons/<name>/` in the package's file set.
+    ///
+    /// # Errors
+    ///
+    /// [`AddonError::Io`] when the package cannot be opened;
+    /// [`AddonError::Invalid`] when it is not a base package or does not
+    /// carry this addon; [`AddonError::Parse`] when its `addon.yaml`
+    /// does not parse.
+    pub fn from_base_package(source: &str, name: &str) -> Result<Self, AddonError> {
+        let files = PackageFiles::open_from_base(source, name)?;
+        Self::from_files(files)
+    }
+
+    /// Load one addon from an already-opened package (a registry source
+    /// the run pulled once), reading the `addons/<name>/` subtree.
+    pub fn from_opened_base(
+        package: std::sync::Arc<kurin_artifact::package::PackageSource>,
+        source: &str,
+        name: &str,
+    ) -> Result<Self, AddonError> {
+        let files = PackageFiles::from_package(
+            package,
+            source,
+            &format!("addons/{name}/"),
+            Some(kurin_artifact::package::PackageKind::Base),
+        )?;
+        Self::from_files(files)
+    }
+
     /// Load from a source string: `dir:///path` (or a bare path) loads a
     /// directory, anything else an OCI package.
     ///

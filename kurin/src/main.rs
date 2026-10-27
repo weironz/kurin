@@ -2,7 +2,7 @@
 
 use std::io::IsTerminal;
 use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use clap::{ArgAction, Parser, Subcommand, ValueEnum};
@@ -285,6 +285,31 @@ enum PackageCreateWhat {
         /// comma-separated list (`calico,flannel,cilium,kube-ovn`).
         #[arg(long)]
         cni: Option<String>,
+        /// Addons to embed (`--addons ingress-nginx,metrics-server`):
+        /// each entry is a built-in catalog name, a directory, an
+        /// `addon.yaml` path, or an addon package (`oci-layout://` /
+        /// `file://`). Their files land under `addons/<name>/` and their
+        /// images join the package, so the selected addons install
+        /// offline from this one package.
+        #[arg(long, value_name = "NAMES")]
+        addons: Option<String>,
+        /// Output target: `oci-layout://DIR`, `file://X.tar` or
+        /// `file://X.tar.zst`.
+        #[arg(short, long)]
+        output: String,
+    },
+    /// One addon (addon.yaml + templates + chart + images), installable
+    /// offline (04 §3.4).
+    Addon {
+        /// The addon directory or its `addon.yaml`
+        /// (`-f addons/<name>/addon.yaml`).
+        #[arg(short, long, value_name = "ADDON")]
+        file: PathBuf,
+        /// Architecture(s) whose image sub-manifests to carry,
+        /// comma-separated (default: the addon's `spec.compat.arch`, else
+        /// this machine's).
+        #[arg(long)]
+        arch: Option<String>,
         /// Output target: `oci-layout://DIR`, `file://X.tar` or
         /// `file://X.tar.zst`.
         #[arg(short, long)]
@@ -617,6 +642,7 @@ async fn run(cli: Cli) -> Result<()> {
                 None,
                 arch,
                 None,
+                None,
                 format!("oci-layout://{}", dir.display()),
             )
             .await
@@ -628,14 +654,18 @@ async fn run(cli: Cli) -> Result<()> {
                     distribution,
                     arch,
                     cni,
+                    addons,
                     output,
-                } => package_create_base(kubernetes, distribution, arch, cni, output).await,
+} => package_create_base(kubernetes, distribution, arch, cni, addons, output).await,
                 PackageCreateWhat::Os {
                     target,
                     arch,
                     version,
                     output,
                 } => package_create_os(target, arch, version, output).await,
+                PackageCreateWhat::Addon { file, arch, output } => {
+                    package_create_addon(file, arch, output).await
+                }
             },
             PackageWhat::Inspect {
                 source,
@@ -1155,11 +1185,33 @@ fn resolve_zone(config_zone: Option<&str>) -> Result<kurin::zone::Zone> {
     Ok(zone)
 }
 
+/// Parse `--arch amd64,arm64`. `None` returns an empty list; the caller
+/// decides the default (host arch for a base package, the addon's own
+/// compatibility list for an addon package).
+fn parse_arch_list(arch: Option<&str>) -> Result<Vec<kurin::arch::Arch>> {
+    let Some(list) = arch else {
+        return Ok(Vec::new());
+    };
+    let mut arches = list
+        .split(',')
+        .map(|a| a.trim())
+        .filter(|a| !a.is_empty())
+        .map(|a| match a {
+            "amd64" | "x86_64" => Ok(kurin::arch::Arch::Amd64),
+            "arm64" | "aarch64" => Ok(kurin::arch::Arch::Arm64),
+            other => Err(miette::miette!("unknown arch {other:?} (amd64|arm64)")),
+        })
+        .collect::<miette::Result<Vec<_>>>()?;
+    arches.dedup();
+    Ok(arches)
+}
+
 async fn package_create_base(
     kubernetes: Option<String>,
     distribution: Option<String>,
     arch: Option<String>,
     cni: Option<String>,
+    addons: Option<String>,
     output: String,
 ) -> Result<()> {
     let zone = resolve_zone(None)?;
@@ -1185,23 +1237,21 @@ async fn package_create_base(
     // `--arch amd64,arm64` builds every listed arch (mixed-architecture
     // clusters need one package covering all of them); the default is
     // the control machine's arch.
-    let mut arches: Vec<kurin::arch::Arch> = match arch.as_deref() {
-        Some(list) => list
-            .split(',')
-            .map(|a| a.trim())
-            .filter(|a| !a.is_empty())
-            .map(|a| match a {
-                "amd64" | "x86_64" => Ok(kurin::arch::Arch::Amd64),
-                "arm64" | "aarch64" => Ok(kurin::arch::Arch::Arm64),
-                other => Err(miette::miette!("unknown arch {other:?} (amd64|arm64)")),
-            })
-            .collect::<miette::Result<Vec<_>>>()?,
-        None => vec![kurin::arch::Arch::host()?],
-    };
-    arches.dedup();
+    let mut arches = parse_arch_list(arch.as_deref())?;
+    if arches.is_empty() {
+        arches.push(kurin::arch::Arch::host()?);
+    }
 
     let out = kurin::package::PackageOutput::parse(&output)?;
     let store = kurin::artifact::ArtifactStore::open_default()?;
+
+    // `--addons a,b` embeds the selected addons (WP-45): their files
+    // under `addons/<name>/`, their chart payloads and their images.
+    let extras = match addons.as_deref() {
+        Some(list) => addon_extras_for(list, &store, zone, &arches).await?,
+        None => Vec::new(),
+    };
+
     let opts = kurin::package::BasePackage {
         kubernetes: kubernetes.clone(),
         distribution: distribution.to_string(),
@@ -1213,6 +1263,7 @@ async fn package_create_base(
                 artifacts: c.artifacts,
             })
             .collect(),
+        extras,
     };
     let report = kurin::package::create_base(&store, &opts, zone, &out)
         .await
@@ -1278,6 +1329,87 @@ async fn package_create_os(
         report.tag,
         opts.target.label(),
         report.output.display(),
+    );
+    eprintln!("index: {}", report.index);
+    eprintln!("sbom:  {}", report.sbom.display());
+    Ok(())
+}
+
+/// Resolve `--addons` entries and build their package payloads.
+async fn addon_extras_for(
+    list: &str,
+    store: &kurin::artifact::ArtifactStore,
+    zone: kurin::zone::Zone,
+    arches: &[kurin::arch::Arch],
+) -> Result<Vec<kurin::package::PackageExtras>> {
+    let mut catalog = kurin::addon::Catalog::embedded()?;
+    let mut extras = Vec::new();
+    for entry in list.split(',').map(str::trim).filter(|e| !e.is_empty()) {
+        let addon = load_addon_entry(&mut catalog, entry)?;
+        let diagnostics = addon.validate();
+        if !diagnostics.is_empty() {
+            let lines = diagnostics
+                .iter()
+                .map(|d| format!("  - {}", d.summary()))
+                .collect::<Vec<_>>()
+                .join("\n");
+            return Err(miette::miette!(
+                "addon `{}` is not packageable:\n{lines}",
+                addon.name()
+            ));
+        }
+        let prefix = format!("addons/{}/", addon.name());
+        extras.push(kurin::addon::addon_extras(store, &addon, arches, zone, &prefix).await?);
+    }
+    Ok(extras)
+}
+
+/// One `--addons` entry: a built-in catalog name, a directory, an
+/// `addon.yaml` path, or an addon package source.
+fn load_addon_entry(
+    catalog: &mut kurin::addon::Catalog,
+    entry: &str,
+) -> Result<kurin::addon::Addon> {
+    if entry.contains("://") || Path::new(entry).exists() {
+        let path = Path::new(entry);
+        if path.is_file()
+            && path
+                .file_name()
+                .is_some_and(|name| name == kurin::addon::ADDON_FILE)
+        {
+            return Ok(kurin::addon::Addon::from_dir(
+                path.parent().unwrap_or_else(|| Path::new(".")),
+            )?);
+        }
+        return Ok(kurin::addon::Addon::from_source(entry)?);
+    }
+    catalog.take(entry).ok_or_else(|| {
+        miette::miette!(
+            "addon `{entry}` is not in the built-in catalog; pass a directory, an addon.yaml \
+             or an addon package source"
+        )
+    })
+}
+
+/// `kurin package create addon -f addons/<name>/addon.yaml` (04 §3.4,
+/// WP-45): one addon as an offline-installable OCI package.
+async fn package_create_addon(file: PathBuf, arch: Option<String>, output: String) -> Result<()> {
+    let zone = resolve_zone(None)?;
+    let out = kurin::package::PackageOutput::parse(&output)?;
+    let store = kurin::artifact::ArtifactStore::open_default()?;
+    let opts = kurin::addon::AddonPackageOptions {
+        arches: parse_arch_list(arch.as_deref())?,
+    };
+    let source = file.display().to_string();
+    let report = kurin::addon::create_addon(&store, &source, &opts, zone, &out)
+        .await
+        .map_err(|e| miette::miette!("{e:?}"))?;
+    eprintln!(
+        "package addon {} written to {} ({} file(s), {} image(s))",
+        report.tag,
+        report.output.display(),
+        report.files,
+        report.images
     );
     eprintln!("index: {}", report.index);
     eprintln!("sbom:  {}", report.sbom.display());

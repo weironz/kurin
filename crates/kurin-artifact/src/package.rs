@@ -266,7 +266,10 @@ pub struct PackageBuilder {
     components: Vec<PackageComponent>,
     files: Vec<PackageFile>,
     images: Vec<PackageImage>,
-    os: Vec<PackageOs>,
+os: Vec<PackageOs>,
+    charts: Vec<PackageChart>,
+    /// Explicit architecture list; `None` derives it from the files.
+    arches: Option<Vec<crate::artifact::Arch>>,
 }
 
 impl PackageBuilder {
@@ -283,7 +286,9 @@ impl PackageBuilder {
             components: Vec::new(),
             files: Vec::new(),
             images: Vec::new(),
-            os: Vec::new(),
+os: Vec::new(),
+            charts: Vec::new(),
+            arches: None,
         }
     }
 
@@ -323,7 +328,7 @@ impl PackageBuilder {
         self.images.push(image);
     }
 
-    /// Add one OS dependency repository (04 §3.4 `os` kind): the repo
+/// Add one OS dependency repository (04 §3.4 `os` kind): the repo
     /// tar joins the arch's file-set manifest as a file layer, and the
     /// package metadata gains the matching `os` row (WP-38).
     pub fn add_os_repo(
@@ -338,6 +343,21 @@ impl PackageBuilder {
             digest: file.digest.to_string(),
         });
         self.files.push(file);
+    }
+
+    /// Add one Helm chart row (the chart's payload travels as a file
+    /// layer; the row records its name, version and digest).
+    pub fn add_chart(&mut self, chart: PackageChart) {
+        self.charts.push(chart);
+    }
+
+    /// Pin the architecture list instead of deriving it from the file
+    /// entries. Addon packages carry architecture-independent files but
+    /// images for several architectures, so the derived list would be
+    /// wrong.
+    pub fn with_arches(mut self, arches: Vec<crate::artifact::Arch>) -> Self {
+        self.arches = Some(arches);
+        self
     }
 
     /// The `kurin-package.json` document this builder will write.
@@ -379,13 +399,17 @@ impl PackageBuilder {
                     used_by: i.used_by.clone(),
                 })
                 .collect(),
-            charts: Vec::new(),
+charts: self.charts.clone(),
             os: self.os.clone(),
         }
     }
 
-    /// Architectures with at least one file, in first-seen order.
+    /// Architectures the package covers: explicit when set, else those
+    /// with at least one file, in first-seen order.
     fn arches(&self) -> Vec<crate::artifact::Arch> {
+        if let Some(arches) = &self.arches {
+            return arches.clone();
+        }
         let mut out: Vec<crate::artifact::Arch> = Vec::new();
         for file in &self.files {
             if !out.contains(&file.arch) {
@@ -681,6 +705,25 @@ pub struct BasePackage {
     /// The components (and their artifacts) to include — the filtered
     /// output of `kurin_components::base_components`.
     pub components: Vec<ComponentSpec>,
+    /// Addon payloads embedded in the base package (`--addons`, WP-45):
+    /// their files land under `addons/<name>/`, their images join the
+    /// package's image set, so one base package installs the selected
+    /// addons offline.
+    pub extras: Vec<PackageExtras>,
+}
+
+/// Payloads one addon contributes to a base package (WP-45). The blobs
+/// must already live in the cache [`BlobStore`] the builder is given.
+#[derive(Debug, Clone, Default)]
+pub struct PackageExtras {
+    /// The `addon/<name>` component row (version = the addon's own).
+    pub component: Option<PackageComponent>,
+    /// Addon files, titled `addons/<name>/<relative path>`.
+    pub files: Vec<PackageFile>,
+    /// The addon's images, at their upstream digests.
+    pub images: Vec<PackageImage>,
+    /// The addon's Helm chart rows.
+    pub charts: Vec<PackageChart>,
 }
 
 /// Build a `base` package: resolve the manifest (embedded, or dynamic
@@ -839,6 +882,24 @@ pub async fn create_base(
     }
     for image in images {
         builder.add_image(image);
+    }
+
+    // Addon payloads (WP-45): files namespaced under `addons/<name>/`,
+    // their images and chart rows, so the selected addons install from
+    // this one package offline.
+    for extra in &opts.extras {
+        if let Some(component) = &extra.component {
+            builder.add_component(component.id.clone(), component.version.clone());
+        }
+        for file in &extra.files {
+            builder.add_file(file.clone());
+        }
+        for image in &extra.images {
+            builder.add_image(image.clone());
+        }
+        for chart in &extra.charts {
+            builder.add_chart(chart.clone());
+        }
     }
 
     builder.build(store.blob_store(), out)

@@ -48,23 +48,35 @@ pub const MIRRORED_UPSTREAMS: &[&str] = &[
 ];
 
 /// The upstream hosts a runtime mirror must cover: the union of every
-/// image reference in the run's manifest (04 §5.4), or
-/// [`MIRRORED_UPSTREAMS`] when the manifest cannot be read.
-pub fn upstream_hosts(run: &RunContext) -> Vec<String> {
+/// image reference in the run's manifest **and** in the enabled addons'
+/// `spec.images` (04 §5.4, WP-45), or [`MIRRORED_UPSTREAMS`] when the
+/// manifest cannot be read.
+pub fn upstream_hosts(cluster: &Cluster, run: &RunContext) -> Vec<String> {
     let mut hosts = BTreeSet::new();
+    let mut add = |reference: &str| {
+        let reference = kurin_artifact::zone::rewrite_image_ref(reference, run.sources.zone);
+        if let Some((host, _)) = reference.split_once('/') {
+            if !host.is_empty() {
+                hosts.insert(host.to_string());
+            }
+        }
+    };
     if let Ok(manifest) = install_manifest(&run.sources) {
         for entry in manifest.artifacts() {
             if entry.kind != kurin_artifact::artifact::ArtifactKind::Image {
                 continue;
             }
             if let Ok(spec) = manifest.spec(&entry.name, Arch::Amd64) {
-                let reference =
-                    kurin_artifact::zone::rewrite_image_ref(&spec.url(), run.sources.zone);
-                if let Some((host, _)) = reference.split_once('/') {
-                    if !host.is_empty() {
-                        hosts.insert(host.to_string());
-                    }
-                }
+                add(&spec.url());
+            }
+        }
+    }
+    // Addon images may live on hosts the base payload set never touches
+    // (docker.io, quay.io, …); the mirror must rewrite those too.
+    if let Ok(selected) = crate::addon::engine::resolve_selection(cluster, None) {
+        for entry in selected {
+            for reference in &entry.addon.manifest().spec.images {
+                add(reference);
             }
         }
     }
@@ -854,11 +866,30 @@ impl Task for RegistryTrust {
     }
 }
 
+/// What an image push resolves its payload from.
+enum PushTarget {
+    /// An artifact-manifest entry (the base payload set).
+    Spec(kurin_artifact::artifact::ArtifactSpec),
+    /// A digest-pinned reference an addon declares (`spec.images`,
+    /// WP-45): resolved by reference from the package or the cache.
+    Reference(String),
+}
+
 /// One image the control machine pushes.
 struct PushImage {
-    spec: kurin_artifact::artifact::ArtifactSpec,
+    target: PushTarget,
+    /// Architecture the payload is resolved for.
+    arch: Arch,
     repo: String,
     tag: String,
+}
+
+/// A stable, filesystem-safe label for one push target's temp files.
+fn image_label(image: &PushImage) -> String {
+    match &image.target {
+        PushTarget::Spec(spec) => spec.name.clone(),
+        PushTarget::Reference(reference) => crate::tasks::images::image_slug(reference),
+    }
 }
 
 /// One file artifact the control machine pushes as a single-layer OCI
@@ -884,6 +915,9 @@ pub struct RegistryPush {
     ca_file: Option<PathBuf>,
     username: Option<String>,
     password: Option<String>,
+    /// Digest-pinned image references the enabled addons declare
+    /// (`spec.images`, WP-45); pushed once, like the base images.
+    addon_images: Vec<String>,
     run: Arc<RunContext>,
 }
 
@@ -904,10 +938,23 @@ impl RegistryPush {
             RegistryKind::External => None,
             _ => ca.map(|ca| ca.cert_pem.clone()),
         };
+        // The addon selection is resolved here so the registry carries
+        // every image an enabled addon may deploy (04 §5.2 step 5).
+        let mut addon_images: Vec<String> = Vec::new();
+        for selected in crate::addon::engine::resolve_selection(cluster, None)
+            .map_err(|err| miette::miette!("{err}"))?
+        {
+            for reference in &selected.addon.manifest().spec.images {
+                if !addon_images.contains(reference) {
+                    addon_images.push(reference.clone());
+                }
+            }
+        }
         Ok(Self {
             kind,
             endpoint,
             prefix,
+            addon_images,
             ca_pem,
             ca_file: cluster.registry_ca_file().map(Path::to_path_buf),
             username: cluster
@@ -927,7 +974,8 @@ impl RegistryPush {
         })
     }
 
-    /// Image and file targets derived from the run's manifest.
+    /// Image and file targets derived from the run's manifest plus the
+    /// enabled addons' declared images (WP-45).
     fn targets(&self) -> Result<(Vec<PushImage>, Vec<PushFile>)> {
         let manifest = install_manifest(&self.run.sources)?;
         let mut images: Vec<PushImage> = Vec::new();
@@ -940,36 +988,12 @@ impl RegistryPush {
                         if spec.expected_sha256().is_none() {
                             continue;
                         }
-                        let reference = kurin_artifact::zone::rewrite_image_ref(
+                        self.push_image(
+                            &mut images,
+                            PushTarget::Spec(spec.clone()),
+                            arch,
                             &spec.url(),
-                            self.run.sources.zone,
-                        );
-                        let host =
-                            reference
-                                .split_once('/')
-                                .map(|(host, _)| host)
-                                .ok_or_else(|| {
-                                    miette::miette!("cannot split image reference {reference}")
-                                })?;
-                        let rest = &reference[host.len() + 1..];
-                        let (path, tag) = rest
-                            .rsplit_once(':')
-                            .filter(|(_, tag)| !tag.contains('/'))
-                            .ok_or_else(|| {
-                                miette::miette!("image reference {reference} has no tag")
-                            })?;
-                        let repo = if self.kind == RegistryKind::Harbor {
-                            format!("library/{}", path.rsplit('/').next().unwrap_or(path))
-                        } else {
-                            format!("{}mirror/{host}/{path}", self.prefix)
-                        };
-                        if !images.iter().any(|i| i.repo == repo && i.tag == tag) {
-                            images.push(PushImage {
-                                spec,
-                                repo,
-                                tag: tag.to_string(),
-                            });
-                        }
+                        )?;
                     }
                 }
                 _ => {
@@ -987,7 +1011,68 @@ impl RegistryPush {
                 }
             }
         }
+        // Addon images: one target per architecture (the reference is
+        // the same index; the dedupe below keeps a single push).
+        for reference in &self.addon_images {
+            for arch in [Arch::Amd64, Arch::Arm64] {
+                self.push_image(
+                    &mut images,
+                    PushTarget::Reference(reference.clone()),
+                    arch,
+                    reference,
+                )?;
+            }
+        }
         Ok((images, files))
+    }
+
+    /// Add one image target unless the repo:tag is already queued.
+    fn push_image(
+        &self,
+        images: &mut Vec<PushImage>,
+        target: PushTarget,
+        arch: Arch,
+        reference: &str,
+    ) -> Result<()> {
+        let (repo, tag) = self.mirror_target(reference)?;
+        if !images.iter().any(|i| i.repo == repo && i.tag == tag) {
+            images.push(PushImage {
+                target,
+                arch,
+                repo,
+                tag,
+            });
+        }
+        Ok(())
+    }
+
+    /// The deterministic 04 §5.2 registry layout for one image reference:
+    /// `<prefix>mirror/<upstream host>/<path>` with the tag (or the digest
+    /// when the reference carries none, as addon images may).
+    fn mirror_target(&self, reference: &str) -> Result<(String, String)> {
+        let rewritten = kurin_artifact::zone::rewrite_image_ref(reference, self.run.sources.zone);
+        let (name, digest) = match rewritten.split_once('@') {
+            Some((name, digest)) => (name.to_string(), Some(digest.to_string())),
+            None => (rewritten.clone(), None),
+        };
+        let host = name
+            .split_once('/')
+            .map(|(host, _)| host)
+            .ok_or_else(|| miette::miette!("cannot split image reference {reference}"))?;
+        let rest = &name[host.len() + 1..];
+        let (path, tag) = match rest.rsplit_once(':') {
+            Some((path, tag)) if !tag.contains('/') => (path, Some(tag.to_string())),
+            _ => (rest, None),
+        };
+        let tag = tag.or(digest).ok_or_else(|| {
+            miette::miette!("image reference {reference} has neither a tag nor a digest")
+        })?;
+        let repo = if self.kind == RegistryKind::Harbor {
+            format!("library/{}", path.rsplit('/').next().unwrap_or(path))
+        } else {
+            format!("{}mirror/{host}/{path}", self.prefix)
+        };
+        Ok((repo, tag))
     }
 
     fn ca_arg(&self, ca_path: Option<&str>) -> String {
@@ -1225,7 +1310,12 @@ impl Task for RegistryPush {
         let payloads = PayloadSet::open(&self.run.sources).await?;
 
         for image in &images {
-            let payload = payloads.image_for_push(&image.spec).await?;
+            let payload = match &image.target {
+                PushTarget::Spec(spec) => payloads.image_for_push(spec).await?,
+                PushTarget::Reference(reference) => {
+                    payloads.image_for_push_ref(reference, image.arch).await?
+                }
+            };
             for blob in &payload.blobs {
                 if blob.manifest {
                     self.put_manifest(
@@ -1242,7 +1332,7 @@ impl Task for RegistryPush {
                         .await?;
                 }
             }
-            let index = self.temp_path(&format!("{}.index.json", image.spec.name));
+            let index = self.temp_path(&format!("{}.index.json", image_label(image)));
             kurin_core::local::write_local_file(&index, &payload.index_bytes, 0o600)?;
             temp_files.push(index.clone());
             self.put_manifest(
@@ -1595,5 +1685,90 @@ role = "control-plane"
         assert!(trust
             .upstream_hosts_toml("registry.k8s.io")
             .contains("/v2/team-a/mirror/registry.k8s.io"));
+    }
+
+    /// WP-45: an addon's declared images are pushed to the registry under
+    /// the same deterministic layout, and their upstream host joins the
+    /// runtime mirror set.
+    #[test]
+    fn addon_images_are_pushed_and_mirrored() {
+        use kurin_config::parse_str;
+        let tmp = tempfile::tempdir().unwrap();
+        let addon = tmp.path().join("metrics-server");
+        std::fs::create_dir_all(addon.join("charts")).unwrap();
+        std::fs::write(
+            addon.join("addon.yaml"),
+            r#"apiVersion: addons.kurin.dev/v1alpha1
+kind: Addon
+metadata:
+  name: metrics-server
+  version: 1.0.0
+  description: metrics
+  category: monitoring
+spec:
+  compat:
+    distributions: [kubeadm]
+  namespace: kube-system
+  install:
+    helm:
+      chart: charts/m.tgz
+  images:
+    - registry.example/demo/controller:v1@sha256:5555555555555555555555555555555555555555555555555555555555555555
+"#,
+        )
+        .unwrap();
+        std::fs::write(addon.join("charts/m.tgz"), b"chart").unwrap();
+
+        let toml = format!(
+            r#"
+version = "v1alpha2"
+name = "reg"
+[kubernetes]
+version = "1.33.1"
+distribution = "kubeadm"
+[runtime]
+kind = "containerd"
+[network]
+pod-cidr = "10.233.64.0/18"
+service-cidr = "10.233.0.0/18"
+[network.cni]
+kind = "flannel"
+[registry]
+kind = "zot"
+username = "kurin"
+password = "s3cret"
+[addons.metrics-server]
+enabled = true
+source = "dir://{}"
+[ssh]
+user = "root"
+[ssh.auth]
+method = "password"
+password = "x"
+[nodes.m1]
+address = "192.168.10.11"
+role = "control-plane"
+[nodes.r1]
+address = "192.168.10.30"
+internal-address = "192.168.10.30"
+role = "registry"
+"#,
+            addon.display()
+        );
+        let cluster = parse_str(std::path::Path::new("addon-reg.toml"), &toml).unwrap();
+        let run = crate::test_util::run();
+        let push = RegistryPush::new(&cluster, None, &run).unwrap();
+        let (images, _) = push.targets().unwrap();
+        assert!(
+            images.iter().any(|image| image
+                .repo
+                .contains("mirror/registry.example/demo/controller")
+                && image.tag == "v1"),
+            "addon image target missing: {:?}",
+            images.iter().map(|i| &i.repo).collect::<Vec<_>>()
+        );
+        assert!(upstream_hosts(&cluster, &run)
+            .iter()
+            .any(|host| host == "registry.example"));
     }
 }
