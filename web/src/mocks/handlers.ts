@@ -16,6 +16,7 @@ import type {
   Meta,
   OperationList,
   OperationSummary,
+  PackageInfo,
 } from '../api/types';
 
 const now = '2026-10-27T08:00:00.000Z';
@@ -570,6 +571,17 @@ export const mockPackages = [
 const mockRegistered = new Set<string>();
 const mockConfigs = new Map<string, string>();
 const mockRevs = new Map<string, number>();
+/** 已登记包的可变副本（import/delete 会改它；resetSessionState 重置）。 */
+const mockPackageRows = new Map<string, PackageInfo>();
+function seedPackageRows(): void {
+  mockPackageRows.clear();
+  for (const row of mockPackages) {
+    mockPackageRows.set(row.id, { ...row, arch: [...row.arch] });
+  }
+}
+seedPackageRows();
+/** 包操作 id 序列（verify / push / create-base 的 202 回执）。 */
+let mockPackageOpSeq = 1;
 const mockWizardOps = new Map<string, Record<string, unknown>>();
 /** 每个集群的已安装 addon 清单（WP-64：install/remove 会改它）。 */
 const mockInstalledAddons = new Map<string, Record<string, unknown>>();
@@ -578,7 +590,6 @@ const mockArchived = new Set<string>();
 let mockOpSeq = 1;
 /** 已建立会话的标记（测试与 dev 都从无 cookie 开始）。 */
 let sessionEstablished = false;
-
 export function resetSessionState(): void {
   sessionEstablished = false;
   mockRegistered.clear();
@@ -588,6 +599,38 @@ export function resetSessionState(): void {
   mockInstalledAddons.clear();
   mockArchived.clear();
   mockOpSeq = 1;
+  mockPackageOpSeq = 1;
+  seedPackageRows();
+}
+
+/** 包操作提交回执（服务端 OperationSubmitted 形状）。 */
+function packageOpReceipt(id: string, cluster = 'packages') {
+  return { operation: id, state: 'queued', cluster };
+}
+
+/** 登记一个操作记录并返回 202 回执（包操作与集群操作共用）。 */
+function recordOperation(
+  kind: string,
+  cluster: string,
+  params: Record<string, unknown>,
+  result: Record<string, unknown> | null,
+): { id: string; receipt: Record<string, unknown> } {
+  const id = `01JDYPKGOPS${String(mockPackageOpSeq++).padStart(6, '0')}`;
+  mockWizardOps.set(id, {
+    id,
+    cluster,
+    kind,
+    state: 'succeeded',
+    params,
+    actor: 'mock',
+    error: null,
+    createdAt: '2026-10-27T08:00:00.000Z',
+    startedAt: '2026-10-27T08:00:01.000Z',
+    finishedAt: '2026-10-27T08:00:02.000Z',
+    logLines: 0,
+    result,
+  });
+  return { id, receipt: packageOpReceipt(id, cluster) };
 }
 
 function unauthorized() {
@@ -825,10 +868,134 @@ export const handlers = [
     return HttpResponse.json({ addons: mockAddonCatalog });
   }),
 
-  // GET /packages：已登记包。
+  // GET /packages：已登记包（可变副本：import/delete 会改它）。
   http.get('/api/v1/packages', () => {
     if (!sessionEstablished) return unauthorized();
-    return HttpResponse.json({ packages: mockPackages });
+    return HttpResponse.json({ packages: [...mockPackageRows.values()] });
+  }),
+
+  // POST /packages：登记包源（source 形状粗校验，登记不复制载荷）。
+  http.post('/api/v1/packages', async ({ request }) => {
+    if (!sessionEstablished) return unauthorized();
+    const body = (await request.json()) as { source?: string };
+    const source = body.source ?? '';
+    if (!/^(file|oci|oci-layout|https?):\/\/.+/.test(source)) {
+      return HttpResponse.json(
+        { code: 'invalid-request', message: `包来源不合法：${source}` },
+        { status: 400 },
+      );
+    }
+    // 同 source 幂等复登记：覆盖旧行（服务端 upsert_package 语义）。
+    const existing = [...mockPackageRows.values()].find((row) => row.source === source);
+    const row: PackageInfo = {
+      id: existing?.id ?? `pkg-${source.slice(-24).replace(/[^a-z0-9.-]/gi, '') || 'row'}`,
+      source,
+      origin: 'imported',
+      kind: 'base',
+      name: 'base',
+      version: '1.33.1',
+      distribution: 'kubeadm',
+      arch: ['amd64'],
+      size: 987_654_321,
+      index: 'sha256:feedface',
+      signatures: 0,
+      sbom: null,
+      created_at: '2026-10-27T08:00:00.000Z',
+      verified_at: '2026-10-27T08:00:00.000Z',
+    };
+    mockPackageRows.set(row.id, row);
+    return HttpResponse.json(row, { status: 201 });
+  }),
+
+  // DELETE /packages/{id}：移除登记（载荷文件不动）。
+  http.delete('/api/v1/packages/:id', ({ params }) => {
+    if (!sessionEstablished) return unauthorized();
+    const id = params['id'] as string;
+    if (!mockPackageRows.delete(id)) {
+      return HttpResponse.json(
+        { code: 'not-found', message: `包 ${id} 不存在` },
+        { status: 404 },
+      );
+    }
+    return new HttpResponse(null, { status: 204 });
+  }),
+
+  // POST /packages/{id}/verify：后台重算摘要闭包 → 202 + 操作回执。
+  http.post('/api/v1/packages/:id/verify', ({ params }) => {
+    if (!sessionEstablished) return unauthorized();
+    const id = params['id'] as string;
+    const row = mockPackageRows.get(id);
+    if (!row) {
+      return HttpResponse.json(
+        { code: 'not-found', message: `包 ${id} 不存在` },
+        { status: 404 },
+      );
+    }
+    const { receipt } = recordOperation('package-verify', 'packages', { source: row.source }, null);
+    row.verified_at = '2026-10-27T08:05:00.000Z';
+    return HttpResponse.json(receipt, { status: 202 });
+  }),
+
+  // POST /packages/{id}/push：目标必须是 oci:// 注册表地址。
+  http.post('/api/v1/packages/:id/push', async ({ request, params }) => {
+    if (!sessionEstablished) return unauthorized();
+    const id = params['id'] as string;
+    const row = mockPackageRows.get(id);
+    if (!row) {
+      return HttpResponse.json(
+        { code: 'not-found', message: `包 ${id} 不存在` },
+        { status: 404 },
+      );
+    }
+    const body = (await request.json()) as {
+      destination?: string;
+      user?: string;
+      password_env?: string;
+    };
+    if (!body.destination?.startsWith('oci://')) {
+      return HttpResponse.json(
+        { code: 'invalid-request', message: 'push 的目标必须是 oci:// 注册表地址' },
+        { status: 400 },
+      );
+    }
+    const { receipt } = recordOperation(
+      'package-push',
+      'packages',
+      { source: row.source, ...body },
+      null,
+    );
+    return HttpResponse.json(receipt, { status: 202 });
+  }),
+
+  // POST /packages/create-base：制作 base 包（output 必填）。
+  http.post('/api/v1/packages/create-base', async ({ request }) => {
+    if (!sessionEstablished) return unauthorized();
+    const body = (await request.json()) as {
+      kubernetes?: string;
+      distribution?: string;
+      arch?: string;
+      cni?: string;
+      output?: string;
+    };
+    if (!body.output) {
+      return HttpResponse.json(
+        { code: 'invalid-request', message: '需要 output 字段（oci-layout://DIR 或 file://X.tar.zst）' },
+        { status: 400 },
+      );
+    }
+    if (body.distribution && !['kubeadm', 'k3s'].includes(body.distribution)) {
+      return HttpResponse.json(
+        { code: 'invalid-request', message: `unknown distribution ${body.distribution}` },
+        { status: 400 },
+      );
+    }
+    const { receipt } = recordOperation(
+      'package-create-base',
+      'packages',
+      { ...body },
+      null,
+    );
+    return HttpResponse.json(receipt, { status: 202 });
   }),
 
   // POST /clusters：登记；mockRegistered 集合去重，重复登记 409。
@@ -873,11 +1040,16 @@ export const handlers = [
     return HttpResponse.json({ rev: (body.base_rev ?? 1) + 1, sha256: 'deadbeef' });
   }),
 
-  // POST /clusters/{name}/operations：202 + 操作（precheck / plan / create）。
+  // POST /clusters/{name}/operations：202 + 操作（precheck / plan / create /
+  // upgrade / certs-renew…；params 原样存进记录，dry_run 的升级带计划结果）。
   http.post('/api/v1/clusters/:name/operations', async ({ request, params }) => {
     if (!sessionEstablished) return unauthorized();
     const name = params['name'] as string;
-    const body = (await request.json()) as { kind?: string; confirm?: string };
+    const body = (await request.json()) as {
+      kind?: string;
+      confirm?: string;
+      params?: Record<string, unknown>;
+    };
     if (
       (body.kind === 'delete-node' || body.kind === 'delete-cluster') &&
       body.confirm !== name
@@ -887,13 +1059,24 @@ export const handlers = [
         { status: 400 },
       );
     }
+    const opParams = body.params ?? {};
+    // upgrade 的 target 先过服务端同款 semver 形状检查。
+    if (body.kind === 'upgrade' && !/^\d+\.\d+\.\d+/.test(String(opParams.target ?? ''))) {
+      return HttpResponse.json(
+        {
+          code: 'invalid-request',
+          message: `upgrade 目标版本不合法：${String(opParams.target ?? '')}`,
+        },
+        { status: 400 },
+      );
+    }
     const id = `01JDYWIZARD${String(mockOpSeq++).padStart(6, '0')}`;
     const record = {
       id,
       cluster: name,
       kind: body.kind ?? 'create',
       state: 'succeeded',
-      params: {},
+      params: opParams,
       actor: 'mock',
       error: null,
       createdAt: '2026-10-27T08:00:00.000Z',
@@ -910,14 +1093,21 @@ export const handlers = [
               failed: 0,
               warned: 0,
             }
-          : body.kind === 'plan'
+          : body.kind === 'plan' || (body.kind === 'upgrade' && opParams.dry_run === true)
             ? {
-                op: 'create',
+                op: 'upgrade',
                 phases: [
                   {
-                    id: 'prepare',
-                    label: '准备',
-                    tasks: [{ key: 'prepare/sysctl@cp-1', node: 'cp-1', describe: '内核参数' }],
+                    id: 'cordon',
+                    label: '排空与升级',
+                    tasks: [
+                      { key: 'cordon/drain@worker-1', node: 'worker-1', describe: '排空节点' },
+                      {
+                        key: 'upgrade/kubeadm@worker-1',
+                        node: 'worker-1',
+                        describe: `升级到 ${String(opParams.target ?? '')}`,
+                      },
+                    ],
                   },
                 ],
               }

@@ -86,7 +86,7 @@ describe('集群详情 `/clusters/:name`（WP-61）', () => {
     expect(within(panel).queryByText('192.168.10.99')).not.toBeInTheDocument();
   });
 
-  it('配置 Tab：只读摘要、修订号与 CodeMirror 占位', async () => {
+  it('配置 Tab：只读摘要、修订号与高级编辑入口', async () => {
     renderDetail('tier2-edge');
     await waitFor(() => expect(screen.getByText('edge-cp')).toBeInTheDocument());
     fireEvent.click(screen.getByRole('tab', { name: '配置' }));
@@ -96,7 +96,9 @@ describe('集群详情 `/clusters/:name`（WP-61）', () => {
     expect(within(panel).getByText('#1')).toBeInTheDocument();
     expect(within(panel).getByText('flannel')).toBeInTheDocument();
     expect(within(panel).getByText('10.42.0.0/16')).toBeInTheDocument();
-    expect(within(panel).getByText(/CodeMirror 6 TOML 编辑器/)).toBeInTheDocument();
+    // 高级编辑入口（CodeMirror 编辑器懒加载，默认不渲染）
+    expect(within(panel).getByTestId('cluster-config-advanced')).toBeInTheDocument();
+    expect(within(panel).queryByTestId('toml-editor')).not.toBeInTheDocument();
   });
 
   it('操作历史 Tab：按集群查询并链接到操作详情', async () => {

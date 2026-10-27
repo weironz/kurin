@@ -46,6 +46,20 @@ function formatDurationMs(ms: number): string {
   return `${Math.floor(m / 60)}h ${m % 60}m`;
 }
 
+/** 字节数 → 人类可读（如「1.1 GB」）；未知/负数显示「—」。 */
+export function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes < 0) return '—';
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ['KB', 'MB', 'GB', 'TB', 'PB'];
+  let value = bytes / 1024;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  return `${value >= 100 ? Math.round(value) : value.toFixed(1)} ${units[unit]}`;
+}
+
 /* ---------------------------- 日志控制台（WP-63） ---------------------------- */
 
 /** 日志时间戳模式（UI §8.5）：本地绝对 / 相对操作开始。 */

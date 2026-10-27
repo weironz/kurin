@@ -1,10 +1,12 @@
-import { useEffect } from 'react';
-import { Link, useParams } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { Suspense, lazy, useEffect, useState } from 'react';
+import { Link, useNavigate, useParams } from 'react-router-dom';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Alert,
+  App,
   Button,
   Card,
+  Checkbox,
   Descriptions,
   Empty,
   Result,
@@ -25,6 +27,8 @@ import type {
   OperationList,
   OperationSummary,
 } from '../api/types';
+import { renewCertificates } from '../api/maintenance';
+import { receiptOperationId } from '../api/addons';
 import { t, type MessageKey } from '../i18n/zh-CN';
 import {
   formatAbsolute,
@@ -39,6 +43,10 @@ import {
   operationStateLabel,
 } from '../utils/operation';
 import { ClusterDangerZone } from './ClusterDangerZone';
+import { ClusterUpgradeDialog } from './ClusterUpgradeDialog';
+
+// 动态导入：CodeMirror 只进编辑器的懒 chunk（UI §8.4 路由级代码分割同理）。
+const TomlEditor = lazy(() => import('../config/TomlEditor'));
 
 /* ------------------------- 节点：期望 vs 观测合并 ------------------------- */
 
@@ -257,8 +265,13 @@ function NodesTab({ detail }: { detail: ClusterDetail }) {
 
 /* --------------------------------- 配置 ---------------------------------- */
 
+/**
+ * 配置 Tab：只读表单视图是默认；「高级编辑」显式进入 CodeMirror 6 TOML
+ * 编辑器（懒加载 chunk，主 bundle 不含 CodeMirror）。
+ */
 function ConfigTab({ detail }: { detail: ClusterDetail }) {
   const s = detail.configSummary;
+  const [advanced, setAdvanced] = useState(false);
   return (
     <div>
       <Card
@@ -312,13 +325,111 @@ function ConfigTab({ detail }: { detail: ClusterDetail }) {
           ]}
         />
       </Card>
-      {/* CodeMirror 6 TOML 编辑器由 WP-65 提供（懒加载），此处是占位。 */}
-      <Card size="small" title={t('clusterDetail.config.editorTitle')}>
-        <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
-          {t('clusterDetail.config.editorPlaceholder')}
-        </Typography.Paragraph>
-      </Card>
+      {advanced ? (
+        <Suspense fallback={<Skeleton active title={false} paragraph={{ rows: 8 }} />}>
+          <TomlEditor cluster={detail.name} />
+        </Suspense>
+      ) : (
+        <Card
+          size="small"
+          title={t('clusterDetail.config.editorTitle')}
+          extra={
+            <Button size="small" onClick={() => setAdvanced(true)} data-testid="cluster-config-advanced">
+              {t('clusterDetail.config.advanced')}
+            </Button>
+          }
+        >
+          <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
+            {t('clusterDetail.config.advancedHint')}
+          </Typography.Paragraph>
+        </Card>
+      )}
     </div>
+  );
+}
+
+/* --------------------------------- 证书 ---------------------------------- */
+
+/** 证书 Tab（WP-65）：剩余有效期（快照 certMinDays）+ 续期操作。 */
+function CertificatesTab({ detail }: { detail: ClusterDetail }) {
+  const navigate = useNavigate();
+  const { message } = App.useApp();
+  const queryClient = useQueryClient();
+  const [force, setForce] = useState(false);
+  const snap = detail.snapshot;
+  const busy = isActiveOperation(detail.activeOperation);
+
+  const renewMutation = useMutation({
+    mutationFn: () => renewCertificates(detail.name, force),
+    onSuccess: async (receipt) => {
+      await queryClient.invalidateQueries({ queryKey: ['cluster', detail.name] });
+      await queryClient.invalidateQueries({ queryKey: ['operations'] });
+      message.info(t('certs.submitted'));
+      navigate(`/operations/${encodeURIComponent(receiptOperationId(receipt))}`);
+    },
+  });
+
+  return (
+    <Card size="small" title={t('certs.title')} data-testid="certs-tab">
+      <Typography.Paragraph type="secondary">{t('certs.description')}</Typography.Paragraph>
+      <Descriptions
+        bordered
+        size="small"
+        column={{ xs: 1, sm: 2 }}
+        items={[
+          {
+            key: 'certMinDays',
+            label: t('certs.certMinDays'),
+            children: (
+              <span data-testid="certs-min-days">
+                {snap?.certMinDays == null
+                  ? t('certs.notCollected')
+                  : t('clusters.certDays', { n: snap.certMinDays })}
+              </span>
+            ),
+          },
+          {
+            key: 'observedAt',
+            label: t('clusterDetail.overview.observedAt'),
+            children: snap?.observedAt ? formatAbsolute(snap.observedAt) : '—',
+          },
+        ]}
+        style={{ marginBottom: 16 }}
+      />
+      <Space direction="vertical" size="small">
+        <Checkbox
+          checked={force}
+          onChange={(e) => setForce(e.target.checked)}
+          data-testid="certs-force"
+        >
+          {t('certs.force')}
+        </Checkbox>
+        <Typography.Text type="secondary">{t('certs.forceExtra')}</Typography.Text>
+        <Button
+          type="primary"
+          danger
+          disabled={busy}
+          loading={renewMutation.isPending}
+          onClick={() => renewMutation.mutate()}
+          data-testid="certs-renew"
+        >
+          {t('certs.renew')}
+        </Button>
+      </Space>
+      {renewMutation.isError ? (
+        <Alert
+          type="error"
+          showIcon
+          style={{ marginTop: 16 }}
+          data-testid="certs-error"
+          message={t('certs.actionFailed', {
+            message: renewMutation.error instanceof Error
+              ? renewMutation.error.message
+              : String(renewMutation.error),
+          })}
+        />
+      ) : null}
+    </Card>
   );
 }
 
@@ -378,9 +489,10 @@ function OperationsTab({ name }: { name: string }) {
 
 /* --------------------------------- 页面 ---------------------------------- */
 
-/** 集群详情 `/clusters/:name`（UI §8.1）：概览 / 节点 / 配置 / 操作历史。 */
+/** 集群详情 `/clusters/:name`（UI §8.1）：概览 / 节点 / 配置 / 证书 / 操作历史。 */
 export default function ClusterDetailPage() {
   const { name } = useParams<{ name: string }>();
+  const [upgradeOpen, setUpgradeOpen] = useState(false);
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ['cluster', name],
     queryFn: () => apiFetch<ClusterDetail>(`/clusters/${encodeURIComponent(name ?? '')}`),
@@ -397,6 +509,7 @@ export default function ClusterDetailPage() {
 
   const notFound = error instanceof ApiError && error.status === 404;
   const errorMessage = error instanceof Error ? error.message : String(error);
+  const busy = data != null && isActiveOperation(data.activeOperation);
 
   return (
     <div>
@@ -407,6 +520,14 @@ export default function ClusterDetailPage() {
         <Typography.Text code>{name}</Typography.Text>
         <Typography.Text type="secondary">{t('page.clusterDetail.description')}</Typography.Text>
         <Link to={`/clusters/${encodeURIComponent(name)}/addons`}>{t('addons.link')}</Link>
+        <Button
+          size="small"
+          disabled={busy}
+          onClick={() => setUpgradeOpen(true)}
+          data-testid="cluster-upgrade-open"
+        >
+          {t('upgrade.action')}
+        </Button>
       </Space>
       {isLoading ? (
         <Skeleton active title={false} paragraph={{ rows: 8 }} />
@@ -464,6 +585,11 @@ export default function ClusterDetailPage() {
                 children: <ConfigTab detail={data} />,
               },
               {
+                key: 'certificates',
+                label: t('clusterDetail.tab.certificates'),
+                children: <CertificatesTab detail={data} />,
+              },
+              {
                 key: 'operations',
                 label: t('clusterDetail.tab.operations'),
                 children: <OperationsTab name={name} />,
@@ -474,6 +600,13 @@ export default function ClusterDetailPage() {
                 children: <ClusterDangerZone detail={data} />,
               },
             ]}
+          />
+          <ClusterUpgradeDialog
+            cluster={name}
+            currentVersion={data.kubernetesVersion}
+            open={upgradeOpen}
+            busy={busy}
+            onClose={() => setUpgradeOpen(false)}
           />
         </>
       ) : null}

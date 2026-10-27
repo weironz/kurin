@@ -139,6 +139,7 @@
 - WP-39：签名包校验、篡改 blob 拒绝、未签名包在 signature 模式拒绝（`cargo test -p kurin-artifact --test transfer`）；CI 工作流需在 tag 上人工验证。
 - WP-49：`just tier3-registry zot`、`docker-registry`、`external`（external 指向 zot）。
 - WP-63：tier1 真实 create 过程中刷新页面，确认日志从断点继续；`pnpm --dir web test:e2e`。
+- WP-65：Playwright `packages.spec.ts` 覆盖包导入/校验/推送/制作 base、升级预览+执行、证书续期、TOML 编辑保存；tier2 页面升级一个小版本。
 - WP-64：Playwright `addons.spec.ts` 覆盖安装/卸载与三个危险操作；tier1 页面安装/卸载 metrics-server。
 - WP-62：Playwright `wizard.spec.ts` 在 mock 后端走完 9 步并提交；tier1 真实创建。
 - WP-64：addon 操作的 `values` 由服务端写入 `[addons.<name>.values]`（WP-54 遗漏）；`POST /clusters/{name}/archive` 为 WP-54 遗漏的端点，WP-64 补齐。
@@ -163,6 +164,7 @@
 - WP-39：签名包校验、篡改 blob 拒绝、未签名包在 signature 模式拒绝（`cargo test -p kurin-artifact --test transfer`）；CI 工作流需在 tag 上人工验证。
 - WP-49：`just tier3-registry zot`、`docker-registry`、`external`（external 指向 zot）。
 - WP-63：tier1 真实 create 过程中刷新页面，确认日志从断点继续；`pnpm --dir web test:e2e`。
+- WP-65：Playwright `packages.spec.ts` 覆盖包导入/校验/推送/制作 base、升级预览+执行、证书续期、TOML 编辑保存；tier2 页面升级一个小版本。
 - WP-64：Playwright `addons.spec.ts` 覆盖安装/卸载与三个危险操作；tier1 页面安装/卸载 metrics-server。
 - WP-62：Playwright `wizard.spec.ts` 在 mock 后端走完 9 步并提交；tier1 真实创建。
 - WP-64：addon 操作的 `values` 由服务端写入 `[addons.<name>.values]`（WP-54 遗漏）；`POST /clusters/{name}/archive` 为 WP-54 遗漏的端点，WP-64 补齐。
