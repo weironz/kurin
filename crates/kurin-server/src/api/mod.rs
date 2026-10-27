@@ -2,8 +2,8 @@
 //! the WP-54 surface: meta, schema, config utilities, plan preview, node
 //! probing/parsing, the addon catalog and package management.
 
-mod clusters;
-mod operations;
+pub(crate) mod clusters;
+pub(crate) mod operations;
 pub(crate) mod wp54;
 
 use std::net::SocketAddr;

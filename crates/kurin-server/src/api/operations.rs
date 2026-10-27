@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_stream::{Stream, StreamExt};
+use ts_rs::TS;
 
 use crate::api::actor;
 use crate::error::ApiError;
@@ -24,7 +25,7 @@ use crate::ops::{LogFilter, SubmitRequest, DEFAULT_LIMIT, MAX_LIMIT};
 use crate::state::AppState;
 use crate::store::{OperationFilter, OperationRecord, OperationState};
 
-#[derive(Deserialize)]
+#[derive(Deserialize, TS)]
 pub(crate) struct SubmitBody {
     kind: String,
     #[serde(default)]
@@ -33,12 +34,13 @@ pub(crate) struct SubmitBody {
     confirm: Option<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, TS)]
 pub(crate) struct OperationView {
     id: String,
     cluster: Option<String>,
     kind: String,
     state: String,
+    #[ts(type = "number")]
     config_rev: Option<i64>,
     params: Value,
     retry_of: Option<String>,
@@ -48,10 +50,13 @@ pub(crate) struct OperationView {
     started_at: Option<String>,
     finished_at: Option<String>,
     log_path: Option<String>,
+    #[ts(type = "number")]
     log_lines: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(type = "number")]
     event_count: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(type = "number")]
     last_seq: Option<u64>,
 }
 
@@ -109,7 +114,7 @@ pub(crate) async fn submit(
         .into_response())
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, TS)]
 pub(crate) struct ListQuery {
     cluster: Option<String>,
     state: Option<String>,
@@ -118,7 +123,7 @@ pub(crate) struct ListQuery {
     offset: Option<usize>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, TS)]
 pub(crate) struct OperationList {
     operations: Vec<OperationView>,
 }
@@ -160,8 +165,9 @@ pub(crate) async fn detail(
     Ok(Json(OperationView::from_record(record, stats)))
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, TS)]
 pub(crate) struct EventsQuery {
+    #[ts(type = "number")]
     after: Option<u64>,
 }
 
@@ -190,9 +196,11 @@ pub(crate) async fn events(
     ))
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, TS)]
 pub(crate) struct LogsQuery {
+    #[ts(type = "number")]
     after: Option<u64>,
+    #[ts(type = "number")]
     before: Option<u64>,
     limit: Option<usize>,
     node: Option<String>,
@@ -200,9 +208,10 @@ pub(crate) struct LogsQuery {
     q: Option<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, TS)]
 pub(crate) struct LogPageView {
     items: Vec<Envelope>,
+    #[ts(type = "number")]
     next_after: Option<u64>,
     has_more: bool,
 }

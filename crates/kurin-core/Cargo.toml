@@ -6,7 +6,13 @@ license.workspace = true
 repository.workspace = true
 description = "Kurin engine: tasks, plan data, DAG executor and run state"
 
+[features]
+# Derive `ts-rs` bindings for the event types the web API serializes
+# (WP-55). Off by default so the CLI build stays free of the dependency.
+ts = ["dep:ts-rs"]
+
 [dependencies]
+ts-rs = { workspace = true, optional = true }
 kurin-config.workspace = true
 serde.workspace = true
 serde_json.workspace = true

@@ -12,7 +12,8 @@ export default defineConfig({
       algorithm: 'gzip',
       // 全量压缩：rust-embed 只嵌入 .gz（UI §9），index.html 也必须有 .gz
       threshold: 0,
-      deleteOriginFile: false,
+      // 只保留 .gz：rust-embed 只嵌入 gzip 副本（UI §9）
+      deleteOriginFile: true,
     }),
   ],
   server: {

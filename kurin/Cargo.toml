@@ -12,7 +12,7 @@ path = "src/main.rs"
 
 [features]
 default = []
-ui = ["dep:kurin-server"]
+ui = ["dep:kurin-server", "kurin-server/embed-ui"]
 
 [dependencies]
 kurin-config.workspace = true

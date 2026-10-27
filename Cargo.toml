@@ -28,6 +28,10 @@ thiserror = "2"
 miette = { version = "7", features = ["fancy"] }
 minijinja = "2"
 rust-embed = "8"
+mime_guess = "2"
+# TypeScript bindings for the server DTOs (WP-55). `serde-json-impl` maps
+# `serde_json::Value` to the generated `JsonValue` union.
+ts-rs = { version = "11.0.1", features = ["serde-json-impl", "no-serde-warnings"] }
 async-trait = "0.1"
 tokio = { version = "1", features = [
     "rt-multi-thread",

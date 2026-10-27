@@ -8,13 +8,14 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
 use crate::collector::{RefreshOutcome, STALE_AFTER};
 use crate::error::ApiError;
 use crate::state::AppState;
 use crate::store::{ClusterRecord, Lifecycle, RevisionSummary, SnapshotRecord};
 
-#[derive(Deserialize)]
+#[derive(Deserialize, TS)]
 pub(crate) struct CreateCluster {
     /// Optional explicit name; must match the document's `name`.
     #[serde(default)]
@@ -23,10 +24,11 @@ pub(crate) struct CreateCluster {
     toml: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, TS)]
 pub(crate) struct ClusterView {
     name: String,
     lifecycle: String,
+    #[ts(type = "number")]
     current_rev: i64,
     created_at: String,
     updated_at: String,
@@ -36,11 +38,14 @@ pub(crate) struct ClusterView {
     distribution: String,
     kubernetes_version: String,
     /// Ready nodes of the last good snapshot; `None` without one.
+    #[ts(type = "number")]
     nodes_ready: Option<u64>,
+    #[ts(type = "number")]
     nodes_total: Option<u64>,
     /// Health badge (UI §8.1): healthy / degraded / unreachable / stale /
     /// unknown, derived from the snapshot.
     health: String,
+    #[ts(type = "number")]
     cert_min_days: Option<i64>,
     observed_at: Option<String>,
     collect_error: Option<String>,
@@ -148,9 +153,10 @@ fn derive_health<'a>(
     }
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, TS)]
 pub(crate) struct Imported {
     cluster: ClusterView,
+    #[ts(type = "number")]
     rev: i64,
     sha256: String,
 }
@@ -200,7 +206,7 @@ pub(crate) async fn create(
         .into_response())
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, TS)]
 pub(crate) struct ClusterList {
     clusters: Vec<ClusterView>,
 }
@@ -226,7 +232,7 @@ pub(crate) async fn list(State(state): State<AppState>) -> Result<Json<ClusterLi
     Ok(Json(ClusterList { clusters }))
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, TS)]
 pub(crate) struct ClusterDetail {
     #[serde(flatten)]
     cluster: ClusterView,
@@ -236,7 +242,7 @@ pub(crate) struct ClusterDetail {
 }
 
 /// The raw snapshot row, as persisted by the collector (WP-53).
-#[derive(Serialize)]
+#[derive(Serialize, TS)]
 pub(crate) struct SnapshotView {
     attempted_at: String,
     observed_at: Option<String>,
@@ -244,6 +250,7 @@ pub(crate) struct SnapshotView {
     report: Option<serde_json::Value>,
     error: Option<String>,
     certs_at: Option<String>,
+    #[ts(type = "number")]
     cert_min_days: Option<i64>,
 }
 
@@ -278,7 +285,7 @@ pub(crate) async fn detail(
     }))
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, TS)]
 pub(crate) struct RefreshResponse {
     scheduled: bool,
     /// Why the request was not scheduled, when it was not.
@@ -314,8 +321,9 @@ fn current_spec(store: &crate::store::Store, name: &str) -> Option<kurin_config:
     kurin_config::parse_str(Path::new("cluster.toml"), &revision.toml).ok()
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, TS)]
 pub(crate) struct ConfigView {
+    #[ts(type = "number")]
     rev: i64,
     toml: String,
     sha256: String,
@@ -341,14 +349,16 @@ pub(crate) async fn get_config(
     }))
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, TS)]
 pub(crate) struct SaveConfig {
     toml: String,
+    #[ts(type = "number")]
     base_rev: i64,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, TS)]
 pub(crate) struct Saved {
+    #[ts(type = "number")]
     rev: i64,
     sha256: String,
 }

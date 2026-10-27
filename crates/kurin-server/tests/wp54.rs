@@ -162,6 +162,12 @@ impl OperationBackend for ResultBackend {
 
 // ── GET /meta ───────────────────────────────────────────────────────────
 
+static OP_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+async fn op_guard() -> tokio::sync::MutexGuard<'static, ()> {
+    OP_LOCK.lock().await
+}
+
 #[tokio::test]
 async fn meta_reports_versions_and_capabilities() {
     let dir = tempfile::tempdir().unwrap();
@@ -583,6 +589,7 @@ fn import_addons_cluster(state: &AppState) {
 
 #[tokio::test]
 async fn addon_install_submits_an_operation() {
+    let _guard = op_guard().await;
     let dir = tempfile::tempdir().unwrap();
     let state = state_with(dir.path(), Arc::new(NoopBackend));
     import_addons_cluster(&state);
@@ -631,6 +638,7 @@ async fn addon_install_unknown_addon_is_rejected() {
 
 #[tokio::test]
 async fn addon_remove_requires_confirmation() {
+    let _guard = op_guard().await;
     let dir = tempfile::tempdir().unwrap();
     let state = state_with(dir.path(), Arc::new(NoopBackend));
     import_addons_cluster(&state);
@@ -671,6 +679,7 @@ async fn addon_remove_requires_confirmation() {
 
 #[tokio::test]
 async fn cluster_plan_submits_a_read_only_operation() {
+    let _guard = op_guard().await;
     let dir = tempfile::tempdir().unwrap();
     let state = state_with(dir.path(), Arc::new(NoopBackend));
     import(&state, "single");
@@ -786,6 +795,7 @@ async fn packages_import_list_get_and_delete() {
 
 #[tokio::test]
 async fn package_verify_and_push_submit_operations() {
+    let _guard = op_guard().await;
     let dir = tempfile::tempdir().unwrap();
     let state = state_with(dir.path(), Arc::new(ResultBackend));
     let app = kurin_server::router(state.clone());
@@ -864,6 +874,7 @@ async fn package_verify_and_push_submit_operations() {
 
 #[tokio::test]
 async fn create_base_package_validates_and_submits() {
+    let _guard = op_guard().await;
     let dir = tempfile::tempdir().unwrap();
     let state = state_with(dir.path(), Arc::new(ResultBackend));
     let app = kurin_server::router(state.clone());
@@ -920,6 +931,7 @@ async fn create_base_package_validates_and_submits() {
 /// against the stored revision and produces the PlanView.
 #[tokio::test]
 async fn the_real_backend_answers_plan_operations_offline() {
+    let _guard = op_guard().await;
     let dir = tempfile::tempdir().unwrap();
     // The genuine backend against its own store: the plan kind runs the
     // offline path (no SSH) against the imported revision.

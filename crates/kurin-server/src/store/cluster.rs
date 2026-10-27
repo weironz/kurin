@@ -26,6 +26,8 @@ use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
 use toml_edit::DocumentMut;
 
+use ts_rs::TS;
+
 use super::{secret, Store, StoreError};
 
 /// Cluster lifecycle values (UI §6.7).
@@ -120,8 +122,9 @@ impl fmt::Debug for ConfigRevision {
 }
 
 /// A revision without its (potentially secret) body.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, TS)]
 pub struct RevisionSummary {
+    #[ts(type = "number")]
     pub rev: i64,
     pub sha256: String,
     pub created_at: String,

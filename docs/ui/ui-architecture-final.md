@@ -517,6 +517,16 @@ CLI 同样可以使用这些能力：`kurin logs --op <id> [--follow] [--node cp
 - 静态资源只嵌入 `.gz` 版本，响应带 `Content-Encoding: gzip`，运行时零压缩开销；不同时嵌入原文件/Brotli 副本。
 - 预期增量来源：axum/hyper/tower、bundled SQLite、rustls 服务端、前端 gz 资源。**M1 结束时实测**两架构 release 二进制大小，写入本文档并设为 CI 告警阈值（建议增长不超过实测值 +10%）。
 - 发布配方打印 `web/dist` 总量与二进制大小，便于追踪。
+
+**WP-55 实测（2026-10-28，`just release-musl`，`--features ui`）**：
+
+| 产物 | 大小 |
+|---|---|
+| `web/dist`（仅 `.gz`，14 个文件） | 404 KiB |
+| x86_64-unknown-linux-musl `kurin` | 34,312,544 B（32.7 MiB） |
+| aarch64-unknown-linux-musl `kurin` | 27,591,912 B（26.3 MiB） |
+
+同分支不带 `--features ui` 的 x86_64 musl 二进制为 27,720,880 B（26.4 MiB）；`serve`/axum/SQLite/rustls 与嵌入前端合计增量 6,591,664 B（+6.3 MiB，+23.8%）。CI 告警阈值按 x86_64 实测值 +10% 设为 37.7 MiB。
 - 运行内存：广播通道有界、事件分页读取、前端事件列表虚拟滚动。
 
 ---

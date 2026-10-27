@@ -26,6 +26,7 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use ts_rs::TS;
 
 use crate::error::{ApiError, Diagnostic, Label};
 use crate::state::AppState;
@@ -127,8 +128,17 @@ fn diagnostics_from(error: &kurin_config::ConfigError) -> ApiError {
 // data through re-exports to avoid a circular import)
 // ---------------------------------------------------------------------------
 
+/// `GET /api/v1/meta` body: version, component versions and the
+/// capability table (UI §7).
+#[derive(Serialize, TS)]
+pub(crate) struct MetaResponse {
+    version: String,
+    components: BTreeMap<String, String>,
+    capabilities: Value,
+}
+
 /// Component versions + capability table for `GET /api/v1/meta`.
-pub(crate) fn meta_body(version: &str) -> Value {
+pub(crate) fn meta_body(version: &str) -> MetaResponse {
     let mut components = serde_json::Map::new();
     for (name, component_version) in kurin_ops::component_versions() {
         components.insert(
@@ -139,11 +149,14 @@ pub(crate) fn meta_body(version: &str) -> Value {
     let capabilities: Value =
         serde_json::from_str(&kurin_ops::capabilities().unwrap_or_else(|_| "[]".into()))
             .unwrap_or(Value::Array(Vec::new()));
-    serde_json::json!({
-        "version": version,
-        "components": components,
-        "capabilities": capabilities,
-    })
+    MetaResponse {
+        version: version.to_string(),
+        components: components
+            .into_iter()
+            .filter_map(|(name, value)| value.as_str().map(|v| (name, v.to_string())))
+            .collect(),
+        capabilities,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -170,7 +183,7 @@ pub(crate) async fn schema_cluster() -> Result<Response, ApiError> {
 // ---------------------------------------------------------------------------
 
 /// `POST /api/v1/configs/render` body: the wizard's DTO.
-#[derive(Deserialize, Default)]
+#[derive(Deserialize, Default, TS)]
 #[serde(default)]
 pub(crate) struct RenderBody {
     name: Option<String>,
@@ -195,7 +208,7 @@ pub(crate) struct RenderBody {
 }
 
 /// Cluster-wide SSH settings of the wizard DTO.
-#[derive(Deserialize, Default)]
+#[derive(Deserialize, Default, TS)]
 #[serde(default)]
 pub(crate) struct SshBody {
     user: Option<String>,
@@ -210,7 +223,7 @@ pub(crate) struct SshBody {
 }
 
 /// One node of the wizard DTO.
-#[derive(Deserialize, Default)]
+#[derive(Deserialize, Default, TS)]
 #[serde(default)]
 pub(crate) struct NodeBody {
     name: Option<String>,
@@ -223,7 +236,7 @@ pub(crate) struct NodeBody {
 }
 
 /// Rendered output + the diagnostics of a follow-up validation.
-#[derive(Serialize)]
+#[derive(Serialize, TS)]
 pub(crate) struct RenderedConfig {
     toml: String,
     valid: bool,
@@ -447,9 +460,15 @@ fn build_patch(body: &RenderBody) -> Result<kurin_config::quick::ConfigPatch, St
 // ---------------------------------------------------------------------------
 
 /// `POST /api/v1/configs/validate` body.
-#[derive(Deserialize)]
+#[derive(Deserialize, TS)]
 pub(crate) struct ValidateBody {
     toml: String,
+}
+
+/// `POST /api/v1/configs/validate` success body.
+#[derive(Serialize, TS)]
+pub(crate) struct ValidResponse {
+    valid: bool,
 }
 
 /// `POST /api/v1/configs/validate`: full pipeline validation with
@@ -461,7 +480,7 @@ pub(crate) async fn validate_config(
 ) -> Result<Response, ApiError> {
     let Json(body) = body.map_err(|rejection| ApiError::bad_json(&rejection))?;
     match load_spec(&body.toml) {
-        Ok(_) => Ok(Json(serde_json::json!({ "valid": true })).into_response()),
+        Ok(_) => Ok(Json(ValidResponse { valid: true }).into_response()),
         Err(ApiError::Validation(items)) => Err(ApiError::Validation(items)),
         Err(other) => Err(other),
     }
@@ -472,7 +491,7 @@ pub(crate) async fn validate_config(
 // ---------------------------------------------------------------------------
 
 /// `POST /api/v1/nodes/parse` body: the wizard's bulk paste.
-#[derive(Deserialize, Default)]
+#[derive(Deserialize, Default, TS)]
 #[serde(default)]
 pub(crate) struct ParseNodesBody {
     input: String,
@@ -481,18 +500,24 @@ pub(crate) struct ParseNodesBody {
 }
 
 /// One parsed node row.
-#[derive(Serialize)]
+#[derive(Serialize, TS)]
 pub(crate) struct ParsedNode {
     name: String,
     address: String,
     role: String,
 }
 
+/// `POST /api/v1/nodes/parse` response.
+#[derive(Serialize, TS)]
+pub(crate) struct ParsedNodes {
+    nodes: Vec<ParsedNode>,
+}
+
 /// `POST /api/v1/nodes/parse`: bulk paste → node list (UI §8.2 step 3),
 /// the same parser the CLI quick-create arguments use.
 pub(crate) async fn parse_nodes(
     body: Result<Json<ParseNodesBody>, JsonRejection>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<ParsedNodes>, ApiError> {
     let Json(body) = body.map_err(|rejection| ApiError::bad_json(&rejection))?;
     let nodes = kurin_config::quick::parse_bulk(&body.input).map_err(|e| {
         ApiError::Validation(vec![Diagnostic {
@@ -511,7 +536,7 @@ pub(crate) async fn parse_nodes(
             role: format!("{:?}", node.role).to_lowercase(),
         })
         .collect();
-    Ok(Json(serde_json::json!({ "nodes": rows })))
+    Ok(Json(ParsedNodes { nodes: rows }))
 }
 
 // ---------------------------------------------------------------------------
@@ -520,7 +545,7 @@ pub(crate) async fn parse_nodes(
 
 /// `POST /api/v1/nodes/probe` body (UI §8.2 step 3: the wizard's
 /// per-node "test connection").
-#[derive(Deserialize)]
+#[derive(Deserialize, TS)]
 pub(crate) struct ProbeBody {
     address: String,
     #[serde(default)]
@@ -546,7 +571,7 @@ pub(crate) struct ProbeBody {
 /// The facts the wizard fills its table with. Mirrors `NodeFacts`
 /// field-for-field minus anything identifying (R8: credentials are never
 /// echoed back, not even a digest).
-#[derive(Serialize)]
+#[derive(Serialize, TS)]
 #[serde(rename_all = "snake_case")]
 pub(crate) struct ProbeFacts {
     arch: String,
@@ -556,7 +581,9 @@ pub(crate) struct ProbeFacts {
     cgroup_v2: bool,
     init_systemd: bool,
     cpus: u32,
+    #[ts(type = "number")]
     mem_mib: u64,
+    #[ts(as = "BTreeMap<String, u32>")]
     disk_free_mib: BTreeMap<String, u64>,
     hostname: String,
     user: String,
@@ -565,6 +592,12 @@ pub(crate) struct ProbeFacts {
     tcp_forwarding: Option<bool>,
     curl: Option<bool>,
     existing_install: String,
+}
+
+/// `POST /api/v1/nodes/probe` response.
+#[derive(Serialize, TS)]
+pub(crate) struct ProbeResponse {
+    facts: ProbeFacts,
 }
 
 /// `POST /api/v1/nodes/probe`: discover one node's facts. Nothing is
@@ -714,7 +747,7 @@ pub(crate) async fn probe_nodes(
         curl: facts.curl,
         existing_install: format!("{:?}", facts.existing).to_lowercase(),
     };
-    Ok(Json(serde_json::json!({ "facts": view })).into_response())
+    Ok(Json(ProbeResponse { facts: view }).into_response())
 }
 
 // ---------------------------------------------------------------------------
@@ -722,7 +755,7 @@ pub(crate) async fn probe_nodes(
 // ---------------------------------------------------------------------------
 
 /// One catalog row.
-#[derive(Serialize)]
+#[derive(Serialize, TS)]
 #[serde(rename_all = "snake_case")]
 pub(crate) struct CatalogAddon {
     name: String,
@@ -801,6 +834,12 @@ fn values_schema(addon: &kurin_components::addon::Addon) -> Value {
         .unwrap_or_else(|| serde_json::json!({}))
 }
 
+/// `GET /api/v1/addons/catalog` response.
+#[derive(Serialize, TS)]
+pub(crate) struct CatalogResponse {
+    addons: Vec<CatalogAddon>,
+}
+
 /// `GET /api/v1/addons/catalog`: the available addons with compatibility
 /// and values schemas (UI §7, v1.1). Sources configured by any
 /// registered cluster's revision are offered alongside the built-ins
@@ -808,7 +847,7 @@ fn values_schema(addon: &kurin_components::addon::Addon) -> Value {
 /// widen the catalog).
 pub(crate) async fn addon_catalog(
     State(state): State<AppState>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<CatalogResponse>, ApiError> {
     let mut catalog = resolve_catalog(None)?;
     for record in state.store().list_clusters()? {
         let Ok(Some(revision)) = state.store().current_revision(&record.name) else {
@@ -840,7 +879,15 @@ pub(crate) async fn addon_catalog(
             origin: addon.origin(),
         });
     }
-    Ok(Json(serde_json::json!({ "addons": rows })))
+    Ok(Json(CatalogResponse { addons: rows }))
+}
+
+/// `GET /api/v1/clusters/{name}/addons` response.
+#[derive(Serialize, TS)]
+pub(crate) struct ClusterAddonsView {
+    cluster: String,
+    addons: Value,
+    note: String,
 }
 
 /// `GET /api/v1/clusters/{name}/addons`: the installed inventory read
@@ -850,7 +897,7 @@ pub(crate) async fn addon_catalog(
 pub(crate) async fn cluster_addons(
     State(state): State<AppState>,
     AxumPath(name): AxumPath<String>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<ClusterAddonsView>, ApiError> {
     state
         .store()
         .get_cluster(&name)?
@@ -860,15 +907,16 @@ pub(crate) async fn cluster_addons(
         .and_then(|row| row.addons)
         .and_then(|text| serde_json::from_str(&text).ok())
         .unwrap_or_else(|| serde_json::json!({}));
-    Ok(Json(serde_json::json!({
-        "cluster": name,
-        "addons": inventory,
-        "note": if inventory.as_object().is_none_or(|m| m.is_empty()) {
-            "集群还没有 addon 记录（或尚未采集）"
-        } else {
-            ""
-        },
-    })))
+    let note = if inventory.as_object().is_none_or(|m| m.is_empty()) {
+        "集群还没有 addon 记录（或尚未采集）"
+    } else {
+        ""
+    };
+    Ok(Json(ClusterAddonsView {
+        cluster: name,
+        addons: inventory,
+        note: note.to_string(),
+    }))
 }
 
 // ---------------------------------------------------------------------------
@@ -876,7 +924,7 @@ pub(crate) async fn cluster_addons(
 // ---------------------------------------------------------------------------
 
 /// The body of every addon operation.
-#[derive(Deserialize, Default)]
+#[derive(Deserialize, Default, TS)]
 #[serde(default)]
 pub(crate) struct AddonOpBody {
     addon: String,
@@ -995,11 +1043,11 @@ async fn submit_addon_op(
     })?;
     Ok((
         StatusCode::ACCEPTED,
-        Json(serde_json::json!({
-            "operation": record.id,
-            "state": record.state.as_str(),
-            "cluster": record.cluster,
-        })),
+        Json(OperationSubmitted {
+            operation: record.id,
+            state: record.state.as_str().to_string(),
+            cluster: record.cluster,
+        }),
     )
         .into_response())
 }
@@ -1048,10 +1096,19 @@ pub(crate) async fn addon_remove(
 // ---------------------------------------------------------------------------
 
 /// `POST /api/v1/clusters/{name}/plan` query.
-#[derive(Deserialize, Default)]
+#[derive(Deserialize, Default, TS)]
 #[serde(default)]
 pub(crate) struct PlanQuery {
     check: Option<bool>,
+}
+
+/// `POST /api/v1/clusters/{name}/plan` response.
+#[derive(Serialize, TS)]
+pub(crate) struct PlanSubmitted {
+    operation: String,
+    state: String,
+    cluster: Option<String>,
+    check: bool,
 }
 
 /// Submit the read-only `plan` operation; 202 + the operation id. The
@@ -1075,12 +1132,12 @@ pub(crate) async fn cluster_plan(
     })?;
     Ok((
         StatusCode::ACCEPTED,
-        Json(serde_json::json!({
-            "operation": record.id,
-            "state": record.state.as_str(),
-            "cluster": record.cluster,
-            "check": query.check.unwrap_or(false),
-        })),
+        Json(PlanSubmitted {
+            operation: record.id,
+            state: record.state.as_str().to_string(),
+            cluster: record.cluster,
+            check: query.check.unwrap_or(false),
+        }),
     )
         .into_response())
 }
@@ -1090,7 +1147,7 @@ pub(crate) async fn cluster_plan(
 // ---------------------------------------------------------------------------
 
 /// One registered package row (the API view).
-#[derive(Serialize)]
+#[derive(Serialize, TS)]
 #[serde(rename_all = "snake_case")]
 pub(crate) struct PackageView {
     id: String,
@@ -1101,8 +1158,10 @@ pub(crate) struct PackageView {
     version: String,
     distribution: String,
     arch: Vec<String>,
+    #[ts(type = "number")]
     size: i64,
     index: String,
+    #[ts(type = "number")]
     signatures: i64,
     sbom: Option<String>,
     created_at: String,
@@ -1176,18 +1235,24 @@ fn inspect_registration(source: &str, origin: &str) -> Result<PackageRegistratio
 /// `GET /api/v1/packages`: the registered package sources.
 pub(crate) async fn list_packages(
     State(state): State<AppState>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Json<PackageList>, ApiError> {
     let rows: Vec<PackageView> = state
         .store()
         .list_packages()?
         .into_iter()
         .map(PackageView::from)
         .collect();
-    Ok(Json(serde_json::json!({ "packages": rows })))
+    Ok(Json(PackageList { packages: rows }))
+}
+
+/// `GET /api/v1/packages` response.
+#[derive(Serialize, TS)]
+pub(crate) struct PackageList {
+    packages: Vec<PackageView>,
 }
 
 /// `POST /api/v1/packages/import` body.
-#[derive(Deserialize)]
+#[derive(Deserialize, TS)]
 pub(crate) struct ImportPackageBody {
     source: String,
 }
@@ -1260,6 +1325,14 @@ fn ensure_package_cluster(state: &AppState) -> Result<(), ApiError> {
     Ok(())
 }
 
+/// The 202 body of every operation-submitting endpoint.
+#[derive(Serialize, TS)]
+pub(crate) struct OperationSubmitted {
+    operation: String,
+    state: String,
+    cluster: Option<String>,
+}
+
 /// Submit a clusterless package operation (verify / push / create-base)
 /// and return 202 + the operation id.
 fn submit_package_operation(
@@ -1277,11 +1350,11 @@ fn submit_package_operation(
     })?;
     Ok((
         StatusCode::ACCEPTED,
-        Json(serde_json::json!({
-            "operation": record.id,
-            "state": record.state.as_str(),
-            "cluster": record.cluster,
-        })),
+        Json(OperationSubmitted {
+            operation: record.id,
+            state: record.state.as_str().to_string(),
+            cluster: record.cluster,
+        }),
     )
         .into_response())
 }
@@ -1303,7 +1376,7 @@ pub(crate) async fn verify_package(
 }
 
 /// `POST /api/v1/packages/{id}/push` body.
-#[derive(Deserialize)]
+#[derive(Deserialize, TS)]
 pub(crate) struct PushBody {
     destination: String,
     #[serde(default)]
@@ -1339,7 +1412,7 @@ pub(crate) async fn push_package(
 }
 
 /// `POST /api/v1/packages/create-base` body (UI §8.1: 制作 base 包).
-#[derive(Deserialize, Default)]
+#[derive(Deserialize, Default, TS)]
 #[serde(default)]
 pub(crate) struct CreateBaseBody {
     kubernetes: Option<String>,

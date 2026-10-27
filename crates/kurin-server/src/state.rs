@@ -5,6 +5,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
 
+use crate::assets::StaticAssets;
 use crate::auth::TokenStore;
 use crate::collector::Collector;
 use crate::config::ServeOptions;
@@ -27,6 +28,7 @@ struct Inner {
     store: Store,
     runner: OpRunner,
     collector: Collector,
+    assets: std::sync::RwLock<StaticAssets>,
 }
 
 impl AppState {
@@ -60,6 +62,7 @@ impl AppState {
             store,
             runner,
             collector,
+            assets: std::sync::RwLock::new(StaticAssets::embedded()),
         })))
     }
 
@@ -71,6 +74,24 @@ impl AppState {
     /// The operation runner.
     pub fn runner(&self) -> &OpRunner {
         &self.0.runner
+    }
+
+    /// The embedded SPA assets (WP-55).
+    pub fn assets(&self) -> StaticAssets {
+        self.0
+            .assets
+            .read()
+            .unwrap_or_else(|error| error.into_inner())
+            .clone()
+    }
+
+    /// Replace the asset set (tests, and a future `serve --dev`).
+    pub fn set_assets(&self, assets: StaticAssets) {
+        *self
+            .0
+            .assets
+            .write()
+            .unwrap_or_else(|error| error.into_inner()) = assets;
     }
 
     /// The status collector (WP-53).

@@ -74,6 +74,22 @@ All notable changes to kurin. Format follows Keep a Changelog; semver.
   missing an addon image (or its files) is refused before anything
   touches a node, and `Addon::from_base_package` lets the selection read
   an addon straight out of `[packages] base`.
+### Added (WP-55)
+- TypeScript bindings generated from the server DTOs (`ts-rs`): every
+  request/response type in `crates/kurin-server` derives `TS`, and
+  `just ts-bindings` writes `web/src/api/generated/`. The same test that
+  exports them compares the output with the committed files, so a DTO
+  change without regenerating the bindings fails `just test`.
+- The `serve` binary embeds the built SPA (`rust-embed`, only the `.gz`
+  files Vite produces). `kurin-server/build.rs` fails with a clear
+  "run `just web-build`" message when `--features ui` is built without
+  `web/dist`; plain `cargo build`/`cargo test` still need no Node.
+  Non-`/api` paths fall back to `index.html.gz` (client-side routes),
+  while unknown `/api` paths keep the JSON error envelope.
+- `just web-build` (install + Vite build, keeping only gzip) and
+  `just ts-bindings`; `just release-musl` builds both architectures with
+  `--features ui` and prints the embedded asset and binary sizes.
+
 ### Added (WP-54)
 - The remaining `kurin serve` API surface (UI §7 v1.1):
   `GET /meta` (kurin version, the pinned component table of

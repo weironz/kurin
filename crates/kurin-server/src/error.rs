@@ -6,6 +6,7 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use serde::Serialize;
+use ts_rs::TS;
 
 /// 400 — malformed request (machine code).
 pub const CODE_INVALID_REQUEST: &str = "invalid-request";
@@ -27,7 +28,7 @@ pub const CODE_INTERNAL: &str = "internal";
 
 /// One span of a validation diagnostic: `text` is the offending source
 /// snippet at `offset`/`len` inside the submitted document (UI §7).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
 pub struct Label {
     pub offset: usize,
     pub len: usize,
@@ -35,7 +36,7 @@ pub struct Label {
 }
 
 /// A validation diagnostic (UI §7 `POST /configs/validate` shape).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
 pub struct Diagnostic {
     pub message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -197,9 +198,9 @@ impl From<crate::store::StoreError> for ApiError {
 
 /// The JSON error body: `{"code": ..., "message": ..., "diagnostics": ...}`
 /// (the WP-60 `ApiErrorEnvelope` contract).
-#[derive(Serialize)]
-struct Envelope<'a> {
-    code: &'a str,
+#[derive(Serialize, TS)]
+pub(crate) struct ErrorEnvelope {
+    code: String,
     message: String,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     diagnostics: Vec<Diagnostic>,
@@ -208,8 +209,8 @@ struct Envelope<'a> {
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let status = self.status();
-        let body = Envelope {
-            code: self.code(),
+        let body = ErrorEnvelope {
+            code: self.code().to_string(),
             message: self.to_string(),
             diagnostics: self.diagnostics(),
         };

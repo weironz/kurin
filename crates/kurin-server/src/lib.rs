@@ -14,6 +14,7 @@
 //!    token and invalidates every session.
 
 mod api;
+mod assets;
 mod auth;
 mod collector;
 mod config;
@@ -25,12 +26,15 @@ mod routes;
 mod session;
 mod state;
 pub mod store;
+#[cfg(test)]
+mod ts_bindings;
 
 use std::os::unix::fs::DirBuilderExt;
 use std::time::Duration;
 
 use axum::Router;
 
+pub use assets::StaticAssets;
 pub use auth::TokenStore;
 pub use collector::{
     Collection, Collector, CollectorSettings, KurinStatusProvider, RefreshOutcome, StatusProvider,
@@ -141,6 +145,12 @@ pub async fn serve(opts: ServeOptions) -> Result<(), ServeError> {
             "[serve] 警告：明文 HTTP 监听非回环地址 {}，令牌与会话 cookie 将以明文传输",
             opts.listen
         );
+    }
+    let assets = startup.state.assets();
+    if assets.is_empty() {
+        tracing::info!("未嵌入前端（构建时没有 --features ui）");
+    } else {
+        tracing::info!(files = assets.len(), "已嵌入前端 gzip 资源");
     }
     let collector_task = startup.state.collector().start();
 

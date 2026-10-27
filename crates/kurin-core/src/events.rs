@@ -52,6 +52,8 @@ pub const REDACTED: &str = "******";
 /// graph (no new transitive tree), needs no timezone database for UTC, and
 /// its `Rfc3339` formatter is exactly the log display format.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(type = "number"))]
 #[serde(transparent)]
 pub struct Timestamp(u64);
 
@@ -121,6 +123,7 @@ impl fmt::Display for Timestamp {
 
 /// Log severity, ordered `Trace < Debug < Info < Warn < Error`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(rename_all = "lowercase")]
 pub enum Level {
     Trace,
@@ -174,6 +177,7 @@ impl fmt::Display for Level {
 /// Which stream a log line belongs to: kurin's own progress, or a remote
 /// command's stdout/stderr.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(rename_all = "lowercase")]
 pub enum Stream {
     Kurin,
@@ -183,6 +187,7 @@ pub enum Stream {
 
 /// Terminal state of an operation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(rename_all = "lowercase")]
 pub enum OpResult {
     Succeeded,
@@ -193,6 +198,8 @@ pub enum OpResult {
 /// Operation kind (`create-cluster`, `upgrade`, ...). Kept as an open
 /// string so new operations need no schema change.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(type = "string"))]
 #[serde(transparent)]
 pub struct OpKind(String);
 
@@ -219,6 +226,7 @@ impl fmt::Display for OpKind {
 /// One observable step. Field names are snake_case on the wire; the `type`
 /// tag is kebab-case, matching the v1 event style.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum Body {
     OpStarted {
@@ -232,6 +240,7 @@ pub enum Body {
     },
     PhaseDone {
         phase: String,
+        #[cfg_attr(feature = "ts", ts(type = "number"))]
         ms: u64,
     },
     TaskStart {
@@ -252,6 +261,7 @@ pub enum Body {
         key: String,
         node: String,
         phase: String,
+        #[cfg_attr(feature = "ts", ts(type = "number"))]
         ms: u64,
     },
     TaskReconciled {
@@ -290,6 +300,7 @@ pub enum Body {
     ClusterReady,
     OpFinished {
         result: OpResult,
+        #[cfg_attr(feature = "ts", ts(type = "number"))]
         ms: u64,
         error: Option<String>,
     },
@@ -362,8 +373,10 @@ impl Body {
 /// One event on the bus: schema version, monotonic sequence, UTC timestamp,
 /// operation id and the body.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct Envelope {
     pub v: u8,
+    #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub seq: u64,
     pub ts: Timestamp,
     pub op: String,

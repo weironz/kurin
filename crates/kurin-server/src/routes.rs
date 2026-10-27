@@ -5,15 +5,15 @@
 use std::time::SystemTime;
 
 use axum::extract::rejection::JsonRejection;
-use axum::extract::{Request, State};
+use axum::extract::State;
 use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
+use ts_rs::TS;
 
 use crate::error::ApiError;
 use crate::guard;
@@ -35,7 +35,7 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/api/v1/meta", get(meta))
         .merge(crate::api::router())
-        .fallback(not_found)
+        .fallback(crate::assets::fallback)
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             guard::guard,
@@ -49,22 +49,22 @@ async fn healthz() -> Json<Healthz> {
     Json(Healthz { status: "ok" })
 }
 
-#[derive(Serialize)]
-struct Healthz {
+#[derive(Serialize, TS)]
+pub(crate) struct Healthz {
     status: &'static str,
 }
 
 /// `POST /api/v1/session` body (UI §6.10: the token from the URL hash).
-#[derive(Deserialize)]
-struct LoginRequest {
+#[derive(Deserialize, TS)]
+pub(crate) struct LoginRequest {
     token: String,
 }
 
 /// `POST`/`GET /api/v1/session` response. Field names follow the WP-60
 /// frontend contract (`camelCase`).
-#[derive(Serialize)]
+#[derive(Serialize, TS)]
 #[serde(rename_all = "camelCase")]
-struct SessionInfo {
+pub(crate) struct SessionInfo {
     expires_at: String,
     version: &'static str,
 }
@@ -122,14 +122,8 @@ async fn delete_session(State(state): State<AppState>, headers: HeaderMap) -> Re
 
 /// `GET /api/v1/meta`: kurin version, the component version table
 /// (`create config --print-versions`) and the capability table (WP-54).
-async fn meta(State(state): State<AppState>) -> Json<Value> {
+async fn meta(State(state): State<AppState>) -> Json<crate::api::wp54::MetaResponse> {
     Json(crate::api::wp54::meta_body(state.version()))
-}
-
-/// Unknown path → the unified 404 envelope. (WP-55 splits this into the
-/// SPA fallback and the `/api` 404.)
-async fn not_found(_req: Request) -> Response {
-    ApiError::NotFound.into_response()
 }
 
 fn respond_with_cookie(mut response: Response, cookie: String) -> Response {

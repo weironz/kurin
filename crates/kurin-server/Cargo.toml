@@ -6,14 +6,22 @@ license.workspace = true
 repository.workspace = true
 description = "Kurin web service"
 
+[features]
+# Embed `web/dist` into the binary (WP-55). `kurin`'s `ui` feature turns
+# this on; `build.rs` then requires the Vite output to exist.
+embed-ui = ["dep:rust-embed"]
+
 [dependencies]
 async-trait.workspace = true
+rust-embed = { workspace = true, optional = true, features = ["include-exclude"] }
+mime_guess.workspace = true
+ts-rs.workspace = true
 axum.workspace = true
 axum-server.workspace = true
 kurin-artifact.workspace = true
 kurin-components.workspace = true
 kurin-config.workspace = true
-kurin-core.workspace = true
+kurin-core = { workspace = true, features = ["ts"] }
 kurin-ops.workspace = true
 kurin-ssh.workspace = true
 miette.workspace = true
@@ -35,7 +43,7 @@ tracing-subscriber = { workspace = true, features = ["fmt"] }
 
 [dev-dependencies]
 async-trait.workspace = true
-kurin-core.workspace = true
+kurin-core = { workspace = true, features = ["ts"] }
 serde_json.workspace = true
 tempfile.workspace = true
 tokio.workspace = true

@@ -46,20 +46,37 @@ docs-matrix:
 # build the CLI binary
 build:
     cargo build --release
+
+# ── web (WP-55) ───────────────────────────────────────────────────────
+
+# install the frontend toolchain dependencies
+web-install:
+    pnpm --dir web install --frozen-lockfile
+
+# build the SPA; only the .gz copies are kept (rust-embed embeds those)
+web-build: web-install
+    pnpm --dir web build
+    test -f web/dist/index.html.gz || (echo "web/dist/index.html.gz 缺失：前端构建没有产出 gzip" >&2; exit 1)
+    echo "[web] web/dist: $(du -sh web/dist | cut -f1)"
+
+# regenerate the committed TypeScript DTO bindings (drift fails `just test`)
+ts-bindings:
+    KURIN_TS_BINDINGS_WRITE=1 cargo test -p kurin-server export_bindings -- --nocapture
 # ── release (musl static) ─────────────────────────────────────────────
 
 # musl static binaries for both arch into release-dist/
 release-musl:
     #!/usr/bin/env bash
     set -euo pipefail
+    just web-build
     rm -rf release-dist && mkdir -p release-dist/x86_64 release-dist/aarch64
     echo "[release] x86_64-unknown-linux-musl (native musl-gcc)"
     CARGO_TARGET_DIR=target/release-musl cargo build --release \
-        --target x86_64-unknown-linux-musl -p kurin
+        --target x86_64-unknown-linux-musl -p kurin --features ui
     cp target/release-musl/x86_64-unknown-linux-musl/release/kurin release-dist/x86_64/kurin
     echo "[release] aarch64-unknown-linux-musl (zig cross)"
     CARGO_TARGET_DIR=target/release-musl cargo zigbuild --release \
-        --target aarch64-unknown-linux-musl -p kurin
+        --target aarch64-unknown-linux-musl -p kurin --features ui
     cp target/release-musl/aarch64-unknown-linux-musl/release/kurin release-dist/aarch64/kurin
     # Sidecars must carry bare filenames: they are verified wherever
     # they are downloaded (curl | sh from any cwd).
@@ -67,6 +84,10 @@ release-musl:
         tar -czf "release-dist/kurin-$a-linux-musl.tar.gz" -C release-dist/$a kurin
         ( cd release-dist && sha256sum "kurin-$a-linux-musl.tar.gz" > "kurin-$a-linux-musl.tar.gz.sha256" )
         echo "[release] release-dist/kurin-$a-linux-musl.tar.gz"
+    done
+    echo "[release] web/dist: $(du -sh web/dist | cut -f1)"
+    for a in x86_64 aarch64; do
+        echo "[release] $a binary: $(du -h release-dist/$a/kurin | cut -f1) ($(stat -c%s release-dist/$a/kurin) bytes)"
     done
 
 # ── e2e (multipass / containers) ─────────────────────────────────────
