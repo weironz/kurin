@@ -1,0 +1,85 @@
+name: packages
+
+# WP-39 (04 §7): on a release tag, build the official packages, push
+# them to ghcr.io and sign them with cosign. The public key is
+# exported and attached to the release so users can pin it:
+#   https://github.com/weironz/kurin/releases/latest/download/cosign.pub
+#
+# The `os` and `addon` package builders (WP-38 / WP-40+) plug into the
+# same matrix; only `base` exists today.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  OWNER: weironz
+
+jobs:
+  packages:
+    runs-on: self-hosted
+    timeout-minutes: 120
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: toolchain
+        run: |
+          export PATH="$HOME/.cargo/bin:/usr/local/bin:$PATH"
+          rustup component add clippy rustfmt
+      - name: install cosign
+        uses: sigstore/cosign-installer@v3
+      - name: build kurin
+        run: |
+          export PATH="$HOME/.cargo/bin:/usr/local/bin:$PATH"
+          CARGO_TARGET_DIR=target/release-musl cargo build --release \
+            --target x86_64-unknown-linux-musl -p kurin
+      - name: build + push + sign the base package
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
+          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.cargo/bin:/usr/local/bin:$PATH"
+          TAG="${GITHUB_REF_NAME#v}"
+          BIN=target/release-musl/x86_64-unknown-linux-musl/release/kurin
+          REPO="$REGISTRY/$OWNER/kurin/base"
+
+          # registry credentials for `kurin package push` (it reads the
+          # Docker config, like the docker CLI)
+          AUTH=$(printf '%s:%s' "${{ github.actor }}" "$GH_TOKEN" | base64 -w0)
+          mkdir -p ~/.docker
+          printf '{"auths":{"%s":{"auth":"%s"}}}\n' "$REGISTRY" "$AUTH" > ~/.docker/config.json
+
+          # one base package per supported distribution, both arches
+          for DIST in kubeadm; do
+            "$BIN" package create base --distribution "$DIST" --arch amd64,arm64 \
+              -o "oci-layout://release-dist/base-$DIST"
+            "$BIN" package push "oci-layout://release-dist/base-$DIST" \
+              "oci://$REPO:v${TAG}-$DIST"
+            # cosign signs the package index the tag resolves to; the
+            # signature lands as a referrer, which `kurin package verify
+            # --key cosign.pub` (or verify = "signature") checks
+            cosign sign --yes --key env://COSIGN_PRIVATE_KEY \
+              "$REPO:v${TAG}-$DIST"
+            # prove the round trip before the job goes green
+            "$BIN" package pull "oci://$REPO:v${TAG}-$DIST" \
+              "oci-layout://release-dist/pulled-$DIST"
+            cosign public-key --key env://COSIGN_PRIVATE_KEY > release-dist/cosign.pub
+            "$BIN" package verify "oci-layout://release-dist/pulled-$DIST" \
+              --key release-dist/cosign.pub
+          done
+
+      - name: publish the public key
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" \
+            --title "$TAG" --verify-tag || true
+          gh release upload "$TAG" release-dist/cosign.pub \
+            --repo "$GITHUB_REPOSITORY" --clobber

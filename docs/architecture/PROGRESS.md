@@ -43,7 +43,7 @@
 | WP-36 registry 分发与 mirror | todo | | | `e2e/tier3/registry.sh` | |
 | WP-37 离线 CNI 补齐 | todo | | | `just tier1-offline-cni flannel/cilium/kube-ovn` | |
 | WP-38 OS 依赖包 | todo | | | `e2e/tier1/rocky.sh` 离线变体 | |
-| WP-39 签名/SBOM/发布 | todo | | | | |
+| WP-39 签名/SBOM/发布 | done | 见提交 | 无 | 签名包校验/篡改拒绝/未签名拒绝（本地测试） | SBOM referrer；cosign simple-signing（p256）；push/pull 携带 referrer；CI 签名发布工作流 |
 | WP-40 addon.yaml 规范 | done | 见提交 | 无 | 无 | 41 个 addon 专项测试；schema 漂移测试；目录/内嵌/包三种加载；修复 package 文件集两级索引 bug |
 | WP-41 addon 渲染 | done | 见提交 | 新增 4 个渲染快照 | 无（纯本地渲染） | 03 §4.4 上下文；values 合并/校验；秘密脱敏；未声明镜像拒绝 |
 | WP-42 helm 执行器 | done | 见提交 | 无 | tier1 安装测试 chart | helm 3.19.0 制品（官方 sha256）；HelmRunner + manifests SSA；渲染镜像检查；返回对象列表 |
@@ -84,6 +84,7 @@
 - WP-15：为保持快照的 per-node 任务布局，`PlanBuilder` 增加 `add_track`（phase 内按 track/node/调用序重排）；k3s 校验规则移入 `distro/k3s`，错误文本逐字节一致。
 - WP-16：`storage/*` 标为 online-only（镜像在 bundle 但 bootstrap 不预载，WP-47 接管）；`ha/kube-vip` 镜像 pin 在版本表而非 manifest，标 online-only；`capabilities` 为隐藏命令且恒出 JSON。
 - WP-50：Host 拒绝用 403 `forbidden-host`（§7 清单外）；错误/DTO 采用顶层 `{code,message,diagnostics?}` + camelCase（对齐 WP-60 前端）；默认白名单含 `[::1]`；会话 TTL 24h；新增 `GET /session` 与 `GET /api/v1/healthz`。
+- WP-39：`sigstore` crate 不可用（会引入第二套加密栈/Fulcio/rekor），按 04 §6 预案用 `p256` 实现 cosign simple-signing；新增依赖仅 `p256`（已在依赖图中）。
 - WP-35：上传闸门为 run 级（stage 串行，实际等价）；`--dry-run` 配 `oci://` 源会先拉包做覆盖校验；为 Blob 变体改动了 `kurin-ssh`/core/ops/main。
 - WP-34：`upgrade --offline <包URI>`/`add nodes --offline <包URI>` 在变更期明确拒绝（分发留给 WP-35）；`oci://` 来源报错并指向 `package pull`；`artifacts.offline-dir` 与 `packages.base` 互斥。
 - WP-33：`inspect --json` 改为 `--manifest`（全局 `--json` 与子命令长选项冲突），`list` 用 `--format text|json`；`prune` 需全量重哈希（3.7GiB 约 2 分钟）。
@@ -121,6 +122,7 @@
 ## 待人工 e2e
 
 （随 WP 完成追加）
+- WP-39：签名包校验、篡改 blob 拒绝、未签名包在 signature 模式拒绝（`cargo test -p kurin-artifact --test transfer`）；CI 工作流需在 tag 上人工验证。
 - WP-35：`just tier1-offline oci-layout:///tmp/kurin-pkg`、`file:///tmp/kurin-base.tar.zst`、`oci://127.0.0.1:5000/kurin/base:v1.33.1-kubeadm`（三种来源各一次）。
 - WP-34：`just tier1-offline`（用既有旧 bundle 目录，验证不回归）；
   另可用 `kurin package create base -o file:///tmp/base.tar.zst` 后
@@ -130,6 +132,7 @@
 - WP-15：纯重构，快照零变化；回归 `just tier1`/`tier2` 即可。
 - WP-16：`just tier1-offline`、`just tier3-external-lb`。
 - WP-50：`kurin serve` 回环冒烟（一次性登录链接、`/session`、401/403/400、TLS h2）；`cargo clippy -p kurin --features ui`。
+- WP-39：签名包校验、篡改 blob 拒绝、未签名包在 signature 模式拒绝（`cargo test -p kurin-artifact --test transfer`）；CI 工作流需在 tag 上人工验证。
 - WP-35：`just tier1-offline oci-layout:///tmp/kurin-pkg`、`file:///tmp/kurin-base.tar.zst`、`oci://127.0.0.1:5000/kurin/base:v1.33.1-kubeadm`（三种来源各一次）。
 - WP-34：`just tier1-offline`（旧 bundle 不回归）；`kurin package create base -o file:///tmp/base.tar.zst && kurin create cluster -f cfg --offline file:///tmp/base.tar.zst --dry-run`。
 - WP-33：本地 zot 容器三形态互转（layout→zot→tar→verify→inspect，二次 push 零发送，错误凭据 401）；已清理容器。

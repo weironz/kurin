@@ -200,10 +200,16 @@ enum PackageWhat {
         #[arg(long)]
         sbom: bool,
     },
-    /// Re-hash every blob in the package's digest closure (04 §6).
+    /// Re-hash every blob in the package's digest closure (04 §6), and
+    /// with `--key` also require a cosign signature that one of the keys
+    /// verifies.
     Verify {
         /// Package source: any of the three transport forms.
         source: String,
+        /// cosign public key to require a signature from (repeatable).
+        /// Without a key only the digest closure is verified.
+        #[arg(long = "key", value_name = "PUB")]
+        keys: Vec<PathBuf>,
         /// Registry user (registry sources only).
         #[arg(long)]
         user: Option<String>,
@@ -593,21 +599,31 @@ async fn run(cli: Cli) -> Result<()> {
             } => package_inspect(&source, manifest, sbom).await,
             PackageWhat::Verify {
                 source,
+                keys,
                 user,
                 password_env,
             } => {
                 let source = kurin::transfer::PackageRef::parse(&source)?;
+                let policy = match kurin::transfer::VerifyPolicy::signature(&keys)? {
+                    Some(policy) => policy,
+                    None => kurin::transfer::VerifyPolicy::Digest,
+                };
                 let opts = transfer_options(user, password_env);
-                let report = kurin::transfer::verify_package(&source, &opts)
+                let report = kurin::transfer::verify_package(&source, &opts, &policy)
                     .await
                     .map_err(|e| miette::miette!("{e:?}"))?;
+                let signed = if report.signatures > 0 {
+                    format!("{} signature(s) verified", report.signatures)
+                } else {
+                    "no signature required (digest only)".to_string()
+                };
                 println!(
                     "verified {} ({})",
                     report.index,
                     report.tag.as_deref().unwrap_or("no tag")
                 );
                 println!(
-                    "  {} manifest(s), {} blob(s), {} bytes re-hashed",
+                    "  {} manifest(s), {} blob(s), {} bytes re-hashed; {signed}",
                     report.manifests, report.blobs, report.bytes
                 );
                 Ok(())
@@ -1202,20 +1218,24 @@ async fn package_inspect(source: &str, manifest: bool, sbom: bool) -> Result<()>
         println!("tag: {tag}");
     }
     if sbom {
-        // The package's SPDX document (04 §6). In-package referrer
-        // attachment is WP-39; the document is rendered from the
-        // verified metadata either way.
-        let meta = handle.manifest()?;
-        let index = handle.index_digest()?;
-        let document = kurin::package::spdx::Document::from_package(
-            &meta,
-            &index,
-            &format!("kurin-{}", env!("CARGO_PKG_VERSION")),
-        );
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&document).into_diagnostic()?
-        );
+        // The package's SPDX document (04 §6): the referrer attached to
+        // the package index (WP-39), rendered from the verified
+        // metadata for packages built before referrers existed.
+        if let Some(bytes) = handle.sbom().map_err(|e| miette::miette!("{e:?}"))? {
+            println!("{}", String::from_utf8_lossy(&bytes));
+        } else {
+            let meta = handle.manifest()?;
+            let index = handle.index_digest()?;
+            let document = kurin::package::spdx::Document::from_package(
+                &meta,
+                &index,
+                &format!("kurin-{}", env!("CARGO_PKG_VERSION")),
+            );
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&document).into_diagnostic()?
+            );
+        }
     } else if manifest {
         let meta = handle.manifest()?;
         println!("{}", serde_json::to_string_pretty(&meta).into_diagnostic()?);

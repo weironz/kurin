@@ -504,6 +504,26 @@ impl ClusterSpec {
         // in `kurin-components` (WP-15/16); the CLI runs them right
         // after this crate's load pipeline. kurin-config keeps the
         // structural checks below.
+        // Signature verification needs something to verify against
+        // (04 §4: `trusted-keys` is required when verify = "signature").
+        if self.packages.verify == crate::v1alpha2::Verify::Signature {
+            if self.packages.trusted_keys.is_empty() {
+                return Err(invalid(
+                    "packages.verify = \"signature\" requires packages.trusted-keys: add the \
+                     cosign public key path(s) released with the package (see \
+                     docs/configuration.md §官方包与公钥)"
+                        .into(),
+                ));
+            }
+            for key in &self.packages.trusted_keys {
+                if !key.is_file() {
+                    return Err(invalid(format!(
+                        "packages.trusted-keys entry {key:?} does not exist or is not a file \
+                         (a cosign public key, e.g. from the release assets)"
+                    )));
+                }
+            }
+        }
         if let Some(d) = &self.packages.offline_dir {
             if !d.is_dir() {
                 return Err(invalid(format!(

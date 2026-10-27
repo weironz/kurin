@@ -25,6 +25,12 @@ tokio-util = { workspace = true, features = ["io"] }
 oci-spec = { version = "0.9", default-features = false, features = ["image"] }
 tar = "0.4"
 zstd = "0.13"
+# cosign simple-signing verification (04 §6, WP-39). Pure Rust and
+# already in the graph via russh/ssh-key, so no new crates to
+# cross-compile. `ecdsa` (verify + sign for tests), `pem`
+# (SubjectPublicKeyInfo keys) and `alloc` (SEC1 point export) are the
+# only features needed.
+p256 = { version = "0.14", default-features = false, features = ["ecdsa", "pem", "alloc"] }
 
 [dev-dependencies]
 tempfile.workspace = true

@@ -533,4 +533,39 @@ role = "control-plane"
         assert_eq!(spec.packages.delivery, Delivery::Registry);
         assert_eq!(spec.packages.verify, Verify::Digest);
     }
+
+    /// WP-39: `verify = "signature"` is rejected at load without any
+    /// trusted key, and with a key path that does not exist — the load
+    /// pipeline runs `validate`, so both surface as config errors.
+    #[test]
+    fn signature_mode_requires_real_trusted_keys() {
+        let toml = MINIMAL.to_string() + "\n[packages]\nverify = \"signature\"\n";
+        let err = parse_str(Path::new("x.toml"), &toml).expect_err("signature without keys");
+        assert!(format!("{err}").contains("trusted-keys"), "message: {err}");
+
+        let toml = MINIMAL.to_string()
+            + "\n[packages]\nverify = \"signature\"\n\
+               trusted-keys = [\"/nonexistent/cosign.pub\"]\n";
+        let err = parse_str(Path::new("x.toml"), &toml).expect_err("a missing key file");
+        assert!(format!("{err}").contains("cosign.pub"), "message: {err}");
+
+        // digest mode stays key-free (the documented default behavior)
+        let toml = MINIMAL.to_string() + "\n[packages]\nverify = \"digest\"\n";
+        parse_str(Path::new("x.toml"), &toml).expect("digest mode needs no keys");
+    }
+
+    /// WP-39: a real key file passes validation.
+    #[test]
+    fn signature_mode_accepts_an_existing_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let key = dir.path().join("cosign.pub");
+        std::fs::write(&key, "-----BEGIN PUBLIC KEY-----\nplaceholder\n").unwrap();
+        let toml = MINIMAL.to_string()
+            + &format!(
+                "\n[packages]\nverify = \"signature\"\ntrusted-keys = [\"{}\"]\n",
+                key.display()
+            );
+        let spec = parse_str(Path::new("x.toml"), &toml).expect("v1alpha2 parses");
+        spec.validate().expect("an existing key file validates");
+    }
 }

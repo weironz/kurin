@@ -326,6 +326,9 @@ pub enum RemoteError {
         #[source]
         source: serde_json::Error,
     },
+
+    #[error(transparent)]
+    Referrer(#[from] crate::referrer::ReferrerError),
 }
 
 impl From<std::io::Error> for RemoteError {
@@ -621,10 +624,17 @@ pub async fn pull_package(
         detail: format!("root descriptor: {e}"),
     })?;
     pull_closure(&client, auth, reference, layout, &root, &mut counts).await?;
+    // Referrers of the package index (SBOM, cosign signatures): pulled
+    // via the referrers API, falling back to the sha256-<hex> tag on
+    // registries without it, and filed in index.json after the root.
+    let referrers =
+        pull_referrers(&client, auth, reference, layout, root.digest(), &mut counts).await?;
+    let mut manifests = vec![root.clone()];
+    manifests.extend(referrers);
     let index = oci_spec::image::ImageIndexBuilder::default()
         .schema_version(2u32)
         .media_type(MediaType::ImageIndex)
-        .manifests(vec![root.clone()])
+        .manifests(manifests)
         .build()
         .map_err(|e| RemoteError::InvalidRef {
             input: reference.whole(),
@@ -632,6 +642,166 @@ pub async fn pull_package(
         })?;
     layout.write_index(&index)?;
     Ok(PullOutcome { root, tag, counts })
+}
+
+/// Pull every referrer of `subject`: the referrers API first, then the
+/// distribution-spec fallback tag (`sha256-<hex>`) when the API is
+/// missing. Each referrer manifest is pulled by digest (verified) with
+/// its config and payload blobs; only referrers whose `subject` is
+/// `subject` are filed.
+async fn pull_referrers(
+    client: &Client,
+    auth: &RegistryAuth,
+    reference: &Reference,
+    layout: &Layout,
+    subject: &Digest,
+    counts: &mut TransferCounts,
+) -> Result<Vec<Descriptor>, RemoteError> {
+    let listing = match client
+        .pull_referrers(&reference.clone_with_digest(subject.to_string()), None)
+        .await
+    {
+        Ok(listing) => listing,
+        Err(e) if is_not_found(&e) => {
+            return pull_referrers_fallback_tag(client, auth, reference, layout, subject, counts)
+                .await
+        }
+        Err(e) => {
+            return Err(RemoteError::Registry {
+                detail: format!("listing referrers of {subject}"),
+                source: e,
+            })
+        }
+    };
+    let mut filed = Vec::new();
+    for entry in &listing.manifests {
+        // the client's listing type is its own; convert to the spec
+        // descriptor (media type, digest, size, artifact type if set)
+        let mut builder = DescriptorBuilder::default()
+            .media_type(MediaType::Other(entry.media_type.clone()))
+            .digest(Digest::try_from(entry.digest.as_str()).map_err(|e| {
+                RemoteError::InvalidRef {
+                    input: entry.digest.clone(),
+                    detail: e.to_string(),
+                }
+            })?)
+            .size(entry.size as u64);
+        if let Some(annotations) = &entry.annotations {
+            let mapped: std::collections::HashMap<String, String> = annotations
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect();
+            builder = builder.annotations(mapped);
+        }
+        let descriptor = builder.build().map_err(|e| RemoteError::InvalidRef {
+            input: entry.digest.clone(),
+            detail: format!("referrer descriptor: {e}"),
+        })?;
+        if let Some(descriptor) = pull_one_referrer(
+            client,
+            auth,
+            reference,
+            layout,
+            &descriptor,
+            subject,
+            counts,
+        )
+        .await?
+        {
+            filed.push(descriptor);
+        }
+    }
+    Ok(filed)
+}
+
+/// The fallback-tag half of [`pull_referrers`]: fetch the
+/// `sha256-<hex>` tag index and pull the referrer manifests it lists.
+async fn pull_referrers_fallback_tag(
+    client: &Client,
+    auth: &RegistryAuth,
+    reference: &Reference,
+    layout: &Layout,
+    subject: &Digest,
+    counts: &mut TransferCounts,
+) -> Result<Vec<Descriptor>, RemoteError> {
+    let tag = referrers_tag(subject);
+    let tag_ref = Reference::with_tag(
+        reference.registry().to_string(),
+        reference.repository().to_string(),
+        tag,
+    );
+    let (bytes, _) = match client
+        .pull_manifest_raw(&tag_ref, auth, &MANIFEST_MEDIA_TYPES)
+        .await
+    {
+        Ok(pulled) => pulled,
+        Err(e) if is_not_found(&e) => return Ok(Vec::new()),
+        Err(e) => {
+            return Err(RemoteError::Registry {
+                detail: format!("pulling the referrers tag of {subject}"),
+                source: e,
+            })
+        }
+    };
+    let listing: oci_spec::image::ImageIndex =
+        serde_json::from_slice(&bytes).map_err(|e| RemoteError::Json {
+            detail: format!("the referrers tag of {subject} is not an index"),
+            source: e,
+        })?;
+    let mut filed = Vec::new();
+    for descriptor in listing.manifests() {
+        if let Some(descriptor) =
+            pull_one_referrer(client, auth, reference, layout, descriptor, subject, counts).await?
+        {
+            filed.push(descriptor);
+        }
+    }
+    Ok(filed)
+}
+
+/// Pull and file one referrer manifest; `None` when it does not point
+/// at `subject` (the fallback tag may carry a shared listing).
+async fn pull_one_referrer(
+    client: &Client,
+    auth: &RegistryAuth,
+    reference: &Reference,
+    layout: &Layout,
+    descriptor: &Descriptor,
+    subject: &Digest,
+    counts: &mut TransferCounts,
+) -> Result<Option<Descriptor>, RemoteError> {
+    let digest_ref = reference.clone_with_digest(descriptor.digest().to_string());
+    let (bytes, digest) = pull_manifest_verified(client, auth, &digest_ref).await?;
+    if bytes.len() as u64 != descriptor.size() {
+        return Err(RemoteError::SizeMismatch {
+            digest: descriptor.digest().to_string(),
+            expected: descriptor.size(),
+            actual: bytes.len() as u64,
+        });
+    }
+    if &digest != descriptor.digest() {
+        return Err(RemoteError::DigestMismatch {
+            expected_ref: descriptor.digest().to_string(),
+            expected: descriptor.digest().to_string(),
+            actual: digest.to_string(),
+        });
+    }
+    let manifest: ImageManifest =
+        serde_json::from_slice(&bytes).map_err(|e| RemoteError::Json {
+            detail: format!("referrer manifest {} is not an image manifest", digest),
+            source: e,
+        })?;
+    if manifest.subject().as_ref().map(|s| s.digest()) != Some(subject) {
+        return Ok(None);
+    }
+    store_manifest(layout, &digest, &bytes)?;
+    let config = manifest.config().clone();
+    pull_blob_into(client, auth, &digest_ref, layout, &config, counts).await?;
+    for layer in manifest.layers() {
+        pull_blob_into(client, auth, &digest_ref, layout, layer, counts).await?;
+    }
+    counts.manifests_moved += 1;
+    Ok(Some(descriptor.clone()))
 }
 
 /// Push the manifest tree `closure` describes (already walked out of
@@ -737,7 +907,139 @@ pub async fn push_package(
             counts.manifests_moved += 1;
         }
     }
+
+    // 4. referrers (WP-39): every SBOM / cosign signature attached to
+    //    the package index in the source layout, payload blobs first,
+    //    then the manifests; the fallback tag listing is updated last
+    //    so registries without the referrers API still discover them.
+    let subject = root.descriptor.digest().clone();
+    let referrers = crate::referrer::find(layout, &subject)?;
+    if !referrers.is_empty() {
+        for referrer in &referrers {
+            let config = referrer.manifest.config().clone();
+            push_blob_if_missing(&client, reference, layout, &config, &mut counts).await?;
+            for layer in referrer.manifest.layers() {
+                push_blob_if_missing(&client, reference, layout, layer, &mut counts).await?;
+            }
+            let digest_ref = reference.clone_with_digest(referrer.descriptor.digest().to_string());
+            if manifest_exists(&client, auth, &digest_ref).await? {
+                counts.manifests_present += 1;
+                continue;
+            }
+            let mut bytes = Vec::new();
+            layout
+                .blobs()
+                .open_blob(referrer.descriptor.digest())?
+                .read_to_end(&mut bytes)?;
+            push_manifest_bytes(
+                &client,
+                &digest_ref,
+                &bytes,
+                referrer.descriptor.media_type(),
+            )
+            .await?;
+            counts.manifests_moved += 1;
+        }
+        push_referrers_tag(&client, auth, reference, &subject, &referrers).await?;
+    }
     Ok(counts)
+}
+
+/// The distribution-spec referrers fallback tag of a subject digest:
+/// `sha256:<hex>` with `:` replaced by `-`.
+pub fn referrers_tag(subject: &Digest) -> String {
+    format!("sha256-{}", subject.digest())
+}
+
+/// Push one blob unless the registry already has it (HEAD first,
+/// re-hashed on the way out).
+async fn push_blob_if_missing(
+    client: &Client,
+    reference: &Reference,
+    layout: &Layout,
+    blob: &Descriptor,
+    counts: &mut TransferCounts,
+) -> Result<(), RemoteError> {
+    let digest = blob.digest().to_string();
+    if client
+        .blob_exists(reference, &digest)
+        .await
+        .map_err(|e| RemoteError::Registry {
+            detail: format!("checking blob {digest}"),
+            source: e,
+        })?
+    {
+        counts.blobs_present += 1;
+        return Ok(());
+    }
+    // open_blob re-hashes the payload: a corrupted source fails here
+    // instead of pushing bytes the digest would disown.
+    let file = layout.blobs().open_blob(blob.digest())?;
+    let stream = <tokio_util::io::ReaderStream<_> as futures_util::TryStreamExt>::map_err(
+        tokio_util::io::ReaderStream::new(tokio::fs::File::from(file)),
+        oci_client::errors::OciDistributionError::IoError,
+    );
+    client
+        .push_blob_stream(reference, stream, &digest)
+        .await
+        .map_err(|e| RemoteError::Registry {
+            detail: format!("pushing blob {digest}"),
+            source: e,
+        })?;
+    counts.blobs_moved += 1;
+    counts.bytes_moved += blob.size();
+    Ok(())
+}
+
+/// Update the `sha256-<hex>` fallback tag so the referrers are
+/// discoverable on registries without the referrers API: fetch the
+/// existing listing (if any), merge the new descriptors (dedup by
+/// digest), push. Referrer manifests must already be pushed.
+async fn push_referrers_tag(
+    client: &Client,
+    auth: &RegistryAuth,
+    reference: &Reference,
+    subject: &Digest,
+    referrers: &[crate::referrer::Referrer],
+) -> Result<(), RemoteError> {
+    let tag_ref = Reference::with_tag(
+        reference.registry().to_string(),
+        reference.repository().to_string(),
+        referrers_tag(subject),
+    );
+    let existing =
+        match client
+            .pull_manifest_raw(&tag_ref, auth, &MANIFEST_MEDIA_TYPES)
+            .await
+        {
+            Ok((bytes, _)) => serde_json::from_slice::<oci_spec::image::ImageIndex>(&bytes)
+                .map_err(|e| RemoteError::Json {
+                    detail: format!("the referrers tag of {subject} is not an index"),
+                    source: e,
+                })?,
+            Err(e) if is_not_found(&e) => oci_spec::image::ImageIndexBuilder::default()
+                .schema_version(2u32)
+                .media_type(MediaType::ImageIndex)
+                .manifests(Vec::new())
+                .build()
+                .map_err(|e| RemoteError::InvalidRef {
+                    input: tag_ref.whole(),
+                    detail: format!("empty referrers tag index: {e}"),
+                })?,
+            Err(e) => {
+                return Err(RemoteError::Registry {
+                    detail: format!("checking the referrers tag of {subject}"),
+                    source: e,
+                })
+            }
+        };
+    let descriptors: Vec<Descriptor> = referrers.iter().map(|r| r.descriptor.clone()).collect();
+    let merged = crate::referrer::merge_referrers_tag_index(&existing, &descriptors)?;
+    let bytes = serde_json::to_vec(&merged).map_err(|e| RemoteError::Json {
+        detail: "serializing the referrers tag index".to_string(),
+        source: e,
+    })?;
+    push_manifest_bytes(client, &tag_ref, &bytes, &MediaType::ImageIndex).await
 }
 
 /// HEAD the manifest endpoint for a digest reference.

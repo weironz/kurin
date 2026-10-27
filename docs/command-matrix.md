@@ -129,9 +129,9 @@ sha256）。计划变化时拒绝续跑并提示去掉 `--resume`；v1 状态文
 blob（registry 目标先 HEAD，本地目标按 digest 判断）；`verify` 对 digest
 闭包全量重哈希；`list` / `prune` 维护本机内容寻址缓存。包引用支持
 `oci://REG/NS/NAME[:TAG]`、`oci-layout://DIR`、`file://X.tar`、
-`file://X.tar.zst`（本地裸 tar 路径也接受）。
+`file://X.tar.zst`（本地裸 tar 路径也接受）。SBOM 与 cosign 签名以
+referrer 形式挂在包 index 上随包传输（WP-39）；`verify --key` 校验签名，
 
-`--arch` 接受逗号分隔列表（如 `--arch amd64,arm64`）：混合架构集群的
 离线包需要覆盖全部涉及架构；缺省为控制机架构。`--cni all|none|calico,cilium`
 裁剪 CNI 载荷；`--kubernetes vX.Y.Z` 走动态清单固定非内嵌版本；
 `--distribution kubeadm|k3s` 选择发行版。registry 认证用 `--user` +
@@ -142,7 +142,7 @@ HTTP，远程仓库默认 HTTPS，`oci://http://…` 可显式指定。
 |---|---|---|
 | `package create base -o …` | ✅ | `--arch arm64` |
 | `package inspect <src> [--manifest] [--sbom]` | ✅ | ✅ |
-| `package verify <src>` | ✅ | ✅ |
+| `package verify <src> [--key PUB]` | ✅ | ✅ |
 | `package push <src> <dst>` / `package pull` | ✅ | ✅ |
 | `package list` / `package prune` | ✅ | ✅ |
 | `artifact --out <dir>`（弃用别名）| ✅ | `--arch arm64` |

@@ -221,7 +221,37 @@ values 的合并顺序为 `defaults` → addon 内置推荐值（`values.yaml.j2
 | `os` | 按 OS 的包 URI 列表；不写按节点 facts 自动匹配 |
 | `delivery` | `auto`（默认）\| `preload` \| `registry` |
 | `verify` | `none`（默认）\| `digest` \| `signature` |
-| `trusted-keys` | cosign 公钥路径；`verify = "signature"` 时必填 |
+| `trusted-keys` | cosign 公钥路径列表；`verify = "signature"` 时必填且文件必须存在（加载期校验） |
+
+`verify = "signature"` 时包必须带有能被任一 `trusted-keys` 公钥验证的 cosign
+签名（挂在包 index 上的 referrer），否则直接拒绝——未签名的包无法通过。签名
+校验之上仍会全量重哈希 digest 闭包。`verify = "digest"` 行为不变（只重哈希，
+不要求签名）。
+
+#### 官方包与公钥
+
+官方包（`ghcr.io/weironz/kurin/…`）由发布 CI 用 cosign 签名。验证公钥随每个
+release 发布，获取方式：
+
+```bash
+# 方式一：从 GitHub release 附件下载
+curl -fsSLO https://github.com/weironz/kurin/releases/latest/download/cosign.pub
+
+# 方式二：用 cosign 直接导出（私钥持有者）
+cosign public-key --key cosign.key > cosign.pub
+```
+
+下载后核对内容（建议把指纹记录在受信任的地方），然后在配置里固定：
+
+```toml
+[packages]
+base = "oci://ghcr.io/weironz/kurin/base:v0.6.0-kubeadm"
+verify = "signature"
+trusted-keys = ["/etc/kurin/cosign.pub"]
+```
+
+命令行侧等价于 `kurin package verify <src> --key cosign.pub`；`--key` 可重复
+给出多把公钥，任一把验证通过即可。
 
 行为（WP-34）：
 

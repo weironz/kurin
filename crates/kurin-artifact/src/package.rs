@@ -23,11 +23,10 @@
 //! registries that validate index children on upload (distribution,
 //! harbor) reject such packages; see `oci::remote` and the WP-30 spike.
 //!
-//! All JSON this module writes goes through [`canonical_json`]:
 //! `serde_json`'s map type is sorted, so the bytes — and therefore every
-//! digest — are stable across runs and hosts. The SPDX SBOM is written
-//! next to the output as a `<output>.spdx.json` sidecar file (WP-39 will
-//! attach it to the index as a referrer).
+//! digest — are stable across runs and hosts. The SPDX SBOM is attached
+//! to the package index as a referrer (04 §6, WP-39) and written next to
+//! the output as a `<output>.spdx.json` sidecar for plain-file tooling.
 
 use std::collections::{BTreeMap, HashMap};
 use std::fs::File;
@@ -60,7 +59,8 @@ pub const MEDIA_TYPE_META: &str = "application/vnd.kurin.package.meta.v1+json";
 pub const MEDIA_TYPE_FILES: &str = "application/vnd.kurin.files.v1";
 /// media type of one file layer inside a file-set manifest.
 pub const MEDIA_TYPE_FILE: &str = "application/vnd.kurin.file.v1";
-/// SPDX 2.3 JSON (the SBOM referrer's media type, WP-39).
+/// SPDX 2.3 JSON: the media type of the SBOM referrer attached to the
+/// package index and of its payload layer (04 §6).
 pub const MEDIA_TYPE_SPDX: &str = "application/spdx+json";
 
 /// Annotation on an image descriptor: the upstream full reference the
@@ -538,21 +538,22 @@ impl PackageBuilder {
         let index_size = layout.blobs().size(&index_digest)?;
 
         // 6. index.json: the tagged root descriptor.
+        let root = DescriptorBuilder::default()
+            .media_type(MediaType::ImageIndex)
+            .digest(index_digest.clone())
+            .size(index_size)
+            .annotations(HashMap::from([(
+                REF_NAME_ANNOTATION.to_string(),
+                tag.clone(),
+            )]))
+            .build()
+            .map_err(|e| PackageError::Build {
+                detail: format!("root descriptor: {e}"),
+            })?;
         let root_index = ImageIndexBuilder::default()
             .schema_version(2u32)
             .media_type(MediaType::ImageIndex)
-            .manifests(vec![DescriptorBuilder::default()
-                .media_type(MediaType::ImageIndex)
-                .digest(index_digest.clone())
-                .size(index_size)
-                .annotations(HashMap::from([(
-                    REF_NAME_ANNOTATION.to_string(),
-                    tag.clone(),
-                )]))
-                .build()
-                .map_err(|e| PackageError::Build {
-                    detail: format!("root descriptor: {e}"),
-                })?])
+            .manifests(vec![root.clone()])
             .build()
             .map_err(|e| PackageError::Build {
                 detail: format!("index.json: {e}"),
@@ -562,14 +563,24 @@ impl PackageBuilder {
             canonical_json(&root_index)?.as_bytes(),
         )?;
 
-        // 7. the SPDX SBOM sidecar (04 §6; WP-39 attaches it as a referrer).
+        // 7. the SPDX SBOM (04 §6), attached to the index as a
+        //    referrer and written next to the output as a sidecar.
         let sbom = spdx::Document::from_package(
             &manifest,
             &index_digest,
             &format!("kurin-{}", env!("CARGO_PKG_VERSION")),
         );
+        let sbom_bytes = canonical_json(&sbom)?.into_bytes();
+        crate::referrer::attach(
+            &layout,
+            &root,
+            MEDIA_TYPE_SPDX,
+            MEDIA_TYPE_SPDX,
+            &sbom_bytes,
+            HashMap::new(),
+        )?;
         let sbom_path = out.sbom_sidecar_path();
-        write_file_atomic(&sbom_path, canonical_json(&sbom)?.as_bytes())?;
+        write_file_atomic(&sbom_path, &sbom_bytes)?;
 
         // 8. serialize single-file outputs from the staging layout.
         let output_path = match out {
@@ -1019,6 +1030,43 @@ impl PackageSource {
         Ok(desc.digest().clone())
     }
 
+    /// The root descriptor out of `index.json` (the first manifest
+    /// entry; referrers are filed after it).
+    pub fn root_descriptor(&self) -> Result<Descriptor, PackageError> {
+        let root = self.layout.read_index()?;
+        root.manifests()
+            .first()
+            .cloned()
+            .ok_or_else(|| PackageError::NotAPackage {
+                path: self.layout.root().display().to_string(),
+                detail: "index.json has no manifests".to_string(),
+            })
+    }
+
+    /// The package's SPDX SBOM: the bytes of the SBOM referrer
+    /// attached to the index (WP-39), or `None` for packages built
+    /// before referrers existed — callers fall back to rendering the
+    /// document from the verified metadata.
+    ///
+    /// # Errors
+    ///
+    /// A referrer or blob-store error.
+    pub fn sbom(&self) -> Result<Option<Vec<u8>>, PackageError> {
+        let index = self.index_digest()?;
+        let Some(sbom) = crate::referrer::find(&self.layout, &index)?
+            .into_iter()
+            .find(|r| r.artifact_type() == MEDIA_TYPE_SPDX)
+        else {
+            return Ok(None);
+        };
+        let mut bytes = Vec::new();
+        self.layout
+            .blobs()
+            .open_blob(sbom.payload()?.digest())?
+            .read_to_end(&mut bytes)?;
+        Ok(Some(bytes))
+    }
+
     /// Read `kurin-package.json`: follow index.json → package index →
     /// metadata manifest → its single layer. Every blob read on the way
     /// is digest-verified by the store.
@@ -1369,7 +1417,7 @@ fn canonical_json<T: Serialize>(value: &T) -> Result<String, PackageError> {
 }
 
 /// The `application/vnd.oci.empty.v1+json` config descriptor.
-fn empty_descriptor() -> Descriptor {
+pub(crate) fn empty_descriptor() -> Descriptor {
     DescriptorBuilder::default()
         .media_type(MediaType::EmptyJSON)
         .digest(
@@ -1553,6 +1601,20 @@ pub enum PackageError {
 
     #[error("cannot build the package: {detail}")]
     Build { detail: String },
+
+    /// A referrer could not be attached or read.
+    #[error(transparent)]
+    Referrer {
+        #[from]
+        source: crate::referrer::ReferrerError,
+    },
+
+    /// Signature verification failed.
+    #[error(transparent)]
+    Signature {
+        #[from]
+        source: crate::signature::SignatureError,
+    },
 }
 
 impl From<std::io::Error> for PackageError {
@@ -1792,11 +1854,27 @@ mod tests {
         assert!(dir.path().join("pkg.spdx.json").is_file());
         assert_eq!(report.sbom, dir.path().join("pkg.spdx.json"));
 
-        // index.json → package index → entries in the documented shape.
+        // index.json → [package index, SBOM referrer] → the documented
+        // shape below the package index.
         let layout = Layout::open(dir.path().join("pkg")).unwrap();
         let root = layout.read_index().unwrap();
-        assert_eq!(root.manifests().len(), 1);
+        assert_eq!(root.manifests().len(), 2, "root + SBOM referrer");
         assert_eq!(root.manifests()[0].digest(), &report.index);
+        assert_eq!(
+            root.manifests()[0]
+                .annotations()
+                .as_ref()
+                .unwrap()
+                .get(REF_NAME_ANNOTATION)
+                .unwrap(),
+            "v1.33.1-kubeadm"
+        );
+        // the second entry is the SPDX SBOM referrer of the index
+        let sbom_entry = &root.manifests()[1];
+        assert_eq!(
+            sbom_entry.artifact_type().as_ref().unwrap().as_ref(),
+            MEDIA_TYPE_SPDX
+        );
         assert_eq!(
             root.manifests()[0]
                 .annotations()

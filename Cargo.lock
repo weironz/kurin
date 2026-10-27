@@ -2413,6 +2413,7 @@ dependencies = [
  "miette",
  "oci-client",
  "oci-spec",
+ "p256",
  "semver",
  "serde",
  "serde_json",

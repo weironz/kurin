@@ -18,7 +18,9 @@
 
 use kurin_artifact::package::{PackageBuilder, PackageFile, PackageImage, PackageKind};
 use kurin_artifact::store::BlobStore;
-use kurin_artifact::transfer::{transfer, verify_package, PackageRef, TransferOptions};
+use kurin_artifact::transfer::{
+    transfer, verify_package, PackageRef, TransferOptions, VerifyPolicy,
+};
 use oci_spec::image::Digest;
 use sha2::{Digest as _, Sha256};
 
@@ -120,7 +122,9 @@ fn no_auth() -> TransferOptions {
 async fn local_forms_convert_pairwise_and_skip_present_blobs() {
     let tmp = tempfile::tempdir().unwrap();
     let src = build_package(tmp.path());
-    let first = verify_package(&src, &no_auth()).await.unwrap();
+    let first = verify_package(&src, &no_auth(), &VerifyPolicy::Digest)
+        .await
+        .unwrap();
     let forms = [
         PackageRef::Layout(tmp.path().join("dst-layout")),
         PackageRef::Tar(tmp.path().join("dst.tar")),
@@ -129,12 +133,20 @@ async fn local_forms_convert_pairwise_and_skip_present_blobs() {
     for dst in &forms {
         let report = transfer(&src, dst, &no_auth()).await.unwrap();
         assert_eq!(report.index, first.index, "index digest survives -> {dst}");
+        // the closure plus the SBOM referrer's payload all move once;
+        // the only blob that can be "present" on a fresh destination is
+        // the shared empty config the referrer re-finds (WP-39)
         assert_eq!(
             report.counts.blobs_moved, first.blobs,
-            "everything moved once -> {dst}"
+            "every blob moved once -> {dst}"
         );
-        assert_eq!(report.counts.blobs_present, 0, "-> {dst}");
-        let verified = verify_package(dst, &no_auth()).await.unwrap();
+        assert!(
+            report.counts.blobs_present <= 1,
+            "only the shared empty config may already be present -> {dst}"
+        );
+        let verified = verify_package(dst, &no_auth(), &VerifyPolicy::Digest)
+            .await
+            .unwrap();
         assert_eq!(verified.index, first.index);
     }
     // re-transfer into the layout destination: nothing moves again
@@ -143,11 +155,13 @@ async fn local_forms_convert_pairwise_and_skip_present_blobs() {
     let again = transfer(&src, &forms[0], &no_auth()).await.unwrap();
     assert_eq!(
         again.counts.blobs_moved, 0,
-        "second copy into the same layout sends nothing"
+        "second copy into the same layout sends nothing (referrers deduped)"
     );
-    assert_eq!(
-        again.counts.blobs_present, first.blobs,
-        "second copy sees every blob present"
+    let present = again.counts.blobs_present;
+    assert!(
+        present >= first.blobs,
+        "second copy sees every blob present ({present} >= {})",
+        first.blobs
     );
     assert_eq!(again.index, first.index);
 
@@ -155,7 +169,9 @@ async fn local_forms_convert_pairwise_and_skip_present_blobs() {
     let round = PackageRef::Layout(tmp.path().join("round-layout"));
     let report = transfer(&forms[2], &round, &no_auth()).await.unwrap();
     assert_eq!(report.index, first.index);
-    verify_package(&round, &no_auth()).await.unwrap();
+    verify_package(&round, &no_auth(), &VerifyPolicy::Digest)
+        .await
+        .unwrap();
 }
 
 /// A corrupted blob is rejected by `verify` in every form.
@@ -169,7 +185,9 @@ async fn corrupt_blob_is_rejected_by_verify() {
     let mut bytes = std::fs::read(&blob).unwrap();
     bytes[0] ^= 0xff;
     std::fs::write(&blob, bytes).unwrap();
-    let err = verify_package(&src, &no_auth()).await.unwrap_err();
+    let err = verify_package(&src, &no_auth(), &VerifyPolicy::Digest)
+        .await
+        .unwrap_err();
     let msg = format!("{err:?}");
     assert!(
         msg.contains("corrupt") || msg.contains("digest") || msg.contains("sha256"),
@@ -211,7 +229,9 @@ async fn zot_round_trip_and_auth_failure() {
     };
     let tmp = tempfile::tempdir().unwrap();
     let src = build_package(tmp.path());
-    let first = verify_package(&src, &no_auth()).await.unwrap();
+    let first = verify_package(&src, &no_auth(), &VerifyPolicy::Digest)
+        .await
+        .unwrap();
     let opts = zot_opts(&user, &pass_env);
 
     // 1. push layout -> zot
@@ -237,7 +257,9 @@ async fn zot_round_trip_and_auth_failure() {
     let tar = PackageRef::Tar(tmp.path().join("from-zot.tar"));
     let pulled = transfer(&reg, &tar, &opts).await.unwrap();
     assert_eq!(pulled.index, first.index);
-    let verified = verify_package(&tar, &no_auth()).await.unwrap();
+    let verified = verify_package(&tar, &no_auth(), &VerifyPolicy::Digest)
+        .await
+        .unwrap();
     assert_eq!(verified.index, first.index);
     assert_eq!(verified.blobs, first.blobs);
     let source = kurin_artifact::package::PackageSource::open(&format!(
@@ -261,5 +283,147 @@ async fn zot_round_trip_and_auth_failure() {
             || msg.to_lowercase().contains("auth")
             || msg.to_lowercase().contains("unauthorized"),
         "expected an auth failure, got: {msg}"
+    );
+}
+
+// -- signatures (WP-39) -----------------------------------------------------
+
+/// A deterministic signing key: same seed, same key, so the test never
+/// needs a runtime RNG.
+fn signing_key() -> p256::ecdsa::SigningKey {
+    p256::ecdsa::SigningKey::from_slice(&[0x42; 32]).expect("a valid scalar")
+}
+
+/// A trusted-keys bundle built from a PEM on disk, exactly as
+/// `kurin package verify --key` loads it.
+fn trusted_keys(dir: &std::path::Path) -> kurin_artifact::signature::TrustedKeys {
+    use p256::pkcs8::EncodePublicKey;
+    let pem = signing_key()
+        .verifying_key()
+        .to_public_key_pem(p256::pkcs8::LineEnding::LF)
+        .unwrap();
+    let path = dir.join("cosign.pub");
+    std::fs::write(&path, pem).unwrap();
+    kurin_artifact::signature::TrustedKeys::load(std::slice::from_ref(&path)).unwrap()
+}
+
+/// WP-39 acceptance: an unsigned package is rejected in signature mode
+/// (and still verifies in digest mode, which stays the default).
+#[tokio::test]
+async fn unsigned_package_is_rejected_in_signature_mode() {
+    let tmp = tempfile::tempdir().unwrap();
+    let src = build_package(tmp.path());
+    // digest mode: the same package still verifies
+    verify_package(&src, &no_auth(), &VerifyPolicy::Digest)
+        .await
+        .expect("digest mode does not require a signature");
+    // signature mode: nothing is signed -> rejected
+    let keys = trusted_keys(tmp.path());
+    let err = verify_package(&src, &no_auth(), &VerifyPolicy::Signature(keys))
+        .await
+        .unwrap_err();
+    let msg = format!("{err:?}");
+    assert!(
+        msg.contains("not signed") || msg.contains("NotSigned"),
+        "{msg}"
+    );
+}
+
+/// WP-39 acceptance: a signed package verifies in signature mode, and
+/// the signature travels with every transport form (the referrer is
+/// part of the copy, not just the digest closure).
+#[tokio::test]
+async fn signed_package_verifies_through_every_form() {
+    let tmp = tempfile::tempdir().unwrap();
+    let src = build_package(tmp.path());
+    let keys = trusted_keys(tmp.path());
+
+    // sign the package in its layout: the referrer attaches to the
+    // index digest
+    let source = kurin_artifact::transfer::materialize(&src, &no_auth())
+        .await
+        .unwrap();
+    kurin_artifact::signature::sign(
+        &source.layout,
+        &source.root,
+        &signing_key(),
+        "registry.local/kurin/base",
+    )
+    .unwrap();
+
+    // signature mode now passes on the source
+    let report = verify_package(&src, &no_auth(), &VerifyPolicy::Signature(keys.clone()))
+        .await
+        .unwrap();
+    assert!(report.signatures >= 1, "{report:?}");
+
+    // and through every destination form: the referrer travels
+    for dst in [
+        PackageRef::Layout(tmp.path().join("sig-layout")),
+        PackageRef::Tar(tmp.path().join("sig.tar")),
+        PackageRef::TarZstd(tmp.path().join("sig.tar.zst")),
+    ] {
+        transfer(&src, &dst, &no_auth()).await.unwrap();
+        let verified = verify_package(&dst, &no_auth(), &VerifyPolicy::Signature(keys.clone()))
+            .await
+            .unwrap_or_else(|e| panic!("signature survives -> {dst}: {e:?}"));
+        assert_eq!(verified.index, report.index);
+        assert!(verified.signatures >= 1, "-> {dst}");
+    }
+
+    // and the SBOM referrer travels too (inspect --sbom reads it)
+    let handle = kurin_artifact::package::PackageSource::open(&format!(
+        "oci-layout://{}",
+        tmp.path().join("sig-layout").display()
+    ))
+    .unwrap();
+    let sbom = handle.sbom().unwrap().expect("the SBOM referrer");
+    let text = String::from_utf8_lossy(&sbom);
+    assert!(text.contains("\"spdxVersion\":\"SPDX-2.3\""), "{text}");
+}
+
+/// WP-39 acceptance: tampering any blob fails — the signature payload
+/// itself is content-addressed, so editing it breaks verification.
+#[tokio::test]
+async fn tampered_signature_blob_fails_verification() {
+    let tmp = tempfile::tempdir().unwrap();
+    let src = build_package(tmp.path());
+    let keys = trusted_keys(tmp.path());
+
+    let source = kurin_artifact::transfer::materialize(&src, &no_auth())
+        .await
+        .unwrap();
+    let root = source.root.clone();
+    kurin_artifact::signature::sign(
+        &source.layout,
+        &root,
+        &signing_key(),
+        "registry.local/kurin/base",
+    )
+    .unwrap();
+    let verified = verify_package(&src, &no_auth(), &VerifyPolicy::Signature(keys.clone()))
+        .await
+        .unwrap();
+    assert!(verified.signatures >= 1);
+
+    // flip one byte of the signature payload layer: the blob store now
+    // serves bytes the layer digest disowns
+    let referrers = kurin_artifact::referrer::find(&source.layout, root.digest()).unwrap();
+    let signature = referrers
+        .iter()
+        .find(|r| r.artifact_type() == kurin_artifact::signature::ARTIFACT_TYPE)
+        .expect("the cosign signature referrer");
+    let payload = signature.payload().unwrap().clone();
+    let blob = source.layout.blob_path(payload.digest());
+    let mut bytes = std::fs::read(&blob).unwrap();
+    bytes[0] ^= 0xff;
+    std::fs::write(&blob, bytes).unwrap();
+    let err = verify_package(&src, &no_auth(), &VerifyPolicy::Signature(keys))
+        .await
+        .unwrap_err();
+    let msg = format!("{err:?}");
+    assert!(
+        msg.contains("corrupt") || msg.contains("signature"),
+        "{msg}"
     );
 }

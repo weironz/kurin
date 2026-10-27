@@ -11,10 +11,12 @@
 //!
 //! — and [`transfer`] copies between any two of them, sending only what
 //! the destination is missing: a registry is probed with HEAD requests,
-//! a layout with digest lookups. [`verify_package`] re-hashes the whole
-//! digest closure of a package in any form (signature checks arrive in
-//! WP-39). [`list_cache`] and [`prune_cache`] maintain the local
-//! content-addressed cache behind `kurin package list` / `prune`.
+//! a layout with digest lookups. Referrers (SBOM, cosign signatures)
+//! travel with the package (WP-39). [`verify_package`] re-hashes the
+//! whole digest closure in any form, optionally requiring a cosign
+//! signature (`VerifyPolicy`). [`list_cache`] and [`prune_cache`]
+//! maintain the local content-addressed cache behind `kurin package
+//! list` / `prune`.
 
 use std::collections::HashSet;
 use std::fmt;
@@ -178,6 +180,9 @@ pub struct VerifyReport {
     pub blobs: usize,
     /// Total verified payload bytes.
     pub bytes: u64,
+    /// Signatures that verified against the trusted keys (0 in digest
+    /// mode; WP-39).
+    pub signatures: usize,
 }
 
 // ---------------------------------------------------------------------------
@@ -373,7 +378,8 @@ pub async fn transfer(
 ) -> Result<TransferReport, PackageError> {
     let source = materialize(src, opts).await?;
     let closure = walk_closure(&source.layout, &source.root)?;
-    let index = source.root.digest().to_string();
+    let index = source.root.digest().clone();
+    let index_digest = index.to_string();
 
     match dst {
         PackageRef::Registry(reg) => {
@@ -382,7 +388,7 @@ pub async fn transfer(
                 .await
                 .map_err(remote_error)?;
             Ok(TransferReport {
-                index,
+                index: index_digest.to_string(),
                 tag: reg.tag().map(str::to_string).or(source.tag.clone()),
                 counts,
                 output: None,
@@ -390,10 +396,11 @@ pub async fn transfer(
         }
         PackageRef::Layout(dir) => {
             let layout = Layout::create(dir.clone())?;
-            let counts = copy_closure(&source.layout, &closure, &layout)?;
+            let mut counts = copy_closure(&source.layout, &closure, &layout)?;
             write_merged_index(&layout, &tagged_root(&source.root, source.tag.as_deref()))?;
+            copy_referrers(&source.layout, &index, &layout, &mut counts)?;
             Ok(TransferReport {
-                index,
+                index: index_digest.to_string(),
                 tag: source.tag.clone(),
                 counts,
                 output: Some(dir.clone()),
@@ -402,12 +409,13 @@ pub async fn transfer(
         PackageRef::Tar(path) => {
             let staging = TempDir::new()?;
             let layout = Layout::create(staging.path())?;
-            let counts = copy_closure(&source.layout, &closure, &layout)?;
+            let mut counts = copy_closure(&source.layout, &closure, &layout)?;
             write_merged_index(&layout, &tagged_root(&source.root, source.tag.as_deref()))?;
+            copy_referrers(&source.layout, &index, &layout, &mut counts)?;
             let file = File::create(path)?;
             layout.pack_tar(file)?;
             Ok(TransferReport {
-                index,
+                index: index_digest.to_string(),
                 tag: source.tag.clone(),
                 counts,
                 output: Some(path.clone()),
@@ -416,12 +424,13 @@ pub async fn transfer(
         PackageRef::TarZstd(path) => {
             let staging = TempDir::new()?;
             let layout = Layout::create(staging.path())?;
-            let counts = copy_closure(&source.layout, &closure, &layout)?;
+            let mut counts = copy_closure(&source.layout, &closure, &layout)?;
             write_merged_index(&layout, &tagged_root(&source.root, source.tag.as_deref()))?;
+            copy_referrers(&source.layout, &index, &layout, &mut counts)?;
             let file = File::create(path)?;
             layout.pack_tar_zstd(file)?;
             Ok(TransferReport {
-                index,
+                index: index_digest.to_string(),
                 tag: source.tag.clone(),
                 counts,
                 output: Some(path.clone()),
@@ -430,8 +439,65 @@ pub async fn transfer(
     }
 }
 
+/// Copy the referrers of `index` (SBOM, cosign signatures) from `source`
+/// to `destination`: payload blobs first (re-hashed on read), then the
+/// manifest bytes verbatim — a digest-preserving copy — and finally the
+/// `index.json` entries that make them discoverable. Must run after
+/// [`write_merged_index`] so the tagged root stays the first entry.
+fn copy_referrers(
+    source: &Layout,
+    index: &Digest,
+    destination: &Layout,
+    counts: &mut TransferCounts,
+) -> Result<(), PackageError> {
+    for referrer in crate::referrer::find(source, index)? {
+        let mut blobs = vec![referrer.manifest.config().clone()];
+        blobs.extend(referrer.manifest.layers().iter().cloned());
+        for blob in &blobs {
+            if destination.blobs().has(blob.digest()) {
+                counts.blobs_present += 1;
+                continue;
+            }
+            let mut reader = source.blobs().open_blob(blob.digest())?;
+            let stored = destination.blobs().put_stream(&mut reader)?;
+            if stored != *blob.digest() {
+                return Err(PackageError::Remote {
+                    detail: format!("copied blob {stored} but expected {}", blob.digest()),
+                    source: crate::oci::remote::RemoteError::DigestMismatch {
+                        expected_ref: blob.digest().to_string(),
+                        expected: blob.digest().to_string(),
+                        actual: stored.to_string(),
+                    },
+                });
+            }
+            counts.blobs_moved += 1;
+            counts.bytes_moved += blob.size();
+        }
+        let mut bytes = Vec::new();
+        source
+            .blobs()
+            .open_blob(referrer.descriptor.digest())?
+            .read_to_end(&mut bytes)?;
+        let stored = destination.blobs().put_bytes(&bytes)?;
+        if stored != *referrer.descriptor.digest() {
+            return Err(PackageError::Remote {
+                detail: format!(
+                    "stored manifest {stored} but expected {}",
+                    referrer.descriptor.digest()
+                ),
+                source: crate::oci::remote::RemoteError::DigestMismatch {
+                    expected_ref: referrer.descriptor.digest().to_string(),
+                    expected: referrer.descriptor.digest().to_string(),
+                    actual: stored.to_string(),
+                },
+            });
+        }
+        crate::referrer::file_referrer(destination, referrer.descriptor.clone())?;
+    }
+    Ok(())
+}
+
 /// Copy a closure between two layouts, skipping digests the destination
-/// already stores. Source blobs are read through `open_blob`, which
 /// re-hashes them: a corrupted source is rejected, not propagated.
 fn copy_closure(
     source: &Layout,
@@ -496,8 +562,10 @@ fn tagged_root(root: &Descriptor, tag: Option<&str>) -> Descriptor {
 }
 
 /// Merge `root` into a layout's `index.json`: an entry with the same tag
-/// is replaced, otherwise the entry is appended. A layout can therefore
-/// hold several packages, one per tag.
+/// is replaced, otherwise the entry is appended. The tagged root is
+/// kept **first** — readers treat `index.json`'s first manifest as the
+/// package and everything after it as referrers (04 §3.1) — so a
+/// layout can hold several packages, one per tag, referrers trailing.
 fn write_merged_index(layout: &Layout, root: &Descriptor) -> Result<(), PackageError> {
     let mut index = layout.read_index().unwrap_or_else(|_| {
         let mut index = ImageIndex::default();
@@ -518,7 +586,8 @@ fn write_merged_index(layout: &Layout, root: &Descriptor) -> Result<(), PackageE
                 != Some(tag)
         });
     }
-    manifests.push(root.clone());
+    let at = if tag.is_some() { 0 } else { manifests.len() };
+    manifests.insert(at, root.clone());
     index.set_manifests(manifests);
     layout.write_index(&index)?;
     Ok(())
@@ -528,33 +597,91 @@ fn write_merged_index(layout: &Layout, root: &Descriptor) -> Result<(), PackageE
 // verify
 // ---------------------------------------------------------------------------
 
-/// Verify a package end to end (04 §6 integrity layer): every blob in
-/// the digest closure below its index is re-hashed and every manifest
-/// document must parse. Registry sources are pulled (and thereby
-/// verified on arrival) first. Signature verification arrives in WP-39.
+/// How strictly [`verify_package`] checks a package (04 §6).
+#[derive(Debug, Clone)]
+pub enum VerifyPolicy {
+    /// Re-hash every blob and manifest in the digest closure (the
+    /// `verify = "digest"` behavior).
+    Digest,
+    /// Digest closure **and** a valid cosign signature by one of the
+    /// trusted keys (`verify = "signature"`): an unsigned package is
+    /// rejected.
+    Signature(crate::signature::TrustedKeys),
+}
+
+impl VerifyPolicy {
+    /// Load the trusted keys for signature mode; `None` keeps digest
+    /// mode when no key was given (the CLI default).
+    pub fn signature(keys: &[std::path::PathBuf]) -> Result<Option<Self>, PackageError> {
+        if keys.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(VerifyPolicy::Signature(
+            crate::signature::TrustedKeys::load(keys)?,
+        )))
+    }
+}
+
+/// Verify a package end to end (04 §6): every blob in the digest
+/// closure below its index — and every referrer payload (SBOM,
+/// signatures) — is re-hashed; every manifest document must parse.
+/// Registry sources are pulled (and thereby verified on arrival)
+/// first. Under [`VerifyPolicy::Signature`] the package must
+/// additionally carry a cosign signature that one of the trusted keys
+/// verifies — an unsigned or wrongly signed package is rejected.
 pub async fn verify_package(
     src: &PackageRef,
     opts: &TransferOptions,
+    policy: &VerifyPolicy,
 ) -> Result<VerifyReport, PackageError> {
     let source = materialize(src, opts).await?;
     let closure = walk_closure(&source.layout, &source.root)?;
     let mut failures: Vec<String> = Vec::new();
     let mut bytes = 0u64;
+    let mut blobs = closure.blobs.len();
+    let mut verified: HashSet<Digest> = closure.blobs.iter().map(|b| b.digest().clone()).collect();
     for blob in &closure.blobs {
         match source.layout.blobs().verify_descriptor(blob) {
             Ok(()) => bytes += blob.size(),
             Err(e) => failures.push(format!("{}: {e}", blob.digest())),
         }
     }
+    // Referrers travel outside the package's digest closure; their
+    // payloads are content-addressed all the same and must re-hash
+    // (the shared empty config is already part of the closure).
+    for referrer in crate::referrer::find(&source.layout, source.root.digest())? {
+        let mut payloads = vec![referrer.manifest.config().clone()];
+        payloads.extend(referrer.manifest.layers().iter().cloned());
+        for payload in &payloads {
+            if !verified.insert(payload.digest().clone()) {
+                continue;
+            }
+            match source.layout.blobs().verify_descriptor(payload) {
+                Ok(()) => {
+                    bytes += payload.size();
+                    blobs += 1;
+                }
+                Err(e) => failures.push(format!("{}: {e}", payload.digest())),
+            }
+        }
+    }
     if !failures.is_empty() {
         return Err(PackageError::Verification { failures });
     }
+    let signatures = match policy {
+        VerifyPolicy::Digest => 0,
+        VerifyPolicy::Signature(keys) => {
+            let check = crate::signature::verify(&source.layout, source.root.digest(), keys)?;
+            check.signatures
+        }
+    };
     Ok(VerifyReport {
         index: source.root.digest().to_string(),
         tag: source.tag.clone(),
         manifests: closure.manifests.len(),
-        blobs: closure.blobs.len(),
+        blobs,
         bytes,
+        signatures,
     })
 }
 
