@@ -70,6 +70,13 @@ impl Task for Sysctl {
             "cat > /etc/sysctl.d/99-kurin.conf <<'EOF'\n{}EOF\n",
             sysctl_unit(K8S_SYSCTL)
         ));
+        // Persist + load the modules these sysctls need; the bridge key only
+        // exists after br_netfilter loads. (OsBaseline handles the OS
+        // defaults; this belongs with the sysctl file itself.)
+        script.push_str("printf 'overlay\\nbr_netfilter\\n' > /etc/modules-load.d/kurin.conf\n");
+        script.push_str("mkdir -p /etc/modules-load.d\n");
+        script.push_str("modprobe overlay >/dev/null 2>&1 || true\n");
+        script.push_str("modprobe br_netfilter >/dev/null 2>&1 || true\n");
         script.push_str("sysctl --system >/dev/null\n");
         let out = session.exec(&script).await?;
         if out.ok() {

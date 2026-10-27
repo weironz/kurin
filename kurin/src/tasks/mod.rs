@@ -7,6 +7,7 @@ pub mod install;
 pub mod join;
 pub mod k3s;
 pub mod kernel_deps;
+pub mod os_baseline;
 pub mod post;
 pub mod preflight;
 pub mod prepare;

@@ -92,6 +92,7 @@ impl Plan {
                         cluster.runtime,
                     )),
                 );
+                push(2, Arc::new(tasks::os_baseline::OsBaseline::new(node)));
                 push(2, Arc::new(tasks::prepare::Sysctl::new(node)));
                 push(2, Arc::new(tasks::kernel_deps::KernelDeps::new(node)));
             }
@@ -136,6 +137,7 @@ impl Plan {
                         cluster.runtime,
                     )),
                 );
+                push(2, Arc::new(tasks::os_baseline::OsBaseline::new(node)));
             }
         }
         for node in &k8s_nodes {
@@ -150,6 +152,7 @@ impl Plan {
                     cluster.runtime,
                 )),
             );
+            push(2, Arc::new(tasks::os_baseline::OsBaseline::new(node)));
             push(2, Arc::new(tasks::prepare::Sysctl::new(node)));
             push(2, Arc::new(tasks::kernel_deps::KernelDeps::new(node)));
             if cluster.runtime == kurin_config::RuntimeKind::Containerd {

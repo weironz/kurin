@@ -71,15 +71,26 @@ impl Task for KernelDeps {
             }
         }
 
+        // Binary-name -> package-name per family: rpm distros ship
+        // conntrack as conntrack-tools and ebtables via iptables-ebtables.
+        let deb: Vec<String> = pkgs.iter().map(|t| (*t).to_string()).collect();
+        let rpm: Vec<String> = pkgs
+            .iter()
+            .map(|t| match *t {
+                "conntrack" => "conntrack-tools".to_string(),
+                "ebtables" => "iptables-ebtables".to_string(),
+                other => other.to_string(),
+            })
+            .collect();
         let mut script = String::from("set -e\n");
         if session.exec("command -v apt-get").await?.ok() {
             script.push_str(&format!(
                 "DEBIAN_FRONTEND=noninteractive apt-get update -qq && \
                  DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends {}\n",
-                pkgs.join(" ")
+                deb.join(" ")
             ));
-        } else if session.exec("command -v dnf").await?.ok() {
-            script.push_str(&format!("dnf install -y -q {}\n", pkgs.join(" ")));
+        } else if session.exec("command -v dnf || command -v yum").await?.ok() {
+            script.push_str(&format!("dnf install -y -q {}\n", rpm.join(" ")));
         } else {
             let missing_required = pkgs.iter().any(|p| REQUIRED.contains(p));
             if missing_required {

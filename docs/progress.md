@@ -1,5 +1,21 @@
 # 进度日志
 
+## rpm 系 OS 支持（gap #4，2026-10-27）
+
+- **prepare/os-baseline**（新任务，所有 k8s/registry 节点）：swapoff + fstab
+  注释、SELinux enforcing→permissive（写 `/etc/selinux/config` 持久）、firewalld
+  stop+disable（kubekey 语义）；apply 后重探测，未收敛则 `Unknown`（执行器会再
+  check 并 reconciled/fail）。precheck 会先报告这些项，操作者有预期。
+- **模块持久化**并入 Sysctl：`/etc/modules-load.d/kurin.conf`（overlay、
+  br_netfilter）+ modprobe 先于 `sysctl --system`（bridge sysctl 依赖模块）。
+- **kernel_deps 包名按族映射**：rpm 下 conntrack→conntrack-tools、
+  ebtables→iptables-ebtables；dnf/yum 双支持。external_lb 保持 apt/dnf。
+- 侦察结论（scout）：仓库里真正的 Ubuntu 假设只有 4 处（kernel_deps、
+  external_lb、preflight、无 firewalld 处理）；multipass 无 rpm 镜像，
+  e2e 走 Rocky GenericCloud qcow2 URL 直启（cloud-init 注入 root key）。
+- e2e：`e2e/tier1/rocky.sh`（2GB 镜像下载受限于 ~0.9MB/s，先手工缓存再
+  file:// 启动）。
+
 ## 对标 kubekey：precheck / registry / storage（2026-10-27）
 
 - **`kurin precheck`**（gap #1）：只读主机体检，单次 SSH 往返，per-check
