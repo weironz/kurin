@@ -6,6 +6,7 @@ pub mod addon;
 pub mod certs;
 pub mod component;
 pub mod discover;
+pub mod etcd;
 pub mod plan;
 pub mod precheck;
 pub mod status;

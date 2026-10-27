@@ -83,6 +83,11 @@ enum Commands {
         #[command(subcommand)]
         what: CertsWhat,
     },
+    /// Manage etcd backups: snapshot, restore, schedule.
+    Etcd {
+        #[command(subcommand)]
+        what: EtcdWhat,
+    },
     /// Read-only host audit before `create cluster` (swap, kernel,
     /// ports, disk, time sync...).
     Precheck {
@@ -180,6 +185,44 @@ enum CertsWhat {
         /// Renew even when certificates look fresh.
         #[arg(long)]
         force: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum EtcdWhat {
+    /// Take an etcd snapshot on every control-plane node and pull a
+    /// copy back to the control machine.
+    Backup {
+        /// Config file (.toml or .yaml) of the running cluster.
+        #[arg(short, long)]
+        file: PathBuf,
+        /// Output file (default: ./etcd-<cluster>-<timestamp>.db).
+        #[arg(short, long, value_name = "FILE")]
+        output: Option<PathBuf>,
+    },
+    /// Restore every control plane's etcd from a snapshot. Destructive:
+    /// the running etcd data is parked (never deleted) on each node and
+    /// the cluster's state is rewound to the snapshot.
+    Restore {
+        /// Config file (.toml or .yaml) of the running cluster.
+        #[arg(short, long)]
+        file: PathBuf,
+        /// Snapshot file written by `kurin etcd backup`.
+        #[arg(long, value_name = "FILE")]
+        from: PathBuf,
+    },
+    /// Install a systemd timer taking (and pruning) node-local etcd
+    /// snapshots on every control plane.
+    Schedule {
+        /// Config file (.toml or .yaml) of the running cluster.
+        #[arg(short, long)]
+        file: PathBuf,
+        /// Snapshot interval, e.g. 30m, 6h, 1d.
+        #[arg(long)]
+        every: String,
+        /// Node-local snapshots to keep (default 7).
+        #[arg(long, default_value_t = 7)]
+        keep: usize,
     },
 }
 
@@ -740,6 +783,23 @@ async fn run(cli: Cli) -> Result<()> {
                     out,
                 )
                 .await
+            }
+        },
+        Commands::Etcd { what } => match what {
+            EtcdWhat::Backup { file, output } => {
+                let spec = ops::load_config(&file)?;
+                ops::etcd_backup(&spec, output.as_deref(), out).await?;
+                Ok(())
+            }
+            EtcdWhat::Restore { file, from } => {
+                let spec = ops::load_config(&file)?;
+                ops::etcd_restore(&spec, &from, out).await?;
+                Ok(())
+            }
+            EtcdWhat::Schedule { file, every, keep } => {
+                let spec = ops::load_config(&file)?;
+                ops::etcd_schedule(&spec, &every, keep, out).await?;
+                Ok(())
             }
         },
         Commands::Precheck { file } => {

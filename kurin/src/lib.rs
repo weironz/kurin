@@ -42,6 +42,9 @@ pub mod addon {
 pub mod discover {
     pub use kurin_components::discover::*;
 }
+pub mod etcd {
+    pub use kurin_components::etcd::*;
+}
 pub mod dynamic_manifest {
     pub use kurin_artifact::dynamic_manifest::*;
 }

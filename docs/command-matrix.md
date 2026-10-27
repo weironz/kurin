@@ -145,6 +145,18 @@ sha256）。计划变化时拒绝续跑并提示去掉 `--resume`；v1 状态文
 | check | ✅ | ✅ |
 | renew | ✅（`kubeadm certs renew` → 静态 pod 重启 → `/readyz` 门控，逐节点 `rolling(1)`）| ✅（`k3s certificate rotate` → restart → `/readyz` 门控，逐节点 `rolling(1)`）|
 
+## etcd backup / restore / schedule（WP-70）
+
+| | k8s | k3s |
+|---|---|---|
+| backup | ✅（`etcdctl` 经 `crictl exec` 进 etcd 静态 pod，回退 `kubectl exec`；节点留 `/var/lib/kurin/etcd-backups`，首个控制面字节拉回控制机 `-o`）| ✅（`k3s etcd-snapshot save`，节点留 db/snapshots）|
+| restore | ✅（停静态 pod → 各成员 `etcdctl snapshot restore` 重建（单/多成员两路）→ 起 → `/healthz/etcd`+`/readyz` 门控；需控制机取上游 etcdctl tarball）| ✅（`systemctl stop k3s` → 锚点 `k3s server --cluster-reset` → 重启 → peer 停旧 db 重新 join）|
+| schedule | ✅（`kurin-etcd-backup.timer` + 节点本地脚本，按 `kurin-` 前缀裁剪）| ✅（同上，脚本用 `k3s etcd-snapshot save`）|
+
+- `backup` 只读不抢集群锁；`restore`/`schedule` 取锁。
+- 恢复不删旧数据：etcd 数据目录移到 `…-pre-restore-<ts>`（kubeadm `/var/lib/etcd`，k3s `server/db`）。
+- 快照文件未加密；多成员恢复要求配置与线上控制面拓扑一致（peer URL 由配置推导）。
+
 ## package / artifact（弃用别名）
 
 `kurin package create base` 生成 04 §3 的 OCI 包（一个 image index：

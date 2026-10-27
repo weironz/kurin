@@ -25,6 +25,7 @@ mod artifact;
 mod certs;
 mod create;
 mod delete;
+mod etcd;
 mod execute;
 mod logs;
 mod output;
@@ -574,6 +575,37 @@ pub async fn certs_check(
     out: OutputOpts,
 ) -> Result<Vec<NodeCerts>> {
     certs::certs_check(spec, warn_days, out).await
+}
+
+/// `kurin etcd backup`: snapshot every control plane and pull a copy to
+/// the controller (WP-70).
+pub async fn etcd_backup(
+    spec: &Cluster,
+    output: Option<&Path>,
+    out: OutputOpts,
+) -> Result<kurin_components::etcd::BackupReport> {
+    etcd::etcd_backup(spec, output, out).await
+}
+
+/// `kurin etcd restore`: re-seed every control plane's etcd from a
+/// snapshot (destructive; pre-restore data is parked on each node).
+pub async fn etcd_restore(
+    spec: &Cluster,
+    from: &Path,
+    out: OutputOpts,
+) -> Result<kurin_components::etcd::RestoreReport> {
+    etcd::etcd_restore(spec, from, out).await
+}
+
+/// `kurin etcd schedule`: install the systemd backup timer on every
+/// control plane.
+pub async fn etcd_schedule(
+    spec: &Cluster,
+    every: &str,
+    keep: usize,
+    out: OutputOpts,
+) -> Result<kurin_components::etcd::ScheduleReport> {
+    etcd::etcd_schedule(spec, every, keep, out).await
 }
 
 /// `kurin logs`: read the JSONL operation logs.

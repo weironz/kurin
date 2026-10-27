@@ -200,6 +200,11 @@ tier2-certs:
 tier2-status:
     e2e/tier2/status.sh
 
+# WP-70: etcd backup -> create/delete a namespace -> restore -> the
+# namespace is back (needs a running tier1 cluster).
+tier1-etcd:
+    e2e/tier1/etcd.sh target/tier1/debug/kurin
+
 # full local gate before pushing anything that touches behavior
 ci-gate: check tier0
     just tier0-test

@@ -54,6 +54,7 @@ ssh-key = { version = "=0.7.0-rc.11", default-features = false, features = ["ed2
 backon = "1.6.0"
 tempfile = "3.27.0"
 rcgen = "0.14"
+base64 = "0.22"
 bcrypt = "0.17"
 toml = "0.8"
 toml_edit = "0.22"

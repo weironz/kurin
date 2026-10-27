@@ -67,7 +67,7 @@
 | WP-64 Addon 页面与危险操作 | todo | | | tier1 metrics-server | |
 | WP-65 包页面/升级/证书/TOML 编辑器 | todo | | | tier2 页面升级 | |
 | WP-66 前端端到端验收 | done | 见提交 | 无 | tier1 实跑：lifecycle（创建→加/删 worker→销毁）PASS；关浏览器 PASS；重启/CLI/密码扫描待人工 | `web/e2e/` 5 个场景 + 加节点 UI；tier1 两次实跑通过 |
-| WP-70 etcd 备份/恢复 | todo | | | | |
+| WP-70 etcd 备份/恢复 | done | 见提交 | 无 | `just tier1-etcd` PASS（tier1 单节点：备份 → 建 ns → 恢复 → ns 消失、`/readyz`+`/healthz/etcd` ok）| kubeadm：etcdctl 经 `crictl exec`（回退 `kubectl exec`）快照到 `/var/lib/etcd` 后移至 `/var/lib/kurin/etcd-backups`；恢复在节点 stage 上游 etcdctl 3.5.21 tarball（distroless etcd 镜像无 shell，不能从容器取）；多成员恢复用 etcd DR flags（`--name/--initial-cluster/--initial-advertise-peer-urls/--initial-cluster-token`）重建 quorum；k3s：`k3s etcd-snapshot save` + `k3s server --cluster-reset`（新 k3s 已移除 `etcd-snapshot restore` 子命令）；跨机传输分块 `dd|base64 -w 4096`（6 MiB/块）绕过 exec 捕获上限；旧数据一律 `…-pre-restore-<ts>` 保留不删 |
 | WP-71 证书自动续期 | todo | | | | |
 | WP-72 k3s 升级 | todo | | | | |
 | WP-73 kurin import | todo | | | | |
@@ -78,6 +78,8 @@
 | WP-78 英文文案与文档站 | todo | | | | |
 
 ## 偏离记录
+
+- WP-70：三处偏离——(1) `etcd backup/restore` 不走计划/执行器（WP-70 行文隐含计划化，但恢复的步骤互相不幂等、失败后需要人工判断，故与 `certs check`/`status` 同构直接执行；`OpKind::EtcdBackup/EtcdRestore` 保留为事件 kind 与阶段模板）。(2) k3s 恢复用 `k3s server --cluster-reset --cluster-reset-restore-path=…`（k3s 官方现行程序），而非计划中的 `k3s etcd-snapshot restore` 子命令——新版 k3s 已移除该子命令。(3) kubeadm 恢复所需的 etcdctl 不能从 etcd 静态 pod 容器内取（`registry.k8s.io/etcd` 是 distroless，无 shell/coreutils），改为在控制机经既有 artifact 缓存抓取上游 etcd-io/etcd v3.5.21 release tarball（sha256 实抓自官方 SHA256SUMS，与镜像清单 pin 的 etcd 3.5.21-0 同源），上传到节点 `/var/lib/kurin/etcdctl`。
 
 - WP-50：Host 拒绝使用 403 `forbidden-host`（UI §7 状态码清单之外，语义上 400=语法不合适）；错误信封为顶层 `{code, message, diagnostics?}` 且 DTO 字段 `camelCase`（`expiresAt`/`componentVersions`），对齐已交付的 WP-60 前端契约而非 §7 的「snake_case」总则，WP-55 ts-rs 生成时以此为基准；默认 Host 白名单额外含 `[::1]:<port>`；`GET /api/v1/session`（会话自省）与 `GET /api/v1/healthz`（与 `/healthz` 等价）按 WP-60 mock 契约补齐；host 检查同时读 HTTP/2 `:authority`（TLS 下 curl/浏览器走 h2，无 Host 头）；会话 TTL 定为 24h（文档未规定）。新依赖：axum/axum-server/rand 纯 Rust，rustls(ring) 已在树内（russh/kube），musl/zig 交叉编译不受影响。
 - WP-00：`ScriptedSession` 在 `(exit, stdout, stderr)` 之外增加了「命令已执行但传输中断」的应答与副作用文件，用于覆盖 `Outcome::Unknown → 重新探测` 路径；`cli_output` 快照对任务耗时与阶段内行序做归一化（并发完成顺序不在 v1 契约内）。

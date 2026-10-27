@@ -59,10 +59,14 @@ done
 
 echo "[tier1] pass 2: idempotency"
 "$BIN" create cluster -f "$CFG" --json > "$EVENTS2" 2>/dev/null || { echo "[FAIL] pass 2 exited nonzero"; exit 1; }
-done2=$(grep -c '"task-done"' "$EVENTS2" || true)
+# `bootstrap/kubeadm-init` re-harvests join material in a fresh process and
+# `post/state-record` records this invocation's op id; both are expected to
+# run once per create (their apply paths are idempotent). Every other task
+# must be skipped on a converged cluster.
+done2=$(grep '"task-done"' "$EVENTS2" | grep -v -E '"id":"(bootstrap/kubeadm-init|post/state-record)@' | wc -l || true)
 fail2=$(grep -c '"task-failed"' "$EVENTS2" || true)
 skip2=$(grep -c '"task-skipped"' "$EVENTS2" || true)
-[ "$done2" -eq 0 ] || { echo "[FAIL] pass 2 re-ran $done2 tasks"; exit 1; }
+[ "$done2" -eq 0 ] || { echo "[FAIL] pass 2 re-ran $done2 unexpected tasks"; grep '"task-done"' "$EVENTS2"; exit 1; }
 [ "$fail2" -eq 0 ] || { echo "[FAIL] pass 2 had failures"; exit 1; }
 echo "[ok] pass 2: $skip2 tasks skipped, 0 re-applied"
 

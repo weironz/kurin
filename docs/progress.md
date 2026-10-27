@@ -1,5 +1,14 @@
-## WP-66：Web 真实环境 e2e（tier1，2026-10-28）
+# 进度日志
 
+## WP-70：etcd 备份/恢复/定时（2026-10-28）
+
+- **`kurin etcd backup [-o FILE]`**：每个控制面各拍一份快照（kubeadm 经 `crictl exec` 进 etcd 静态 pod、回退 `kubectl exec`；k3s 用 `k3s etcd-snapshot save`），`etcdctl snapshot status` 校验 revision/size 后在节点保留于 `/var/lib/kurin/etcd-backups`（k3s 在其 db/snapshots），首个控制面的字节经分块 `dd | base64 -w 4096`（6 MiB/块）拉回控制机，远端 sha256 全量校验后写入 `-o`（默认 `./etcd-<cluster>-<ts>.db`）。
+- **`kurin etcd restore --from FILE`**：kubeadm——先在集群仍在跑时把上游 etcdctl v3.5.21 tarball（控制机缓存、sha256 实抓）与快照上传到各节点，再移走 `/etc/kubernetes/manifests` 停止 etcd+apiserver 静态 pod，各成员 `etcdctl snapshot restore` 重建 etcd（单成员无 flags；多成员用 `--name/--initial-cluster/--initial-advertise-peer-urls/--initial-cluster-token` 重建 quorum），移回 manifests，`/healthz/etcd` + `/readyz` 门控；k3s——全部 `systemctl stop k3s`，锚点 `k3s server --cluster-reset --cluster-reset-restore-path` 重置为单成员，重启并通过健康门控后，其余 server 停用旧 db（移到 `…-pre-restore-<ts>`）重新 join。旧数据一律保留不删。
+- **`kurin etcd schedule --every 6h --keep 7`**：每个控制面装 `kurin-etcd-backup.{service,timer}`（`OnBootSec`/`OnUnitActiveSec`）与 `/usr/local/bin/kurin-etcd-backup.sh`（节点本地快照 + 只按 `kurin-` 前缀裁剪到 keep 份；脚本幂等，重跑仅重写同内容文件并重启 timer）。
+- **测试**：`kurin-components` 22 个单测（`--every` 解析、kubeadm/k3s 命令构造、systemd 单元渲染、DR flags、分块传输、etcdctl pin）；`kurin/tests/etcd.rs` 8 个集成测试用 mock Session 断言命令序列与顺序（stop→park→restore→start→health gate、kubectl 回退、多成员 flags、k3s 锚点/peer 流程、schedule 幂等）。
+- **e2e（tier1，已执行）**：`just tier1-etcd` **PASS**——备份 6.6MB 快照 → 建 `kurin-etcd-e2e` namespace → 恢复 → namespace 消失、`/readyz` 与 `/healthz/etcd` 恢复。k3s 路径仍需人工在 `e2e/tier1/k3s.sh` 建的集群上验证。
+
+## WP-66：Web 真实环境 e2e（tier1，2026-10-28）
 - **`web/e2e/lifecycle.spec.ts` PASS（3.9m）**：单节点 tier1（multipass Ubuntu 24.04）上通过页面完成创建 → 状态（运行中）→ 加 worker → 删 worker → 销毁；服务端操作全部 `succeeded`。
 - **`web/e2e/resilience.spec.ts`「创建中关闭浏览器」PASS（2.4m）**：关闭浏览器后 create 在服务端继续，重开页面可见操作详情并最终成功。
 - **真实 e2e 暴露并修复的集成问题**：
