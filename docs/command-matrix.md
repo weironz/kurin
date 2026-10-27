@@ -193,6 +193,28 @@ HTTP，远程仓库默认 HTTPS，`oci://http://…` 可显式指定。
 新增 `ts` 字段）、`--json=v2`（完整信封）、`--max-upload-parallel N`
 （同一操作内并发上传的载荷数，缺省 4；上传共享控制机上行带宽，与任务并发分开限流）。
 
+## addon（WP-44，03 §4.6）
+
+`create cluster` 会一次装好配置里启用的全部 addon；之后用 `kurin addon`
+单独收敛某一个 addon，不需要重跑整个安装计划。
+
+| 命令 | 行为 |
+|---|---|
+| `addon list [-f cluster.toml]` | 目录中的 addon（内置目录 + 配置里 `source` 指向的目录/包）与集群 `kurin-state` 里已装的清单；`STATUS` 为 `installed`/`enabled`/`disabled`/`available`。给 `-f` 时连接集群读 `kurin-state`，读不到只告警并列出目录 |
+| `addon info <name> [--schema]` | 元数据（版本、分类、命名空间、安装方式、镜像、依赖）；`--schema` 只输出 values JSON Schema（可直接管道） |
+| `addon install <name> -f cfg [--version V] [--set k=v] [--values f.yaml] [--dry-run]` | 启用并收敛该 addon；`requires` 的条目一并启用 |
+| `addon upgrade <name> -f cfg [--version V]` | 按目录提供的版本（或 `--version`）重新收敛，并刷新配置里的 `version` |
+| `addon remove <name> -f cfg [--keep-crds]` | 卸载并把配置里该条目置为 `enabled = false`；`--keep-crds` 保留 CRD |
+
+- 配置改写用 `toml_edit`：注释、空行与键顺序保留；`--no-save` 关闭改写。
+  改写发生在操作**成功之后**——失败的安装不会把配置写成“已启用”。
+- `--set` 的值按 TOML 字面量解析（失败当字符串），键用 `.` 嵌套；
+  `--values` 的 YAML 逐叶子合并进 `[addons.<name>.values]`，未涉及的键与注释保持不变。
+- 写入前按 addon 的 `values-schema` 校验 `values`，越界参数在校验期拒绝。
+- `--dry-run` 只打印计划（`discover` → `addons/<name>` → `post`），不连接节点、不改配置。
+- `--version` 必须是目录当前提供的版本；其它版本需要先为该版本提供 `source` 或拉取 addon 包。
+- 每个操作只收敛目标 addon（及其 `requires`），不影响配置里其它 addon。
+
 ## 矩阵之外的恒真约束
 
 - 所有 kubectl/k3s 命令经 session 下发到锚点节点执行；控制机（跑 kurin 的机器）无需安装任何集群组件。

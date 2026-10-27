@@ -226,7 +226,7 @@ impl Addon {
 
         // 1. Validate the user layer only; defaults are checked by WP-40
         //    and raw-values are explicitly unvalidated.
-        self.validate_user_values(&user, request)?;
+        self.validate_values(&user, request)?;
 
         // 2. The values template sees the values requested so far
         //    (defaults + user + raw) so it can derive dependent keys.
@@ -309,8 +309,19 @@ impl Addon {
         })
     }
 
-    /// Validate the user `values` layer against `values-schema`.
-    fn validate_user_values(
+    /// Validate a user `values` layer against the addon's
+    /// `spec.values-schema` (03 §4.2 rule 3).
+    ///
+    /// [`Addon::render`] calls this on the entry's `values`; the CLI calls
+    /// it before planning an `addon install` so a bad `--set` / `--values`
+    /// fails without touching the cluster. Secret references are masked
+    /// before validation, so a diagnostic never prints a secret.
+    ///
+    /// # Errors
+    ///
+    /// [`AddonError::Values`] naming every violation; [`AddonError::Invalid`]
+    /// when the addon declares no schema or the schema itself is unusable.
+    pub fn validate_values(
         &self,
         values: &Value,
         request: &RenderRequest<'_>,

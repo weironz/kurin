@@ -1,0 +1,21 @@
+apiVersion: addons.kurin.dev/v1alpha1
+kind: Addon
+metadata:
+  name: demo
+  version: 1.2.3
+  description: A manifests addon for the WP-44 CLI fixtures
+  category: other
+spec:
+  compat: {}
+  requires: [metrics-server]
+  namespace: demo-system
+  install:
+    manifests:
+      - manifests/*.yaml
+  images:
+    - docker.io/library/nginx:1.27@sha256:2222222222222222222222222222222222222222222222222222222222222222
+  values-schema: values.schema.json
+  readiness:
+    - kind: Deployment
+      name: demo
+  timeout: 2m

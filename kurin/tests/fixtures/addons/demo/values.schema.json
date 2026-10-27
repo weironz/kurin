@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "demo values",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "replicas": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "副本数"
+    }
+  }
+}

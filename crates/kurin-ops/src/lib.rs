@@ -20,6 +20,7 @@
 #![allow(clippy::result_large_err)]
 
 pub mod add_nodes;
+mod addon;
 mod artifact;
 mod certs;
 mod create;
@@ -47,6 +48,7 @@ use miette::{IntoDiagnostic, Result};
 use semver::Version;
 use tokio_util::sync::CancellationToken;
 
+pub use addon::inventory as addon_inventory;
 pub use kurin_components::certs::NodeCerts;
 pub use kurin_components::precheck::PrecheckReport;
 pub use kurin_components::status::StatusOpts;
@@ -101,6 +103,16 @@ pub enum Params {
     CertsRenew {
         force: bool,
     },
+    /// `kurin addon install` / `upgrade`: converge the enabled addon.
+    AddonInstall {
+        dry_run: bool,
+    },
+    /// `kurin addon remove`: uninstall the disabled addon.
+    AddonRemove {
+        dry_run: bool,
+        /// Keep recorded CRDs (`--keep-crds`).
+        keep_crds: bool,
+    },
 }
 
 impl Params {
@@ -110,7 +122,9 @@ impl Params {
             Params::Create { dry_run, .. }
             | Params::DeleteNode { dry_run, .. }
             | Params::DeleteCluster { dry_run, .. }
-            | Params::Upgrade { dry_run, .. } => *dry_run,
+            | Params::Upgrade { dry_run, .. }
+            | Params::AddonInstall { dry_run }
+            | Params::AddonRemove { dry_run, .. } => *dry_run,
             Params::AddNodes { .. } | Params::CertsRenew { .. } => false,
         }
     }
@@ -134,6 +148,8 @@ impl Params {
             Params::DeleteCluster { .. } => "delete-cluster",
             Params::Upgrade { .. } => "upgrade",
             Params::CertsRenew { .. } => "certs-renew",
+            Params::AddonInstall { .. } => "addon-install",
+            Params::AddonRemove { .. } => "addon-remove",
         }
     }
 }
@@ -409,6 +425,9 @@ pub async fn prepare_with_handle(
         }
         OpKind::Upgrade => upgrade::prepare(spec, params, pool, seed, out, lock, secrets).await,
         OpKind::CertsRenew => certs::prepare(spec, params, pool, seed, out, lock, secrets).await,
+        OpKind::AddonInstall | OpKind::AddonRemove => {
+            addon::prepare(spec, params, pool, seed, out, lock, secrets).await
+        }
         other => Err(miette::miette!(
             "operation {other:?} is not implemented by this build"
         )),
@@ -503,6 +522,20 @@ pub async fn plan(prepared: &Prepared) -> Result<kurin_core::plan::Plan> {
             }
         }
         Params::CertsRenew { force } => kurin_components::certs::build_plan(spec, run, *force),
+        Params::AddonInstall { .. } => kurin_components::addon::build_addon_plan_with(
+            OpKind::AddonInstall,
+            spec,
+            run,
+            kurin_components::addon::AddonPlanOptions::default(),
+        ),
+        Params::AddonRemove { keep_crds, .. } => kurin_components::addon::build_addon_plan_with(
+            OpKind::AddonRemove,
+            spec,
+            run,
+            kurin_components::addon::AddonPlanOptions {
+                keep_crds: *keep_crds,
+            },
+        ),
     }
 }
 

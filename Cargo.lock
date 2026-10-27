@@ -2393,10 +2393,12 @@ dependencies = [
  "rpassword",
  "semver",
  "serde_json",
+ "serde_yml",
  "sha2 0.10.9",
  "ssh-key",
  "tempfile",
  "tokio",
+ "toml",
  "toml_edit 0.22.27",
  "tracing",
 ]

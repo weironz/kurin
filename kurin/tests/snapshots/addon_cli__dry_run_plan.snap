@@ -1,0 +1,11 @@
+---
+source: kurin/tests/addon_cli.rs
+expression: "String::from_utf8_lossy(&output.stdout)"
+---
+├── stage: discover (2 tasks)
+│   ├── discover/facts@master01 :: arch=amd64 os=? cpu=0 mem=0MiB
+│   └── discover/facts@worker01 :: arch=amd64 os=? cpu=0 mem=0MiB
+├── stage: addons (1 tasks)
+│   └── addons/metrics-server@master01 :: install addon metrics-server 0.7.2 via helm
+└── stage: post (1 tasks)
+    └── post/state-record@master01 :: record cluster state in kube-system/kurin-state

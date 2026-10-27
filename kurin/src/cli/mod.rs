@@ -5,4 +5,6 @@
 
 pub mod quick;
 
+pub mod addon;
+
 pub mod ssh_key;

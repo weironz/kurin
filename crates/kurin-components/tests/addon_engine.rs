@@ -736,6 +736,48 @@ async fn check_drifts_when_a_readiness_object_is_missing() {
 }
 
 #[tokio::test]
+async fn remove_task_keep_crds_retains_the_crd() {
+    let (tmp, _users) = write_catalog(Path::new("x"), &[("base", BASE_ADDON)]);
+    let api = StateApi::with_addon(json!({
+        "version": "1.0.0",
+        "values-digest": "sha256:deadbeef",
+        "namespace": "base-system",
+        "objects": [
+            {
+                "api-version": "apiextensions.k8s.io/v1",
+                "kind": "CustomResourceDefinition",
+                "name": "widgets.demo.io",
+            },
+            {
+                "api-version": "apps/v1",
+                "kind": "Deployment",
+                "namespace": "base-system",
+                "name": "demo",
+            }
+        ],
+        "keep": [],
+        "installed-at": "2026-10-28T00:00:00Z",
+    }));
+    let cluster = cluster();
+    let run = run(&cluster);
+    let task = AddonRemoveTask::new(&cluster, &run, OpKind::AddonRemove, "base").keep_crds();
+    let kubectl = KubectlSession { api: Arc::new(api) };
+    let outcome = task
+        .apply_with(&ScriptedSession::default(), &kubectl)
+        .await
+        .expect("remove runs");
+    assert!(matches!(outcome, kurin_core::engine::Outcome::Verified));
+    let deleted = kubectl.api.deleted.lock().unwrap().clone();
+    assert_eq!(
+        deleted.len(),
+        1,
+        "only the Deployment is deleted: {deleted:?}"
+    );
+    assert_eq!(deleted[0].kind, "Deployment");
+    drop(tmp);
+}
+
+#[tokio::test]
 async fn remove_task_uninstalls_and_drops_the_record_entry() {
     let (tmp, _users) = write_catalog(Path::new("x"), &[("base", BASE_ADDON)]);
     let api = StateApi::with_addon(json!({

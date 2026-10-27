@@ -1,0 +1,51 @@
+---
+source: kurin/tests/addon_cli.rs
+expression: normalize(&change.document)
+---
+# WP-44 fixture: a v1alpha2 cluster whose addons come from local
+# directories (`source = "dir://…"`), so the addon CLI tests need no
+# built-in catalog (WP-46). `@ADDONS_DIR@` is replaced with the absolute
+# fixture path by the test.
+version = "v1alpha2"
+name = "addons"
+
+[kubernetes]
+version = "1.33.1"
+
+[network]
+pod-cidr = "10.233.64.0/18"
+service-cidr = "10.233.0.0/18"
+dns-domain = "cluster.local"
+
+[network.cni]
+kind = "calico"
+
+[ssh]
+user = "root"
+port = 22
+
+[ssh.auth]
+method = "private_key"
+key-path = "/root/.ssh/id_ed25519"
+
+[nodes.master01]
+address = "192.168.10.11"
+role = "control-plane"
+
+[nodes.worker01]
+address = "192.168.10.21"
+role = "worker"
+
+# Disabled on purpose: `kurin addon install` flips it to true and keeps
+# the surrounding comments.
+[addons.metrics-server]
+enabled = true
+source = "dir://@ADDONS_DIR@/metrics-server"
+
+[addons.metrics-server.values]
+replicas = 3
+args = ["--kubelet-insecure-tls"]
+
+[addons.demo]
+enabled = false
+source = "dir://@ADDONS_DIR@/demo"

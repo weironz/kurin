@@ -213,6 +213,12 @@ values 的合并顺序为 `defaults` → addon 内置推荐值（`values.yaml.j2
 报 `unknown addon`。`addons.local-path` 与 `addons.nfs-subdir` 不能同时启用
 （一个集群只有一个动态存储 provisioner）。
 
+`kurin addon install|upgrade|remove` 会按需改写这一节（`toml_edit`，注释保留；
+`--no-save` 关闭），所以“配置即真相”仍然成立：安装成功后条目变成
+`enabled = true`（`remove` 置 `false`），`upgrade` 写入目录提供的 `version`。
+改写只在操作成功后发生。`--set k=v` 与 `--values f.yaml` 合并进 `values`，
+写入前按 addon 的 values schema 校验。
+
 ### `[packages]`（v1alpha2）
 
 | 字段 | 含义 |

@@ -46,8 +46,8 @@ pub use apply::{
     apply_addon, release_status, uninstall_addon, AddonApply, ApplyRequest, HelmPayload,
 };
 pub use engine::{
-    build_addon_plan, resolve_selection, AddonEngine, AddonInstallTask, AddonRecord,
-    AddonRemoveTask, RecordedObject, SelectedAddon,
+    build_addon_plan, build_addon_plan_with, resolve_selection, AddonEngine, AddonInstallTask,
+    AddonPlanOptions, AddonRecord, AddonRemoveTask, RecordedObject, SelectedAddon,
 };
 
 pub use error::AddonError;

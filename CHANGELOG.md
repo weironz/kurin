@@ -23,6 +23,25 @@ All notable changes to kurin. Format follows Keep a Changelog; semver.
   (`docker.io/kubeovn/kube-ovn`, `docker.io/kubeovn/vpc-nat-gateway`) no
   longer needs online access, and its validation-time offline rejection
   is gone.
+### Added (WP-44)
+- `kurin addon` command family (03 §4.6): `list` (catalog plus the
+  cluster's `kurin-state` inventory), `info [--schema]` (metadata, or the
+  values JSON Schema alone for piping), `install` (`--version`,
+  `--set`, `--values`, `--dry-run`, `--no-save`), `upgrade` (`--version`)
+  and `remove` (`--keep-crds`).
+- `install` / `upgrade` / `remove` rewrite the config's
+  `[addons.<name>]` section with `toml_edit` (comments, blank lines and
+  key order preserved) **after** the operation succeeds; `--no-save`
+  turns the rewrite off. `install` also enables the entries the addon
+  `requires`; `remove` sets `enabled = false` and keeps the values.
+- each operation plans only the target addon (plus its `requires`), so
+  `kurin addon` never re-converges unrelated addons.
+- values are validated against the addon's `values-schema` before the
+  operation starts; `--dry-run` prints the `discover → addons → post`
+  plan without connecting to any node.
+- `addon-engine`: `build_addon_plan_with` / `AddonPlanOptions` and
+  `AddonRemoveTask::keep_crds` back `remove --keep-crds` (recorded CRDs
+  survive the uninstall).
 
 ### Added (WP-36)
 - registry-based distribution (04 §5.2): `[registry] kind = "external"`

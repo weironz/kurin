@@ -408,7 +408,7 @@ impl Component for AddonEngine {
     fn plan(&self, b: &mut PlanBuilder<'_>) -> Result<()> {
         match b.op() {
             OpKind::Create | OpKind::AddonInstall => add_install_tasks(b),
-            OpKind::AddonRemove => add_remove_tasks(b),
+            OpKind::AddonRemove => add_remove_tasks(b, false),
             // `add nodes` and the other operations leave the addon layer
             // alone: addons converge with the cluster, not per node.
             _ => Ok(()),
@@ -444,18 +444,29 @@ fn add_install_tasks(b: &mut PlanBuilder<'_>) -> Result<()> {
 }
 
 /// One remove task per explicitly disabled, engine-owned entry.
-fn add_remove_tasks(b: &mut PlanBuilder<'_>) -> Result<()> {
+///
+/// `keep_crds` keeps every recorded `CustomResourceDefinition`
+/// (`kurin addon remove --keep-crds`).
+fn add_remove_tasks(b: &mut PlanBuilder<'_>, keep_crds: bool) -> Result<()> {
     let phase = b.phase("addons");
     for (name, entry) in &b.cluster().addons {
         if entry.enabled || first_layer_owned(name, b.cluster()) {
             continue;
         }
-        b.add(
-            phase,
-            Arc::new(AddonRemoveTask::new(b.cluster(), b.run(), b.op(), name)),
-        );
+        let mut task = AddonRemoveTask::new(b.cluster(), b.run(), b.op(), name);
+        if keep_crds {
+            task = task.keep_crds();
+        }
+        b.add(phase, Arc::new(task));
     }
     Ok(())
+}
+
+/// Knobs the CLI passes into the addon operation plans (WP-44).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct AddonPlanOptions {
+    /// `kurin addon remove --keep-crds`: retain recorded CRDs.
+    pub keep_crds: bool,
 }
 
 /// The `addon-install` / `addon-remove` operation plan (03 §4.5): the
@@ -463,6 +474,16 @@ fn add_remove_tasks(b: &mut PlanBuilder<'_>) -> Result<()> {
 /// rows and the `kurin-state` record write every mutation ends with
 /// (ADR-09). `op` must be one of the two addon operations.
 pub fn build_addon_plan(op: OpKind, cluster: &Cluster, run: &Arc<RunContext>) -> Result<Plan> {
+    build_addon_plan_with(op, cluster, run, AddonPlanOptions::default())
+}
+
+/// [`build_addon_plan`] with the CLI's per-operation knobs.
+pub fn build_addon_plan_with(
+    op: OpKind,
+    cluster: &Cluster,
+    run: &Arc<RunContext>,
+    options: AddonPlanOptions,
+) -> Result<Plan> {
     if !matches!(op, OpKind::AddonInstall | OpKind::AddonRemove) {
         return Err(miette::miette!(
             "build_addon_plan needs the addon-install or addon-remove operation, not {}",
@@ -472,7 +493,11 @@ pub fn build_addon_plan(op: OpKind, cluster: &Cluster, run: &Arc<RunContext>) ->
     let facts = run.facts_snapshot();
     let mut b = PlanBuilder::new(op, cluster, facts, run, None);
     crate::plan::plan_discover(&mut b)?;
-    AddonEngine.plan(&mut b)?;
+    if op == OpKind::AddonRemove && options.keep_crds {
+        add_remove_tasks(&mut b, true)?;
+    } else {
+        AddonEngine.plan(&mut b)?;
+    }
     let post = b.phase("post");
     b.add(
         post,
@@ -1283,6 +1308,9 @@ pub struct AddonRemoveTask {
     node_name: String,
     flavor: Flavor,
     op: &'static str,
+    /// Keep every recorded `CustomResourceDefinition` (`kurin addon remove
+    /// --keep-crds`), on top of the addon's own `uninstall.keep`.
+    keep_crds: bool,
 }
 
 impl AddonRemoveTask {
@@ -1295,7 +1323,14 @@ impl AddonRemoveTask {
             cluster: cluster.clone(),
             run: Arc::clone(run),
             op: op.as_str(),
+            keep_crds: false,
         }
+    }
+
+    /// Keep the addon's CRDs on uninstall (`kurin addon remove --keep-crds`).
+    pub fn keep_crds(mut self) -> Self {
+        self.keep_crds = true;
+        self
     }
 
     fn anchor_arch(&self) -> Arch {
@@ -1381,6 +1416,7 @@ impl AddonRemoveTask {
                 .objects
                 .iter()
                 .filter(|object| !is_kept(object, &entry.keep, &entry.namespace))
+                .filter(|object| !(self.keep_crds && object.kind == "CustomResourceDefinition"))
                 .map(RecordedObject::obj_ref)
                 .collect();
             if !references.is_empty() {

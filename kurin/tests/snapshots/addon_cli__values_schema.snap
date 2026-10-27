@@ -1,0 +1,24 @@
+---
+source: kurin/tests/addon_cli.rs
+expression: schema
+---
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "args": {
+      "description": "额外的 metrics-server 启动参数",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "replicas": {
+      "description": "Metrics Server 副本数",
+      "minimum": 1,
+      "type": "integer"
+    }
+  },
+  "title": "metrics-server values",
+  "type": "object"
+}

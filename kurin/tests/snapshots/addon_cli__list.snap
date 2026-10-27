@@ -1,0 +1,7 @@
+---
+source: kurin/tests/addon_cli.rs
+expression: "addon::render_list(&rows)"
+---
+NAME            VERSION  CATEGORY    STATUS     DESCRIPTION
+demo            1.2.3    other       disabled   A manifests addon for the WP-44 CLI fixtures
+metrics-server  0.7.2    monitoring  installed  Cluster-wide resource metrics (WP-44 CLI fixture)

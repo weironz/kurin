@@ -9,6 +9,7 @@ use clap::{ArgAction, Parser, Subcommand, ValueEnum};
 use miette::{IntoDiagnostic, Result};
 
 use kurin::cli;
+use kurin::cli::addon;
 use kurin::cli::quick::{self, NodeNameStrategy, QuickArgs, QuickConfig, SaveDefault, SaveOutcome};
 use kurin::ops::{self, JsonMode, OpRequest, OutputOpts, Params, StatusOpts};
 
@@ -148,6 +149,11 @@ enum Commands {
     Capabilities,
     /// Add nodes from an updated config to an existing cluster.
     Add(AddArgs),
+    /// Manage declarative addons: list, info, install, upgrade, remove.
+    Addon {
+        #[command(subcommand)]
+        what: AddonWhat,
+    },
     /// Delete a node or the whole cluster.
     Delete(DeleteArgs),
     /// Read the JSONL operation logs written by every operation.
@@ -323,6 +329,20 @@ enum AddWhat {
 struct DeleteArgs {
     #[command(subcommand)]
     what: DeleteWhat,
+}
+
+#[derive(Subcommand)]
+enum AddonWhat {
+    /// List catalog addons and the cluster's installed inventory.
+    List(addon::ListArgs),
+    /// Show one addon's metadata, or its values JSON Schema (`--schema`).
+    Info(addon::InfoArgs),
+    /// Install (or re-converge) one addon and enable it in the config.
+    Install(addon::InstallArgs),
+    /// Upgrade one addon to a version the catalog provides.
+    Upgrade(addon::UpgradeArgs),
+    /// Uninstall one addon and disable it in the config.
+    Remove(addon::RemoveArgs),
 }
 
 #[derive(Subcommand)]
@@ -711,6 +731,57 @@ async fn run(cli: Cli) -> Result<()> {
                     out,
                 )
                 .await
+            }
+        },
+        Commands::Addon { what } => match what {
+            AddonWhat::List(args) => addon::list(&args).await,
+            AddonWhat::Info(args) => addon::info(&args),
+            AddonWhat::Install(args) => {
+                let change = addon::install(&args)?;
+                run_op(
+                    OpRequest {
+                        settings: settings.clone(),
+                        kind: kurin::plan::OpKind::AddonInstall,
+                        spec: change.scoped.clone(),
+                        params: Params::AddonInstall {
+                            dry_run: args.dry_run,
+                        },
+                    },
+                    out,
+                )
+                .await?;
+                change.commit(&args.file)
+            }
+            AddonWhat::Upgrade(args) => {
+                let change = addon::upgrade(&args)?;
+                run_op(
+                    OpRequest {
+                        settings: settings.clone(),
+                        kind: kurin::plan::OpKind::AddonInstall,
+                        spec: change.scoped.clone(),
+                        params: Params::AddonInstall { dry_run: false },
+                    },
+                    out,
+                )
+                .await?;
+                change.commit(&args.file)
+            }
+            AddonWhat::Remove(args) => {
+                let change = addon::remove(&args)?;
+                run_op(
+                    OpRequest {
+                        settings: settings.clone(),
+                        kind: kurin::plan::OpKind::AddonRemove,
+                        spec: change.scoped.clone(),
+                        params: Params::AddonRemove {
+                            dry_run: false,
+                            keep_crds: args.keep_crds,
+                        },
+                    },
+                    out,
+                )
+                .await?;
+                change.commit(&args.file)
             }
         },
         Commands::Delete(args) => match args.what {

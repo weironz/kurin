@@ -1,0 +1,17 @@
+---
+source: kurin/tests/addon_cli.rs
+expression: "normalize(&addon::render_info(addon))"
+---
+name:          metrics-server
+version:       0.7.2
+title:         Metrics Server
+category:      monitoring
+description:   Cluster-wide resource metrics (WP-44 CLI fixture)
+namespace:     kube-system
+source:        dir @ADDONS_DIR@/metrics-server
+install:       helm charts/metrics-server-3.13.0.tgz (release metrics-server)
+values-schema: values.schema.json
+requires:      -
+conflicts:     -
+images:        1
+  - registry.k8s.io/metrics-server/metrics-server:v0.7.2@sha256:1111111111111111111111111111111111111111111111111111111111111111

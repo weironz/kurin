@@ -1,0 +1,26 @@
+apiVersion: addons.kurin.dev/v1alpha1
+kind: Addon
+metadata:
+  name: metrics-server
+  version: 0.7.2
+  title: Metrics Server
+  description: Cluster-wide resource metrics (WP-44 CLI fixture)
+  category: monitoring
+spec:
+  compat:
+    kubernetes: ">=1.30.0"
+  namespace: kube-system
+  install:
+    helm:
+      chart: charts/metrics-server-3.13.0.tgz
+      release: metrics-server
+  images:
+    - registry.k8s.io/metrics-server/metrics-server:v0.7.2@sha256:1111111111111111111111111111111111111111111111111111111111111111
+  values-schema: values.schema.json
+  defaults:
+    replicas: 1
+  readiness:
+    - kind: Deployment
+      name: metrics-server
+      namespace: kube-system
+  timeout: 3m

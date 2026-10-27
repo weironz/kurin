@@ -129,6 +129,18 @@ async fn run_op(
             run_plan(plan, pool, run, out, Emit::JsonOnly, opts).await?;
             Ok(OpOutcome::Completed)
         }
+        Params::AddonInstall { dry_run } | Params::AddonRemove { dry_run, .. } => {
+            if *dry_run {
+                render_plan(plan, out)?;
+                return Ok(OpOutcome::Planned);
+            }
+            let opts = RunOptions {
+                plan_fingerprint: plan.fingerprint(),
+                ..Default::default()
+            };
+            run_plan(plan, pool, run, out, Emit::Progress, opts).await?;
+            Ok(OpOutcome::Completed)
+        }
     }
 }
 
