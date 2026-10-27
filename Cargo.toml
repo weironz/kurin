@@ -52,6 +52,8 @@ toml_edit = "0.22"
 ipnet = { version = "2", features = ["serde"] }
 secrecy = "0.10"
 insta = { version = "1", features = ["toml"] }
+schemars = { version = "1", features = ["derive", "semver1"] }
+jsonschema = { version = "0.60", default-features = false }
 time = "0.3"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["registry", "std"] }

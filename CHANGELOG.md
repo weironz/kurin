@@ -17,6 +17,12 @@ All notable changes to kurin. Format follows Keep a Changelog; semver.
   (`sha256:73aaf090…`) was verified to match tag `1.36.1` upstream.
 
 ### Added
+- Machine-readable config schema (WP-22): `kurin config schema
+  [--version v1alpha2]` prints the JSON Schema derived from the config
+  types (doc comments become `description`, unknown fields are closed).
+  The v1alpha2 export is committed at `docs/schema/cluster.v1alpha2.json`
+  (`just schema` regenerates it; a test fails on drift), and every sample
+  config validates against it via the `jsonschema` crate.
 - Schema `v1alpha2` (WP-21): new configs may use `version = "v1alpha2"`
   with `[runtime] kind` (replacing `kubernetes.runtime`),
   `kubernetes.distribution = "kubeadm" | "k3s"` (`"k8s"` remains an

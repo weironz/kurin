@@ -10,6 +10,7 @@
 use std::fmt;
 use std::path::PathBuf;
 
+use schemars::JsonSchema;
 use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 
@@ -21,7 +22,7 @@ use crate::error::{ConfigError, Result};
 /// `password = "hunter2"` is a [`SecretRef::Literal`], while
 /// `password = { env = "KURIN_SSH_PASSWORD" }` and
 /// `password = { file = "/run/secrets/ssh" }` are the two reference forms.
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(untagged)]
 pub enum SecretRef {
     /// A literal value written in the config file (v1alpha1 form).

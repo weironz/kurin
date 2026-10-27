@@ -275,6 +275,12 @@ enum ConfigWhat {
         #[arg(short, long)]
         out: Option<PathBuf>,
     },
+    /// Print the JSON Schema for a config version.
+    Schema {
+        /// Schema version to export (default: v1alpha2).
+        #[arg(long, value_enum, default_value_t = SchemaVersion::V1Alpha2)]
+        version: SchemaVersion,
+    },
 }
 
 /// Schema version printed by `create config`.
@@ -284,6 +290,16 @@ enum SchemaVersion {
     V1Alpha1,
     #[value(name = "v1alpha2")]
     V1Alpha2,
+}
+
+impl SchemaVersion {
+    /// Config version string this CLI spelling selects.
+    fn as_str(self) -> &'static str {
+        match self {
+            SchemaVersion::V1Alpha1 => kurin_config::CONFIG_VERSION,
+            SchemaVersion::V1Alpha2 => kurin_config::v1alpha2::CONFIG_VERSION,
+        }
+    }
 }
 
 #[derive(clap::Args)]
@@ -595,6 +611,10 @@ async fn run(cli: Cli) -> Result<()> {
                         Ok(())
                     }
                 }
+            }
+            ConfigWhat::Schema { version } => {
+                print!("{}", kurin_config::schema::schema_json(version.as_str())?);
+                Ok(())
             }
         },
         Commands::Create(args) => match args.what {

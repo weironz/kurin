@@ -1,0 +1,798 @@
+{
+  "$defs": {
+    "AddonConfig": {
+      "additionalProperties": false,
+      "description": "One declarative addon (03 §4.3). Declaring the table opts in unless\n`enabled = false`.",
+      "properties": {
+        "enabled": {
+          "default": true,
+          "type": "boolean"
+        },
+        "raw-values": {
+          "description": "Unvalidated Helm values passthrough; clearly marked as such."
+        },
+        "source": {
+          "description": "External addon package (`oci://…`, `file://…`); required for names\noutside [`BUILTIN_ADDONS`].",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "values": {
+          "description": "Values validated against the addon's values schema (WP-41)."
+        },
+        "version": {
+          "description": "Addon version; unset means the catalog/package default.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "ArtifactsConfig": {
+      "additionalProperties": false,
+      "description": "Where node payloads come from: online (download) or a prepared\noffline bundle directory.",
+      "properties": {
+        "offline-dir": {
+          "description": "Prebuilt offline artifact directory (see `kurin artifact build`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "zone": {
+          "description": "Pull artifacts via domestic Chinese mirrors. Accepted value: \"cn\".\n`KURIN_ZONE=cn` in the environment overrides this field.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "BecomeMode": {
+      "description": "How a non-root SSH login gains root for the commands that need it.",
+      "oneOf": [
+        {
+          "const": "auto",
+          "description": "Use sudo whenever the login user is not root (default).",
+          "type": "string"
+        },
+        {
+          "const": "sudo",
+          "description": "Same as auto: root itself never needs sudo, everyone else gets it.",
+          "type": "string"
+        },
+        {
+          "const": "none",
+          "description": "Never escalate; non-root users fail precheck instead.",
+          "type": "string"
+        }
+      ]
+    },
+    "CniConfig": {
+      "oneOf": [
+        {
+          "properties": {
+            "kind": {
+              "const": "calico",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "flannel",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "cilium",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "kube-ovn",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "none",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "Delivery": {
+      "description": "How packages reach the nodes.",
+      "enum": [
+        "auto",
+        "preload",
+        "registry"
+      ],
+      "type": "string"
+    },
+    "Distribution": {
+      "description": "Distribution names in v1alpha2: the kubeadm track is spelled\n`kubeadm`, and `k8s` remains accepted as a compatibility alias.",
+      "enum": [
+        "kubeadm",
+        "k3s"
+      ],
+      "type": "string"
+    },
+    "HaConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "$ref": "#/$defs/HaMode",
+          "default": "kube-vip",
+          "description": "HA mode: `kube-vip` (default, static pod on every control plane),\n`external-endpoint` (operator-managed LB; only the endpoint is\nconfigured), or `kurin-lb` (kurin installs haproxy+keepalived on\ndedicated LB nodes declared in [nodes] with role \"lb\")."
+        },
+        "vip": {
+          "description": "Virtual IP for the API server when running HA.",
+          "format": "ip",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "HaMode": {
+      "enum": [
+        "kube-vip",
+        "external-endpoint",
+        "kurin-lb"
+      ],
+      "type": "string"
+    },
+    "HostKeyMode": {
+      "description": "What to do when a host key is not yet recorded.\n\nA key that *is* recorded but does not match is always rejected, in every\nmode: that is the signal of a rebuilt node (remove the stale entry) or of\nan interception attempt.",
+      "oneOf": [
+        {
+          "const": "tofu",
+          "description": "Trust on first use: learn unknown hosts, reject mismatches (default).",
+          "type": "string"
+        },
+        {
+          "const": "strict",
+          "description": "Reject unknown hosts; only keys already in the store are accepted.",
+          "type": "string"
+        },
+        {
+          "const": "accept-new",
+          "description": "Learn unknown hosts without prompting; reject mismatches.",
+          "type": "string"
+        }
+      ]
+    },
+    "KubernetesConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "distribution": {
+          "$ref": "#/$defs/Distribution",
+          "default": "kubeadm",
+          "description": "Cluster distribution: `kubeadm` (default, formerly `k8s`) or `k3s`."
+        },
+        "version": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SemVer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Target Kubernetes version, e.g. \"1.33.1\"."
+        }
+      },
+      "type": "object"
+    },
+    "NetworkConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "cni": {
+          "$ref": "#/$defs/CniConfig",
+          "default": {
+            "kind": "calico"
+          },
+          "description": "Exactly one CNI is active; the tagged enum makes conflicting\nchoices unrepresentable."
+        },
+        "dns-domain": {
+          "description": "Cluster DNS domain (default \"cluster.local\").",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "pod-cidr": {
+          "description": "Pod network CIDR, e.g. \"10.233.64.0/18\".",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "service-cidr": {
+          "description": "Service network CIDR, e.g. \"10.233.0.0/18\".",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "NodeConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "address": {
+          "description": "Reachable address used for SSH and cluster bootstrap.",
+          "format": "ip",
+          "type": "string"
+        },
+        "arch": {
+          "default": null,
+          "description": "CPU architecture (`amd64` | `arm64`); the discovered value wins\nwhen nodes are probed, this is the `--dry-run` fallback.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "auth": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SshAuth"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Per-node auth overrides cluster-level defaults."
+        },
+        "become": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BecomeMode"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Per-node become overrides cluster-level defaults."
+        },
+        "become-password": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SecretRef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Per-node sudo password override."
+        },
+        "internal-address": {
+          "default": null,
+          "description": "Address other nodes and kube components should use, when different.",
+          "format": "ip",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "known-hosts": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HostKeyMode"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Per-node host-key policy override."
+        },
+        "labels": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {},
+          "type": "object"
+        },
+        "port": {
+          "default": null,
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "role": {
+          "$ref": "#/$defs/NodeRole",
+          "default": "worker"
+        },
+        "user": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "address"
+      ],
+      "type": "object"
+    },
+    "NodeRole": {
+      "oneOf": [
+        {
+          "enum": [
+            "control-plane",
+            "worker"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "lb",
+          "description": "HA load balancer node (only valid with ha.mode = \"kurin-lb\").",
+          "type": "string"
+        },
+        {
+          "const": "registry",
+          "description": "Private image registry node (only valid with [registry] set).",
+          "type": "string"
+        }
+      ]
+    },
+    "PackagesConfig": {
+      "additionalProperties": false,
+      "description": "Package sources (04 §4). Unset fields fall back to the built-in\nmanifest / online delivery.",
+      "properties": {
+        "base": {
+          "description": "Base package URI (`oci://`, `file://`, `oci-layout://`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "delivery": {
+          "$ref": "#/$defs/Delivery",
+          "default": "auto"
+        },
+        "os": {
+          "default": [],
+          "description": "Per-OS packages; unset means \"match the node facts\".",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "trusted-keys": {
+          "default": [],
+          "description": "cosign public keys; required when `verify = \"signature\"`.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "verify": {
+          "$ref": "#/$defs/Verify",
+          "default": "none"
+        }
+      },
+      "type": "object"
+    },
+    "RegistryConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "address": {
+          "description": "Registry endpoint, required for `kind = \"external\"`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "data-dir": {
+          "description": "Storage directory for images (harbor uses its installer layout).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "kind": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RegistryKind"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Implementation; required when any node has role = \"registry\".\n`external` means \"an operator-managed registry\": kurin installs\nnothing and only uses the address and credentials (reserved, WP-49)."
+        },
+        "password": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SecretRef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Basic-auth password (docker-registry/zot: htpasswd; harbor: admin password)."
+        },
+        "port": {
+          "description": "Listen port. Defaults per kind: 5000 (docker-registry, zot), 8443 (harbor).",
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "username": {
+          "description": "Basic-auth user for the registry API (harbor: its admin user).",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "RegistryKind": {
+      "description": "Which registry implementation to install on `role = \"registry\"` nodes.",
+      "oneOf": [
+        {
+          "const": "docker-registry",
+          "description": "CNCF distribution v3 (docker-registry): single static binary.",
+          "type": "string"
+        },
+        {
+          "const": "zot",
+          "description": "project-zot: single static binary, OCI-native.",
+          "type": "string"
+        },
+        {
+          "const": "harbor",
+          "description": "Harbor v2 offline installer (single registry node only).",
+          "type": "string"
+        },
+        {
+          "const": "external",
+          "description": "Reserved (v1alpha2 only): an operator-managed registry. kurin\ninstalls nothing and only uses `address` + credentials. WP-49.",
+          "type": "string"
+        }
+      ]
+    },
+    "RuntimeConfig": {
+      "additionalProperties": false,
+      "description": "Container runtime for the kubeadm track (k3s embeds its own).",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/RuntimeKind",
+          "default": "containerd"
+        }
+      },
+      "type": "object"
+    },
+    "RuntimeKind": {
+      "enum": [
+        "containerd",
+        "crio"
+      ],
+      "type": "string"
+    },
+    "SecretRef": {
+      "anyOf": [
+        {
+          "description": "A literal value written in the config file (v1alpha1 form).",
+          "type": "string"
+        },
+        {
+          "description": "Read the value from an environment variable at prepare time.",
+          "properties": {
+            "env": {
+              "description": "Environment variable name.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "env"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Read the value from a file at prepare time. One trailing newline is\nstripped (password files are usually written by `echo`).",
+          "properties": {
+            "file": {
+              "description": "Path to the file holding the secret.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "file"
+          ],
+          "type": "object"
+        }
+      ],
+      "description": "Where a secret value comes from.\n\nThe untagged representation keeps v1alpha1 configs working unchanged:\n`password = \"hunter2\"` is a [`SecretRef::Literal`], while\n`password = { env = \"KURIN_SSH_PASSWORD\" }` and\n`password = { file = \"/run/secrets/ssh\" }` are the two reference forms."
+    },
+    "SemVer": {
+      "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-((?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\\.(?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\\+([0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*))?$",
+      "type": "string"
+    },
+    "SshAuth": {
+      "description": "Mutually exclusive authentication forms; a password and a key are not\nboth representable, and `method` picks the variant at parse time.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "method": {
+              "const": "password",
+              "type": "string"
+            },
+            "password": {
+              "$ref": "#/$defs/SecretRef"
+            }
+          },
+          "required": [
+            "method",
+            "password"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "key-path": {
+              "type": "string"
+            },
+            "method": {
+              "const": "private_key",
+              "type": "string"
+            },
+            "passphrase": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/SecretRef"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            }
+          },
+          "required": [
+            "method",
+            "key-path"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "SshDefaults": {
+      "additionalProperties": false,
+      "properties": {
+        "auth": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SshAuth"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "become": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BecomeMode"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Privilege escalation for non-root logins (default \"auto\")."
+        },
+        "become-password": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SecretRef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "sudo password for logins whose sudo is not passwordless; fed over\nthe SSH channel's stdin, never a command line."
+        },
+        "known-hosts": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HostKeyMode"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Host-key verification policy (default \"tofu\")."
+        },
+        "port": {
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "user": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "Verify": {
+      "description": "Package integrity policy.",
+      "enum": [
+        "none",
+        "digest",
+        "signature"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "addons": {
+      "additionalProperties": {
+        "$ref": "#/$defs/AddonConfig"
+      },
+      "default": {},
+      "description": "Declarative addons keyed by addon name.",
+      "type": "object"
+    },
+    "artifacts": {
+      "$ref": "#/$defs/ArtifactsConfig",
+      "default": {
+        "offline-dir": null,
+        "zone": null
+      },
+      "description": "Offline bundle directory and mirror zone (unchanged from v1alpha1)."
+    },
+    "ha": {
+      "$ref": "#/$defs/HaConfig",
+      "default": {
+        "mode": "kube-vip",
+        "vip": null
+      },
+      "description": "HA control-plane endpoint. Required when >1 control-plane node."
+    },
+    "kubernetes": {
+      "$ref": "#/$defs/KubernetesConfig",
+      "default": {
+        "distribution": "kubeadm",
+        "version": null
+      }
+    },
+    "name": {
+      "description": "Cluster name, used for logging and kubeconfig context.",
+      "type": "string"
+    },
+    "network": {
+      "$ref": "#/$defs/NetworkConfig",
+      "default": {
+        "cni": {
+          "kind": "calico"
+        },
+        "dns-domain": null,
+        "pod-cidr": null,
+        "service-cidr": null
+      }
+    },
+    "nodes": {
+      "additionalProperties": {
+        "$ref": "#/$defs/NodeConfig"
+      },
+      "default": {},
+      "description": "Nodes keyed by node name. Names are globally unique by construction.",
+      "type": "object"
+    },
+    "packages": {
+      "$ref": "#/$defs/PackagesConfig",
+      "default": {
+        "base": null,
+        "delivery": "auto",
+        "os": [],
+        "trusted-keys": [],
+        "verify": "none"
+      },
+      "description": "Package sources (base/OS packages, delivery strategy, trust)."
+    },
+    "registry": {
+      "$ref": "#/$defs/RegistryConfig",
+      "default": {
+        "address": null,
+        "data-dir": null,
+        "kind": null,
+        "password": null,
+        "port": null,
+        "username": null
+      },
+      "description": "Private image registry on `role = \"registry\"` nodes, or an external\none (`kind = \"external\"`, reserved)."
+    },
+    "runtime": {
+      "$ref": "#/$defs/RuntimeConfig",
+      "default": {
+        "kind": "containerd"
+      }
+    },
+    "ssh": {
+      "$ref": "#/$defs/SshDefaults",
+      "default": {
+        "auth": null,
+        "become": null,
+        "become-password": null,
+        "known-hosts": null,
+        "port": null,
+        "user": null
+      }
+    },
+    "version": {
+      "description": "Schema version; must equal [`CONFIG_VERSION`].",
+      "type": "string"
+    }
+  },
+  "required": [
+    "version",
+    "name"
+  ],
+  "title": "kurin cluster configuration (v1alpha2)",
+  "type": "object"
+}

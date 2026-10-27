@@ -25,6 +25,24 @@ kurin config migrate -f old.toml -o new.toml
 无法自动迁移的字段直接报错并给出人工步骤（例如 YAML 输入、`[storage]` 写了
 `kind = "nfs"` 却缺 `server`/`path`、`[storage]` 有 server/path 却没有 kind）。
 
+## JSON Schema
+
+`kurin config schema [--version v1alpha2]` 打印该版本的 JSON Schema（默认
+`v1alpha2`，`v1alpha1` 仍可导出）。Schema 由 `kurin-config` 的配置类型直接
+派生（`schemars`），字段文档注释即 `description`，`deny_unknown_fields` 即
+`additionalProperties: false`，因此与加载器接受的文档形状不会漂移。
+
+v1alpha2 的导出结果入库于 `docs/schema/cluster.v1alpha2.json`，供 Web 表单与
+外部工具引用：
+
+```bash
+just schema        # 重新生成 docs/schema/cluster.v1alpha2.json
+cargo test -p kurin-config --test json_schema   # 校验入库文件未漂移
+```
+
+测试同时用 `jsonschema` 校验全部样例配置：v1alpha1 样例对 v1alpha1 schema，
+迁移后的 v1alpha2 文档（以及 v1alpha2 样例）对 v1alpha2 schema。
+
 ### v1alpha1 → v1alpha2 对照表
 
 | 主题 | v1alpha1 | v1alpha2 |

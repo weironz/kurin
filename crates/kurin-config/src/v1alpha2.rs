@@ -18,6 +18,7 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
+use schemars::JsonSchema;
 use semver::Version;
 use serde::{Deserialize, Serialize};
 
@@ -46,8 +47,9 @@ pub const BUILTIN_ADDONS: &[&str] = &[
     "kube-prometheus-stack",
 ];
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
+#[schemars(title = "kurin cluster configuration (v1alpha2)")]
 pub struct ClusterConfig {
     /// Schema version; must equal [`CONFIG_VERSION`].
     pub version: String,
@@ -82,7 +84,7 @@ pub struct ClusterConfig {
     pub addons: BTreeMap<String, AddonConfig>,
 }
 
-#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
 pub struct KubernetesConfig {
     /// Target Kubernetes version, e.g. "1.33.1".
@@ -94,7 +96,7 @@ pub struct KubernetesConfig {
 
 /// Distribution names in v1alpha2: the kubeadm track is spelled
 /// `kubeadm`, and `k8s` remains accepted as a compatibility alias.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum Distribution {
     #[default]
@@ -113,14 +115,14 @@ impl From<Distribution> for DistributionV1 {
 }
 
 /// Container runtime for the kubeadm track (k3s embeds its own).
-#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
 pub struct RuntimeConfig {
     #[serde(default)]
     pub kind: RuntimeKind,
 }
 
-#[derive(Clone, Default, Deserialize, Serialize)]
+#[derive(Clone, Default, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
 pub struct RegistryConfig {
     /// Implementation; required when any node has role = "registry".
@@ -155,7 +157,7 @@ impl std::fmt::Debug for RegistryConfig {
 
 /// Package sources (04 §4). Unset fields fall back to the built-in
 /// manifest / online delivery.
-#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
 pub struct PackagesConfig {
     /// Base package URI (`oci://`, `file://`, `oci-layout://`).
@@ -173,7 +175,7 @@ pub struct PackagesConfig {
 }
 
 /// How packages reach the nodes.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum Delivery {
     #[default]
@@ -183,7 +185,7 @@ pub enum Delivery {
 }
 
 /// Package integrity policy.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum Verify {
     #[default]
@@ -194,7 +196,7 @@ pub enum Verify {
 
 /// One declarative addon (03 §4.3). Declaring the table opts in unless
 /// `enabled = false`.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
 pub struct AddonConfig {
     #[serde(default = "default_true")]
@@ -205,8 +207,10 @@ pub struct AddonConfig {
     /// outside [`BUILTIN_ADDONS`].
     pub source: Option<String>,
     /// Values validated against the addon's values schema (WP-41).
+    #[schemars(with = "Option<serde_json::Value>")]
     pub values: Option<toml::Value>,
     /// Unvalidated Helm values passthrough; clearly marked as such.
+    #[schemars(with = "Option<serde_json::Value>")]
     pub raw_values: Option<toml::Value>,
 }
 

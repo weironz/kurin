@@ -6,6 +6,7 @@ use std::net::IpAddr;
 use std::path::PathBuf;
 
 use ipnet::Ipv4Net;
+use schemars::JsonSchema;
 use semver::Version;
 use serde::{Deserialize, Serialize};
 
@@ -14,8 +15,9 @@ use crate::secret::SecretRef;
 /// Only this schema version is accepted by this build.
 pub const CONFIG_VERSION: &str = "v1alpha1";
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
+#[schemars(title = "kurin cluster configuration (v1alpha1)")]
 pub struct ClusterConfig {
     /// Schema version; must equal [`CONFIG_VERSION`].
     pub version: String,
@@ -44,7 +46,7 @@ pub struct ClusterConfig {
 }
 
 /// Which registry implementation to install on `role = "registry"` nodes.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum RegistryKind {
     /// CNCF distribution v3 (docker-registry): single static binary.
@@ -60,7 +62,7 @@ pub enum RegistryKind {
     External,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum StorageKind {
     #[default]
@@ -69,7 +71,7 @@ pub enum StorageKind {
     Nfs,
 }
 
-#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
 pub struct StorageConfig {
     /// Storage provisioner to deploy; none by default (kubeadm ships none).
@@ -83,7 +85,7 @@ pub struct StorageConfig {
     pub path: Option<String>,
 }
 
-#[derive(Clone, Default, Deserialize, Serialize)]
+#[derive(Clone, Default, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
 pub struct RegistryConfig {
     /// Implementation; required when any node has role = "registry".
@@ -100,7 +102,7 @@ pub struct RegistryConfig {
 
 /// Where node payloads come from: online (download) or a prepared
 /// offline bundle directory.
-#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
 pub struct ArtifactsConfig {
     /// Prebuilt offline artifact directory (see `kurin artifact build`).
@@ -110,7 +112,7 @@ pub struct ArtifactsConfig {
     pub zone: Option<String>,
 }
 
-#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
 pub struct KubernetesConfig {
     /// Target Kubernetes version, e.g. "1.33.1".
@@ -124,7 +126,7 @@ pub struct KubernetesConfig {
     pub runtime: RuntimeKind,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum Distribution {
     #[default]
@@ -132,7 +134,7 @@ pub enum Distribution {
     K3s,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum RuntimeKind {
     #[default]
@@ -141,11 +143,16 @@ pub enum RuntimeKind {
     Crio,
 }
 
-#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
 pub struct NetworkConfig {
+    /// Pod network CIDR, e.g. "10.233.64.0/18".
+    #[schemars(with = "Option<String>")]
     pub pod_cidr: Option<Ipv4Net>,
+    /// Service network CIDR, e.g. "10.233.0.0/18".
+    #[schemars(with = "Option<String>")]
     pub service_cidr: Option<Ipv4Net>,
+    /// Cluster DNS domain (default "cluster.local").
     pub dns_domain: Option<String>,
     /// Exactly one CNI is active; the tagged enum makes conflicting
     /// choices unrepresentable.
@@ -153,7 +160,7 @@ pub struct NetworkConfig {
     pub cni: CniConfig,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum CniConfig {
     #[default]
@@ -166,7 +173,7 @@ pub enum CniConfig {
     None,
 }
 
-#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
 pub struct HaConfig {
     /// Virtual IP for the API server when running HA.
@@ -179,7 +186,7 @@ pub struct HaConfig {
     pub mode: HaMode,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum HaMode {
     #[default]
@@ -188,7 +195,7 @@ pub enum HaMode {
     KurinLb,
 }
 
-#[derive(Clone, Default, Deserialize, Serialize)]
+#[derive(Clone, Default, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
 pub struct SshDefaults {
     pub user: Option<String>,
@@ -208,7 +215,7 @@ pub struct SshDefaults {
 /// A key that *is* recorded but does not match is always rejected, in every
 /// mode: that is the signal of a rebuilt node (remove the stale entry) or of
 /// an interception attempt.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum HostKeyMode {
     /// Trust on first use: learn unknown hosts, reject mismatches (default).
@@ -220,7 +227,7 @@ pub enum HostKeyMode {
     AcceptNew,
 }
 
-#[derive(Clone, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
 pub struct NodeConfig {
     /// Reachable address used for SSH and cluster bootstrap.
@@ -256,7 +263,7 @@ pub struct NodeConfig {
 }
 
 /// How a non-root SSH login gains root for the commands that need it.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum BecomeMode {
     /// Use sudo whenever the login user is not root (default).
@@ -270,7 +277,7 @@ pub enum BecomeMode {
 
 /// Mutually exclusive authentication forms; a password and a key are not
 /// both representable, and `method` picks the variant at parse time.
-#[derive(Clone, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, PartialEq, Deserialize, Serialize, JsonSchema)]
 #[serde(tag = "method", rename_all = "snake_case", deny_unknown_fields)]
 pub enum SshAuth {
     Password {
@@ -355,7 +362,9 @@ impl std::fmt::Debug for SshAuth {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize, PartialOrd, Ord)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize, PartialOrd, Ord, JsonSchema,
+)]
 #[serde(rename_all = "kebab-case")]
 pub enum NodeRole {
     ControlPlane,

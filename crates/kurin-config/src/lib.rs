@@ -20,6 +20,7 @@ pub mod error;
 pub mod migrate;
 pub mod model;
 pub mod quick;
+pub mod schema;
 pub mod secret;
 pub mod v1alpha2;
 
