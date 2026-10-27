@@ -1,0 +1,36 @@
+---
+source: kurin/tests/quick_create.rs
+expression: config.document
+---
+version = "v1alpha2"
+name = "mixed"
+
+[ssh.auth]
+method = "password"
+password = { env = "KURIN_SSH_PASSWORD" }
+
+[nodes.m1]
+address = "10.1.0.11"
+role = "control-plane"
+internal-address = "192.168.0.11"
+
+[nodes.w1]
+address = "10.1.0.21"
+role = "worker"
+user = "ops"
+port = 2222
+
+[nodes.w1.labels]
+zone = "a"
+
+[nodes.w1.auth]
+method = "password"
+password = { env = "W1_PASS" }
+
+[nodes.w2]
+address = "10.1.0.22"
+role = "worker"
+
+[nodes.w2.auth]
+method = "private_key"
+key-path = "/keys/w2"

@@ -1,0 +1,27 @@
+---
+source: kurin/tests/quick_create.rs
+expression: config.document
+---
+version = "v1alpha2"
+name = "addons"
+
+[addons.metrics-server]
+enabled = true
+
+[addons.metrics-server.values]
+replicas = 2
+
+[addons.ingress-nginx]
+enabled = true
+version = "4.13.0"
+
+[addons.ingress-nginx.values.controller]
+replicas = 3
+
+[ssh.auth]
+method = "password"
+password = { env = "KURIN_SSH_PASSWORD" }
+
+[nodes.cp-1]
+address = "10.9.0.1"
+role = "control-plane"

@@ -113,6 +113,15 @@ tier3-down:
 tier1-flannel:
     e2e/tier1/flannel.sh target/tier1/debug/kurin
 
+# pure-argument create with password auth (WP-26)
+tier1-quick:
+    CARGO_TARGET_DIR=target/tier1 cargo build -q -p kurin
+    e2e/tier1/quick.sh target/tier1/debug/kurin
+
+tier3-quick-ha:
+    CARGO_TARGET_DIR=target/tier3 cargo build -q -p kurin
+    e2e/tier3/quick-ha.sh target/tier3/debug/kurin
+
 tier1-cilium:
     e2e/tier1/cilium.sh target/tier1/debug/kurin
 

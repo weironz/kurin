@@ -1,0 +1,27 @@
+---
+source: kurin/tests/quick_create.rs
+expression: config.document
+---
+version = "v1alpha2"
+name = "from-file"
+
+[kubernetes]
+version = "1.32.0"
+
+[network.cni]
+kind = "flannel"
+
+[ssh]
+user = "root"
+
+[ssh.auth]
+method = "password"
+password = { env = "KURIN_SSH_PASSWORD" }
+
+[nodes.cp1]
+address = "10.0.0.10"
+role = "control-plane"
+
+[nodes.cp-1]
+address = "10.0.0.11"
+role = "control-plane"

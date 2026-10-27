@@ -34,6 +34,20 @@ pub enum ConfigError {
         span: Option<miette::SourceSpan>,
         hint: String,
     },
+
+    /// Same as [`ConfigError::Invalid`], with the source text named.
+    ///
+    /// Quick-create has no file: the merged TOML is the source and its
+    /// header says where it came from ("来自命令行参数").
+    #[error("invalid configuration: {hint}")]
+    #[diagnostic(code(kurin::config::invalid))]
+    InvalidNamed {
+        #[source_code]
+        text: miette::NamedSource<String>,
+        #[label("{hint}")]
+        span: Option<miette::SourceSpan>,
+        hint: String,
+    },
 }
 
 impl ConfigError {
@@ -63,6 +77,30 @@ impl ConfigError {
             text,
             span: None,
             hint: hint.into(),
+        }
+    }
+
+    /// Re-label the diagnostic's source text with `name`.
+    ///
+    /// The quick-create path has no file to point at: the merged TOML is
+    /// the source text and the diagnostic header names it "来自命令行参数".
+    /// Parse errors already carry their synthetic path in the message, so
+    /// only [`ConfigError::Invalid`] changes shape.
+    pub fn named(self, name: &str) -> Self {
+        match self {
+            ConfigError::Invalid { text, span, hint } => {
+                // A hint-only diagnostic has no span, and miette only prints
+                // the source header when there is a snippet to show. Anchor
+                // the label at the document start so the header names the
+                // merged TOML instead of staying anonymous.
+                let span = span.or_else(|| (!text.is_empty()).then(|| (0, 0).into()));
+                ConfigError::InvalidNamed {
+                    text: miette::NamedSource::new(name, text),
+                    span,
+                    hint,
+                }
+            }
+            other => other,
         }
     }
 }

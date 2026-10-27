@@ -1,0 +1,25 @@
+---
+source: kurin/tests/quick_create.rs
+expression: config.document
+---
+version = "v1alpha2"
+name = "net"
+
+[runtime]
+kind = "crio"
+
+[network]
+pod-cidr = "10.244.0.0/16"
+service-cidr = "10.96.0.0/12"
+dns-domain = "lab.local"
+
+[artifacts]
+zone = "cn"
+
+[ssh.auth]
+method = "password"
+password = { env = "KURIN_SSH_PASSWORD" }
+
+[nodes.cp-1]
+address = "10.9.0.1"
+role = "control-plane"

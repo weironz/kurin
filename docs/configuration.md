@@ -25,6 +25,105 @@ kurin config migrate -f old.toml -o new.toml
 无法自动迁移的字段直接报错并给出人工步骤（例如 YAML 输入、`[storage]` 写了
 `kind = "nfs"` 却缺 `server`/`path`、`[storage]` 有 server/path 却没有 kind）。
 
+## 从命令行快速创建
+
+`kurin create cluster` 与 `kurin create config` 可以完全不带配置文件：命令行
+参数先被解析成一份**结构化补丁**，合并进 v1alpha2 文档，再走与文件完全相同的
+加载、默认值与校验流程（同一个 `ClusterSpec`、同一条执行路径）。因此快速创建
+不存在"另一套安装逻辑"。
+
+```bash
+# 单节点，交互输入 root 密码
+kurin create cluster --name demo --control-plane 192.168.10.11 --ask-pass
+
+# 3 主 3 从 + kube-vip，密码取自环境变量
+kurin create cluster --name prod \
+  --control-plane 192.168.10.11-13 \
+  --worker 192.168.10.21,192.168.10.22,192.168.10.23 \
+  --vip 192.168.10.100 \
+  --ssh-user root --ssh-password-env KURIN_SSH_PASSWORD \
+  --kubernetes 1.33.1 --cni cilium --addon metrics-server --addon ingress-nginx
+
+# 只生成配置，不安装（参数与 create cluster 完全相同）
+kurin create config --name prod --control-plane 192.168.10.11-13 \
+  --worker 192.168.10.21-23 --vip 192.168.10.100 > prod.kurin.toml
+
+# 在已有文件上临时覆盖
+kurin create cluster -f prod.kurin.toml --set network.pod-cidr=10.244.0.0/16 --cni calico
+```
+
+### 节点参数
+
+| 参数 | 说明 |
+|---|---|
+| `--control-plane <IPS>` / `--worker <IPS>` / `--lb <IPS>` / `--registry <IPS>` | 逗号分隔的 IPv4 列表；支持末段范围 `192.168.10.11-13` 与完整范围 `192.168.10.11-192.168.10.13`；单次展开上限 512 个地址；IPv6 明确拒绝。可重复 |
+| `--node <KV>` | 精确描述单个节点：`name=…,address=…,role=…[,internal-address=…][,user=…][,port=…][,password-env=…][,password-file=…][,key=…][,labels=k=v;k2=v2]`。可重复，可与上面的列表混用 |
+| `--node-name <STRATEGY>` | `role-index`（默认，`cp-1`/`worker-1`/`lb-1`/`registry-1`）、`hostname`（discover 后改用节点主机名，非 DNS-1123 或重名时回退并告警）、`ip`（地址中的 `.` 换成 `-`） |
+
+同一地址出现在两个节点上由加载期校验拒绝（`address`/`internal-address` 都参与）。
+
+### 认证参数
+
+| 参数 | 落盘形式 |
+|---|---|
+| `--ssh-user` / `--ssh-port` | `ssh.user` / `ssh.port` |
+| `--ssh-key <PATH>` / `--ssh-key-passphrase-env <VAR>` | `ssh.auth.method = "private_key"`，`key-path`，`passphrase = { env = "VAR" }` |
+| `--ask-pass` | 交互输入（不回显），只存在于本进程内存；落盘 `password = { env = "KURIN_SSH_PASSWORD" }` |
+| `--ssh-password-env <VAR>` | `password = { env = "VAR" }` |
+| `--ssh-password-file <PATH>` | `password = { file = "PATH" }`（文件权限宽于 `0600` 时告警） |
+| `-p, --ssh-password <PW>` | **会打印告警**（密码进入 shell 历史与 `ps`）；落盘只写 `{ env = "KURIN_SSH_PASSWORD" }`，并提示后续操作前导出该变量 |
+| `--become` / `--become-password-env <VAR>` / `--ask-become-pass` | `ssh.become` / `ssh.become-password`（交互输入同样只落盘 `{ env = "KURIN_BECOME_PASSWORD" }`） |
+| `--known-hosts <MODE>` | `ssh.known-hosts`：`tofu`（默认）\| `strict` \| `accept-new` |
+
+明文密码（`-p`、`--ask-pass`、`--ask-become-pass`）**永远不会写进配置文件**：
+文件里只有秘密引用，值只在本进程内存中，并在 `kurin-ops::prepare` 解析一次后
+注册进日志脱敏表。
+
+### 集群参数
+
+| 参数 | 对应配置 |
+|---|---|
+| `--name <N>` | `name`（无 `-f` 时必填） |
+| `--kubernetes <V>` | `kubernetes.version`（前导 `v` 可省略） |
+| `--distribution kubeadm\|k3s` | `kubernetes.distribution` |
+| `--runtime containerd\|crio` | `runtime.kind` |
+| `--cni calico\|flannel\|cilium\|kube-ovn\|none` | `network.cni.kind` |
+| `--pod-cidr` / `--service-cidr` / `--dns-domain` | `network.*` |
+| `--vip <IP>` / `--ha-mode kube-vip\|kurin-lb\|external-endpoint` | `ha.*` |
+| `--zone global\|cn` | `artifacts.zone`（显式给出时总是写入，以便覆盖文件中的值） |
+| `--package <URI>`（可重复） | 路径含 `/os/` 段或 `os-…` 名字的归入 `packages.os`，其余为 `packages.base`（base 最多一个） |
+| `--offline <DIR\|URI>` | 含 `://` 时等价于 `--package`，否则写 `artifacts.offline-dir` |
+| `--addon <NAME>[=<VERSION>]`（可重复） | `addons.<name>.enabled = true`（及 `version`） |
+| `--addon-set <NAME>.<KEY>=<VAL>`（可重复） | `addons.<name>.values.<KEY>`，`KEY` 可再用 `.` 嵌套 |
+| `--set <PATH>=<VAL>`（可重复） | 任意字段；`PATH` 用配置文件的 kebab-case 点分路径。`VAL` 按 TOML 字面量解析（`true`、`3`、`"x"`、`[1,2]`），解析失败则当作字符串 |
+
+### 合并顺序
+
+1. `-f` 文件（v1alpha1 会先按 `kurin config migrate` 的规则迁移为 v1alpha2，保留注释）；
+2. 节点参数（`--control-plane`/`--worker`/`--lb`/`--registry`/`--node`）**追加**到 `[nodes]`；
+3. 具名参数（`--name`、`--cni`、`--vip`…）**覆盖**文件中的同名字段；
+4. `--set` 最后执行，可覆盖以上任何结果。
+
+没有 `-f` 时从 `version = "v1alpha2"` 的空文档出发，因此 `--name` 与至少一个
+控制面节点（`--control-plane` 或带 `role=control-plane` 的 `--node`）是必需的。
+合并结果走完整校验；诊断的源码文本是合并后的 TOML，标题为
+**“来自命令行参数”**，指向参数而不是某个文件。
+
+### 摘要、确认与落盘
+
+执行前先 discover（架构、OS、sudo、资源），然后打印集群摘要表（节点、地址、
+角色、架构、OS、CPU、内存、认证方式、addon 列表）。未加 `--yes` 时需要交互确认；
+**stdin 不是终端且没有 `--yes` 时直接报错**，不会静默继续。
+
+| 参数 | 行为 |
+|---|---|
+| `--save <PATH>` | 写出等价配置；默认 `./<name>.kurin.toml` |
+| `--no-save` | 不写文件 |
+| `--force-save` | 文件已存在且内容不同时覆盖（默认拒绝覆盖） |
+
+`create config` 把合并结果打印到 stdout（`--save` 时同时写文件）；`--dry-run`
+不确认、不落盘，只打印摘要与计划。
+
 ## JSON Schema
 
 `kurin config schema [--version v1alpha2]` 打印该版本的 JSON Schema（默认

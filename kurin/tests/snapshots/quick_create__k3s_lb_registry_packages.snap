@@ -1,0 +1,67 @@
+---
+source: kurin/tests/quick_create.rs
+expression: config.document
+---
+version = "v1alpha2"
+name = "edge"
+
+[kubernetes]
+distribution = "k3s"
+
+[network.cni]
+kind = "flannel"
+
+[ha]
+vip = "172.16.0.100"
+mode = "kurin-lb"
+
+[packages]
+base = "file:///media/usb/kurin-offline-v1.33.1.tar.zst"
+os = ["oci://harbor.local/kurin/os/rocky-9:2026.10"]
+
+[ssh.auth]
+method = "password"
+password = { file = "/run/secrets/ssh" }
+
+[nodes.cp-1]
+address = "172.16.0.11"
+role = "control-plane"
+
+[nodes.cp-2]
+address = "172.16.0.12"
+role = "control-plane"
+
+[nodes.cp-3]
+address = "172.16.0.13"
+role = "control-plane"
+
+[nodes.worker-1]
+address = "172.16.0.21"
+role = "worker"
+
+[nodes.worker-2]
+address = "172.16.0.22"
+role = "worker"
+
+[nodes.worker-3]
+address = "172.16.0.23"
+role = "worker"
+
+[nodes.worker-4]
+address = "172.16.0.24"
+role = "worker"
+
+[nodes.lb-1]
+address = "172.16.0.31"
+role = "lb"
+
+[nodes.lb-2]
+address = "172.16.0.32"
+role = "lb"
+
+[nodes.registry-1]
+address = "172.16.0.41"
+role = "registry"
+
+[registry]
+kind = "docker-registry"

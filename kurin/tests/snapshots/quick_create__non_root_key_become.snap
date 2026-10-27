@@ -1,0 +1,31 @@
+---
+source: kurin/tests/quick_create.rs
+expression: config.document
+---
+version = "v1alpha2"
+name = "lab"
+
+[ssh]
+user = "ubuntu"
+known-hosts = "strict"
+become = "sudo"
+
+[ssh.auth]
+method = "private_key"
+key-path = "/home/ubuntu/.ssh/id_ed25519"
+
+[nodes.cp-1]
+address = "10.0.0.5"
+role = "control-plane"
+
+[nodes.worker-1]
+address = "10.0.0.6"
+role = "worker"
+
+[nodes.worker-2]
+address = "10.0.0.7"
+role = "worker"
+
+[nodes.worker-3]
+address = "10.0.0.8"
+role = "worker"

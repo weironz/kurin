@@ -18,6 +18,30 @@
 | `cni/none` | ✅ | ✅ | ✅ | ✅ | ✅ | — |
 <!-- docs-matrix:end -->
 
+## create cluster / create config（快速参数）
+
+`create cluster` 与 `create config` 共用同一组快速参数（`05-cli-quick-create.md`
+§3），参数合并进 v1alpha2 文档后走与 `-f` 完全相同的加载、校验与执行路径。
+
+| 能力 | 状态 | 说明 |
+|---|---|---|
+| 纯参数建集群（无配置文件） | ✅ | `--name` + 至少一个控制面节点；`e2e/tier1/quick.sh` |
+| `-f` 基础上覆盖 | ✅ | 合并顺序：文件 → 节点追加 → 具名参数 → `--set` |
+| v1alpha1 文件 + 快速参数 | ✅ | 先迁移为 v1alpha2，再合并（注释保留） |
+| YAML 文件 + 快速参数 | ❌ 拒绝 | 合并用 `toml_edit`；先转成 TOML |
+| IP 列表 / 范围 | ✅ | 末段范围、完整范围、逗号列表；上限 512；IPv6 拒绝 |
+| `--node key=value` | ✅ | 名称、地址、角色、内网地址、账号、端口、密码 env/file、私钥、labels |
+| `--node-name hostname` | ✅ | discover 后改名；非 DNS-1123 或重名时回退并告警 |
+| 密码：`--ask-pass` / `-p` / env / file | ✅ | 明文只在本进程内存；落盘只写秘密引用 |
+| `--ssh-key` | ✅ | 私钥认证；passphrase 用 `{ env = "…" }` |
+| `--become` / sudo 密码 | ✅ | `--become-password-env`、`--ask-become-pass` |
+| `--set PATH=VALUE` | ✅ | TOML 字面量解析，失败当字符串；未知字段在校验期拒绝 |
+| `--addon` / `--addon-set` | ✅ | 内置 addon 目录；外部 addon 需 `source`（见 `[addons]`） |
+| `--package` / `--offline` | ✅ | `/os/` 路径归入 `packages.os`，其余为 `packages.base` |
+| 摘要 + 确认 | ✅ | discover 后打印；非 TTY 且无 `--yes` 报错 |
+| `--save` / `--no-save` / `--force-save` | ✅ | 默认 `./<name>.kurin.toml`；内容不同默认拒绝覆盖 |
+| `--setup-ssh-key` | ❌ 未实现 | 由后续工作包提供（推送公钥并改写为私钥认证） |
+
 ## add nodes / delete node / delete cluster
 
 | | k8s（kubeadm） | k3s |

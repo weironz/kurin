@@ -26,6 +26,8 @@ serde_json.workspace = true
 miette.workspace = true
 tokio.workspace = true
 clap.workspace = true
+toml_edit.workspace = true
+rpassword.workspace = true
 semver.workspace = true
 tracing.workspace = true
 oci-spec = { version = "0.9", default-features = false, features = ["image"] }

@@ -11,6 +11,7 @@
 // conspicuous place instead of per-fn.
 #![allow(clippy::result_large_err)]
 
+pub mod cli;
 pub mod arch {
     pub use kurin_core::arch::*;
 }

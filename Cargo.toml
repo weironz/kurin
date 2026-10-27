@@ -55,6 +55,7 @@ insta = { version = "1", features = ["toml"] }
 schemars = { version = "1", features = ["derive", "semver1"] }
 jsonschema = { version = "0.60", default-features = false }
 time = "0.3"
+rpassword = "7"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["registry", "std"] }
 tokio-util = { version = "0.7", features = ["rt"] }

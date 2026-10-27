@@ -1,0 +1,11 @@
+---
+source: kurin/tests/quick_create.rs
+expression: summary
+---
+cluster prod  (kubeadm v1.33.1, containerd, calico, kube-vip 192.168.10.100)
+NODE      ADDRESS        ROLE           ARCH   OS                CPU  MEM    AUTH
+cp-1      192.168.10.11  control-plane  amd64  Ubuntu 24.04 LTS  4    8 GiB  password(env)
+cp-2      192.168.10.12  control-plane  amd64  Ubuntu 24.04 LTS  4    8 GiB  password(env)
+worker-1  192.168.10.21  worker         arm64  Rocky Linux 9.4   8    4 GiB  password(env)
+addons: metrics-server
+config will be saved to ./prod.kurin.toml (secrets referenced, not stored)

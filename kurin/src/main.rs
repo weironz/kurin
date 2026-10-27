@@ -1,5 +1,6 @@
 //! `kurin` binary: argv parsing only. Every operation lives in `kurin-ops`.
 
+use std::io::IsTerminal;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -7,6 +8,7 @@ use std::process::ExitCode;
 use clap::{ArgAction, Parser, Subcommand, ValueEnum};
 use miette::{IntoDiagnostic, Result};
 
+use kurin::cli::quick::{self, NodeNameStrategy, QuickArgs, QuickConfig, SaveDefault, SaveOutcome};
 use kurin::ops::{self, JsonMode, OpRequest, OutputOpts, Params, StatusOpts};
 
 #[derive(Parser)]
@@ -57,6 +59,9 @@ impl From<JsonArg> for JsonMode {
     }
 }
 
+// The quick-create block is one large struct shared by two subcommands;
+// argv is parsed once per process, so the enum's size buys nothing.
+#[allow(clippy::large_enum_variant)]
 #[derive(Subcommand)]
 enum Commands {
     /// Create resources.
@@ -312,9 +317,10 @@ struct CreateArgs {
 enum CreateWhat {
     /// Render or run the install plan.
     Cluster {
-        /// Config file (.toml or .yaml).
+        /// Config file (.toml or .yaml). Optional when quick-create
+        /// arguments are given; then it is the base being overridden.
         #[arg(short, long)]
-        file: PathBuf,
+        file: Option<PathBuf>,
         /// Print the plan without connecting or changing anything.
         #[arg(long)]
         dry_run: bool,
@@ -324,18 +330,25 @@ enum CreateWhat {
         /// Resume from the run-state file (skips already-done tasks).
         #[arg(long)]
         resume: bool,
-        /// Offline artifact bundle directory (overrides [artifacts].offline-dir).
-        #[arg(long)]
-        offline: Option<PathBuf>,
+        /// Quick-create parameters: build the config from the command line.
+        #[command(flatten)]
+        quick: QuickArgs,
     },
-    /// Print an annotated example config.
+    /// Print an annotated example config, or the config the quick-create
+    /// arguments describe.
     Config {
+        /// Config file (.toml or .yaml) the quick arguments override.
+        #[arg(short, long)]
+        file: Option<PathBuf>,
         /// Schema version of the printed example (default: v1alpha2).
         #[arg(long, value_enum, default_value_t = SchemaVersion::V1Alpha2)]
         schema_version: SchemaVersion,
         /// Print the pinned component versions this build would install.
         #[arg(long)]
         print_versions: bool,
+        /// Quick-create parameters: print the merged v1alpha2 config.
+        #[command(flatten)]
+        quick: QuickArgs,
     },
 }
 
@@ -619,8 +632,10 @@ async fn run(cli: Cli) -> Result<()> {
         },
         Commands::Create(args) => match args.what {
             CreateWhat::Config {
+                file,
                 schema_version,
                 print_versions,
+                quick: quick_args,
             } => {
                 if print_versions {
                     for (name, v) in kurin::version::component_versions() {
@@ -628,11 +643,26 @@ async fn run(cli: Cli) -> Result<()> {
                     }
                     return Ok(());
                 }
-                let example = match schema_version {
-                    SchemaVersion::V1Alpha1 => EXAMPLE_CONFIG_V1ALPHA1,
-                    SchemaVersion::V1Alpha2 => EXAMPLE_CONFIG_V1ALPHA2,
-                };
-                print!("{example}");
+                if quick_args.is_empty() && file.is_none() {
+                    let example = match schema_version {
+                        SchemaVersion::V1Alpha1 => EXAMPLE_CONFIG_V1ALPHA1,
+                        SchemaVersion::V1Alpha2 => EXAMPLE_CONFIG_V1ALPHA2,
+                    };
+                    print!("{example}");
+                    return Ok(());
+                }
+                // `create config` prints to stdout (the documented usage is
+                // `... > prod.kurin.toml`); `--save` additionally writes it.
+                let config =
+                    quick::build(file.as_deref(), &quick_args, SaveDefault::Stdout, false)?;
+                for warning in &config.warnings {
+                    eprintln!("warn: {warning}");
+                }
+                print!("{}", config.document);
+                if let Some(path) = &config.save_path {
+                    quick::save_config(path, &config.document, config.force_save)?;
+                    eprintln!("[config] wrote {}", path.display());
+                }
                 Ok(())
             }
             CreateWhat::Cluster {
@@ -640,21 +670,55 @@ async fn run(cli: Cli) -> Result<()> {
                 dry_run,
                 check,
                 resume,
-                offline,
+                quick: quick_args,
             } => {
-                let spec = ops::load_config(&file)?;
-                run_op(
+                if quick_args.is_empty() {
+                    let Some(file) = file else {
+                        return Err(miette::miette!(
+                            "`create cluster` needs -f <config> or quick-create arguments \
+                             (--name, --control-plane, --worker, …)"
+                        ));
+                    };
+                    if quick_args.offline_is_package() {
+                        return Err(miette::miette!(
+                            "`--offline` with a package URI needs quick-create arguments; \
+                             pass --package instead"
+                        ));
+                    }
+                    let spec = ops::load_config(&file)?;
+                    return run_op(
+                        OpRequest {
+                            kind: kurin::plan::OpKind::Create,
+                            spec,
+                            params: Params::Create {
+                                dry_run,
+                                check,
+                                resume,
+                                offline: quick_args.offline_dir(),
+                            },
+                        },
+                        out,
+                    )
+                    .await;
+                }
+                let config =
+                    quick::build(file.as_deref(), &quick_args, SaveDefault::File, !dry_run)?;
+                for warning in &config.warnings {
+                    eprintln!("warn: {warning}");
+                }
+                run_quick(
                     OpRequest {
                         kind: kurin::plan::OpKind::Create,
-                        spec,
+                        spec: config.spec.clone(),
                         params: Params::Create {
                             dry_run,
                             check,
                             resume,
-                            offline,
+                            offline: None,
                         },
                     },
                     out,
+                    config,
                 )
                 .await
             }
@@ -696,6 +760,82 @@ async fn serve(args: ServeArgs) -> Result<()> {
             "`serve` needs a build with --features ui (the release binaries include it)"
         ))
     }
+}
+
+/// Quick-create pipeline: prepare (discover) -> summary -> confirm -> save
+/// -> plan -> execute (`05-cli-quick-create.md` §4).
+///
+/// The plan and execution are exactly `create cluster -f`'s; only the
+/// summary, the confirmation and the config write are added.
+async fn run_quick(req: OpRequest, out: OutputOpts, mut config: QuickConfig) -> Result<()> {
+    let mut prepared = ops::prepare(req, out).await?;
+
+    // `--node-name hostname` can only be honoured once discover reported
+    // the hostnames; the provisional role-index names are what the plan
+    // would otherwise use.
+    if config.node_name == NodeNameStrategy::Hostname {
+        let (renames, warnings) = quick::hostname_renames(&prepared.spec, &prepared.facts);
+        for warning in warnings {
+            eprintln!("warn: {warning}");
+        }
+        if !renames.is_empty() {
+            quick::apply_renames(
+                &mut prepared.spec,
+                &mut prepared.facts,
+                &mut config.document,
+                &renames,
+            );
+            prepared.run.set_facts(prepared.facts.clone());
+        }
+    }
+
+    if !out.json_enabled() {
+        print!(
+            "{}",
+            quick::render_summary(
+                &prepared.spec,
+                &prepared.facts,
+                config.save_path.as_deref(),
+                prepared.params.dry_run(),
+            )
+        );
+    }
+
+    if !prepared.params.dry_run() {
+        if !config.yes {
+            if !out.json_enabled() {
+                print!("proceed? [y/N] ");
+                std::io::Write::flush(&mut std::io::stdout()).into_diagnostic()?;
+            }
+            let is_tty = std::io::stdin().is_terminal();
+            let answer = if is_tty {
+                let mut line = String::new();
+                std::io::BufRead::read_line(&mut std::io::stdin().lock(), &mut line)
+                    .into_diagnostic()?;
+                Some(line)
+            } else {
+                None
+            };
+            if !quick::confirm_proceed(false, is_tty, answer.as_deref())? {
+                return Err(miette::miette!("aborted by user"));
+            }
+        }
+        if let Some(path) = &config.save_path {
+            match quick::save_config(path, &config.document, config.force_save)? {
+                SaveOutcome::Written => eprintln!(
+                    "[config] wrote {} (secrets referenced, not stored)",
+                    path.display()
+                ),
+                SaveOutcome::Unchanged => {
+                    eprintln!("[config] {} is already up to date", path.display())
+                }
+            }
+        }
+    }
+
+    let plan = ops::plan(&prepared).await?;
+    ops::execute(prepared, plan).await?;
+    Ok(())
 }
 
 /// Prepare -> plan -> execute, the whole operation pipeline.

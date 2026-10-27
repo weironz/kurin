@@ -1,0 +1,17 @@
+---
+source: kurin/tests/quick_create.rs
+expression: config.document
+---
+version = "v1alpha2"
+name = "demo"
+
+[ssh]
+user = "root"
+
+[ssh.auth]
+method = "password"
+password = { env = "KURIN_SSH_PASSWORD" }
+
+[nodes.cp-1]
+address = "192.168.10.11"
+role = "control-plane"

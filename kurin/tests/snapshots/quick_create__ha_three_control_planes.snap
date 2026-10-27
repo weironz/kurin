@@ -1,0 +1,46 @@
+---
+source: kurin/tests/quick_create.rs
+expression: config.document
+---
+version = "v1alpha2"
+name = "prod"
+
+[kubernetes]
+version = "1.33.1"
+
+[network.cni]
+kind = "cilium"
+
+[ha]
+vip = "192.168.10.100"
+
+[ssh]
+user = "root"
+
+[ssh.auth]
+method = "password"
+password = { env = "KURIN_SSH_PASSWORD" }
+
+[nodes.cp-1]
+address = "192.168.10.11"
+role = "control-plane"
+
+[nodes.cp-2]
+address = "192.168.10.12"
+role = "control-plane"
+
+[nodes.cp-3]
+address = "192.168.10.13"
+role = "control-plane"
+
+[nodes.worker-1]
+address = "192.168.10.21"
+role = "worker"
+
+[nodes.worker-2]
+address = "192.168.10.22"
+role = "worker"
+
+[nodes.worker-3]
+address = "192.168.10.23"
+role = "worker"
