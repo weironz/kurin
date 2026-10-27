@@ -1,0 +1,229 @@
+---
+source: kurin/tests/plan_view.rs
+expression: plan_view(&plan)
+---
+{
+  "op": "create",
+  "phases": [
+    {
+      "id": "discover",
+      "label": "discover",
+      "tasks": [
+        {
+          "key": "discover/facts@master01",
+          "node": "master01",
+          "describe": "arch=amd64 os=? cpu=0 mem=0MiB",
+          "drift": null
+        },
+        {
+          "key": "discover/facts@worker01",
+          "node": "worker01",
+          "describe": "arch=amd64 os=? cpu=0 mem=0MiB",
+          "drift": null
+        }
+      ]
+    },
+    {
+      "id": "preflight",
+      "label": "preflight",
+      "tasks": [
+        {
+          "key": "preflight/master01",
+          "node": "master01",
+          "describe": "probe swap / selinux / time-sync / kernel modules",
+          "drift": null
+        },
+        {
+          "key": "preflight/worker01",
+          "node": "worker01",
+          "describe": "probe swap / selinux / time-sync / kernel modules",
+          "drift": null
+        }
+      ]
+    },
+    {
+      "id": "artifacts",
+      "label": "artifacts",
+      "tasks": [
+        {
+          "key": "artifacts/install@master01",
+          "node": "master01",
+          "describe": "fetch+install pinned binaries (amd64)",
+          "drift": null
+        },
+        {
+          "key": "artifacts/install@worker01",
+          "node": "worker01",
+          "describe": "fetch+install pinned binaries (amd64)",
+          "drift": null
+        }
+      ]
+    },
+    {
+      "id": "prepare",
+      "label": "prepare",
+      "tasks": [
+        {
+          "key": "prepare/os-baseline@master01",
+          "node": "master01",
+          "describe": "disable swap / firewalld, SELinux permissive",
+          "drift": null
+        },
+        {
+          "key": "prepare/sysctl@master01",
+          "node": "master01",
+          "describe": "modprobe br_netfilter; persist net.bridge.bridge-nf-call-iptables net.bridge.bridge-nf-call-ip6tables net.ipv4.ip_forward",
+          "drift": null
+        },
+        {
+          "key": "prepare/kernel-deps@master01",
+          "node": "master01",
+          "describe": "ensure conntrack/socat (+recommended ebtables ipset ipvsadm)",
+          "drift": null
+        },
+        {
+          "key": "prepare/containerd-config@master01",
+          "node": "master01",
+          "describe": "render + install /etc/containerd/config.toml",
+          "drift": null
+        },
+        {
+          "key": "prepare/containerd-unit@master01",
+          "node": "master01",
+          "describe": "render + install /etc/systemd/system/containerd.service, enable --now",
+          "drift": null
+        },
+        {
+          "key": "prepare/kubelet-unit@master01",
+          "node": "master01",
+          "describe": "render + install /etc/systemd/system/kubelet.service, enable (start deferred to kubeadm)",
+          "drift": null
+        },
+        {
+          "key": "prepare/os-baseline@worker01",
+          "node": "worker01",
+          "describe": "disable swap / firewalld, SELinux permissive",
+          "drift": null
+        },
+        {
+          "key": "prepare/sysctl@worker01",
+          "node": "worker01",
+          "describe": "modprobe br_netfilter; persist net.bridge.bridge-nf-call-iptables net.bridge.bridge-nf-call-ip6tables net.ipv4.ip_forward",
+          "drift": null
+        },
+        {
+          "key": "prepare/kernel-deps@worker01",
+          "node": "worker01",
+          "describe": "ensure conntrack/socat (+recommended ebtables ipset ipvsadm)",
+          "drift": null
+        },
+        {
+          "key": "prepare/containerd-config@worker01",
+          "node": "worker01",
+          "describe": "render + install /etc/containerd/config.toml",
+          "drift": null
+        },
+        {
+          "key": "prepare/containerd-unit@worker01",
+          "node": "worker01",
+          "describe": "render + install /etc/systemd/system/containerd.service, enable --now",
+          "drift": null
+        },
+        {
+          "key": "prepare/kubelet-unit@worker01",
+          "node": "worker01",
+          "describe": "render + install /etc/systemd/system/kubelet.service, enable (start deferred to kubeadm)",
+          "drift": null
+        }
+      ]
+    },
+    {
+      "id": "registry",
+      "label": "registry",
+      "tasks": []
+    },
+    {
+      "id": "images",
+      "label": "images",
+      "tasks": [
+        {
+          "key": "images/import@master01",
+          "node": "master01",
+          "describe": "no-op online (kubelet pulls from registries)",
+          "drift": null
+        },
+        {
+          "key": "images/import@worker01",
+          "node": "worker01",
+          "describe": "no-op online (kubelet pulls from registries)",
+          "drift": null
+        }
+      ]
+    },
+    {
+      "id": "vip",
+      "label": "vip",
+      "tasks": [
+        {
+          "key": "bootstrap/kubeadm-init@master01",
+          "node": "master01",
+          "describe": "kubeadm init --config /etc/kurin/kubeadm-init.yaml on master01",
+          "drift": null
+        }
+      ]
+    },
+    {
+      "id": "bootstrap",
+      "label": "bootstrap",
+      "tasks": [
+        {
+          "key": "bootstrap/api-ready@master01",
+          "node": "master01",
+          "describe": "wait until 192.168.10.11:6443 serves the API (VIP backend up)",
+          "drift": null
+        }
+      ]
+    },
+    {
+      "id": "api-ready",
+      "label": "api-ready",
+      "tasks": [
+        {
+          "key": "join/kubeadm@worker01",
+          "node": "worker01",
+          "describe": "kubeadm join (worker) -> 192.168.10.11:6443",
+          "drift": null
+        }
+      ]
+    },
+    {
+      "id": "join",
+      "label": "join",
+      "tasks": []
+    },
+    {
+      "id": "cni",
+      "label": "cni",
+      "tasks": [
+        {
+          "key": "cni/calico-operator@master01",
+          "node": "master01",
+          "describe": "kubectl apply tigera-operator manifest + Installation CR",
+          "drift": null
+        }
+      ]
+    },
+    {
+      "id": "post",
+      "label": "post",
+      "tasks": [
+        {
+          "key": "post/kubeconfig@master01",
+          "node": "master01",
+          "describe": "fetch admin.conf -> merge local kubeconfig (context cluster-single)",
+          "drift": null
+        }
+      ]
+    }
+  ]
+}

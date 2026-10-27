@@ -238,7 +238,9 @@ async fn healthy_single_cp() {
         // Cert probe: 365 days left.
         ("openssl x509 -in", cert_probe(365)),
     ]);
-    let r = status::collect(&cluster_one_cp(), &pool).await.unwrap();
+    let r = status::collect(&cluster_one_cp(), &pool, Default::default())
+        .await
+        .unwrap();
 
     assert!(r.healthy);
     assert_eq!(r.nodes, expected_nodes_healthy());
@@ -255,7 +257,9 @@ async fn not_ready_node_unhealthy() {
         ("get --raw /healthz", "ok"),
         ("openssl x509 -in", cert_probe(365)),
     ]);
-    let r = status::collect(&cluster_one_cp(), &pool).await.unwrap();
+    let r = status::collect(&cluster_one_cp(), &pool, Default::default())
+        .await
+        .unwrap();
 
     assert!(!r.healthy);
     assert_eq!(r.nodes.len(), 2);
@@ -272,7 +276,9 @@ async fn failed_pod_unhealthy() {
         ("get --raw /healthz", "ok"),
         ("openssl x509 -in", cert_probe(365)),
     ]);
-    let r = status::collect(&cluster_one_cp(), &pool).await.unwrap();
+    let r = status::collect(&cluster_one_cp(), &pool, Default::default())
+        .await
+        .unwrap();
 
     assert!(!r.healthy);
     assert_eq!(
@@ -289,7 +295,9 @@ async fn expired_cert_unhealthy() {
         ("get --raw /healthz", "ok"),
         ("openssl x509 -in", cert_probe(-1)),
     ]);
-    let r = status::collect(&cluster_one_cp(), &pool).await.unwrap();
+    let r = status::collect(&cluster_one_cp(), &pool, Default::default())
+        .await
+        .unwrap();
 
     assert!(!r.healthy);
     assert_eq!(r.cert_min_days, Some(-1));
@@ -318,7 +326,9 @@ async fn ha_uses_local_apiserver_and_etcd_quorum() {
         ("openssl x509 -in", cert_probe(200)),
     ];
     let healthy_pool = pool_for(&["cp1", "cp2"], rules.clone());
-    let r = status::collect(&cluster, &healthy_pool).await.unwrap();
+    let r = status::collect(&cluster, &healthy_pool, Default::default())
+        .await
+        .unwrap();
 
     assert!(r.healthy);
     assert!(r.etcd_ok);
@@ -342,7 +352,9 @@ async fn ha_uses_local_apiserver_and_etcd_quorum() {
         }),
     );
     let spy_pool: Arc<dyn SessionPool> = Arc::new(MockPool { sessions });
-    status::collect(&cluster, &spy_pool).await.unwrap();
+    status::collect(&cluster, &spy_pool, Default::default())
+        .await
+        .unwrap();
     let cmds = seen.lock().unwrap().clone();
     assert!(cmds
         .iter()
@@ -356,9 +368,13 @@ async fn ha_uses_local_apiserver_and_etcd_quorum() {
       {"metadata": {"name": "etcd-cp2"}, "status": {"containerStatuses": [{"ready": false}]}}
     ]}"#,
     );
-    let r = status::collect(&cluster, &pool_for(&["cp1", "cp2"], rules))
-        .await
-        .unwrap();
+    let r = status::collect(
+        &cluster,
+        &pool_for(&["cp1", "cp2"], rules),
+        Default::default(),
+    )
+    .await
+    .unwrap();
     assert!(!r.etcd_ok);
     assert!(!r.healthy);
 }
@@ -398,7 +414,9 @@ async fn collect_spied(
         }
     }
     let pool: Arc<dyn SessionPool> = Arc::new(MockPool { sessions });
-    let report = status::collect(cluster, &pool).await.unwrap();
+    let report = status::collect(cluster, &pool, Default::default())
+        .await
+        .unwrap();
     let cmds = seen.lock().unwrap().clone();
     (report, cmds)
 }
@@ -481,4 +499,60 @@ async fn k3s_etcd_unhealthy_marks_cluster_unhealthy() {
 
     assert!(!r.etcd_ok);
     assert!(!r.healthy);
+}
+
+#[tokio::test]
+async fn falls_back_to_the_next_control_plane() {
+    // cp1 is unreachable (no session); cp2 answers. The probe must move on
+    // in config order instead of failing the whole status.
+    let mut cluster = cluster_one_cp();
+    cluster
+        .nodes
+        .push(node("cp2", kurin_config::NodeRole::ControlPlane, 2));
+    let etcd_pods = r#"{
+  "items": [
+    {"metadata": {"namespace": "kube-system", "name": "etcd-cp1"},
+     "status": {"containerStatuses": [{"ready": true}]}},
+    {"metadata": {"namespace": "kube-system", "name": "etcd-cp2"},
+     "status": {"containerStatuses": [{"ready": true}]}}
+  ]
+}"#;
+    let pool = pool_for(
+        &["cp2"],
+        vec![
+            ("get nodes -o json", NODES_ONE_CP_READY),
+            ("get pods -A -o json", PODS_OK),
+            ("component=etcd", etcd_pods),
+        ],
+    );
+
+    let report = status::collect(&cluster, &pool, status::StatusOpts { certs: false })
+        .await
+        .unwrap();
+
+    assert!(report.healthy);
+    assert!(report.etcd_ok);
+    assert_eq!(report.cert_min_days, None);
+}
+
+#[tokio::test]
+async fn certs_opt_out_skips_the_cert_probe() {
+    let pool = pool_for(
+        &["cp1"],
+        vec![
+            ("get nodes -o json", NODES_ONE_CP_READY),
+            ("get pods -A -o json", PODS_OK),
+            ("get --raw /healthz", "ok"),
+        ],
+    );
+    let report = status::collect(
+        &cluster_one_cp(),
+        &pool,
+        status::StatusOpts { certs: false },
+    )
+    .await
+    .unwrap();
+
+    assert!(report.healthy);
+    assert_eq!(report.cert_min_days, None);
 }

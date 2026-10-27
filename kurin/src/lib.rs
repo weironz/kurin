@@ -50,6 +50,9 @@ pub mod facts {
 pub mod lock {
     pub use kurin_core::lock::*;
 }
+pub mod ops {
+    pub use kurin_ops::*;
+}
 pub mod plan {
     pub use kurin_components::plan::{build, build_delete, build_with_pool};
     pub use kurin_core::plan::{

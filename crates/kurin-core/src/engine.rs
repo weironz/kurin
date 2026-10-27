@@ -220,6 +220,12 @@ pub enum Stage {
     ReadyGate,
     /// Upgrade: mark the node schedulable again.
     Uncordon,
+    /// Certs renew: `kubeadm certs renew all` / `k3s certificate rotate`.
+    CertsRenew,
+    /// Certs renew: cycle the static control-plane pods (or restart k3s).
+    RestartStaticPods,
+    /// Certs renew: wait for the local apiserver `/readyz`.
+    ApiReadyGate,
 }
 
 impl Stage {
@@ -248,6 +254,9 @@ impl Stage {
             Stage::RestartKubelet => "restart-kubelet",
             Stage::ReadyGate => "ready-gate",
             Stage::Uncordon => "uncordon",
+            Stage::CertsRenew => "renew",
+            Stage::RestartStaticPods => "restart-static-pods",
+            Stage::ApiReadyGate => "apiready-gate",
         }
     }
 
@@ -277,6 +286,9 @@ impl Stage {
             "restart-kubelet" => Stage::RestartKubelet,
             "ready-gate" => Stage::ReadyGate,
             "uncordon" => Stage::Uncordon,
+            "renew" => Stage::CertsRenew,
+            "restart-static-pods" => Stage::RestartStaticPods,
+            "apiready-gate" => Stage::ApiReadyGate,
             _ => return None,
         })
     }

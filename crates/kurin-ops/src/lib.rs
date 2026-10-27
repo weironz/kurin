@@ -1,1 +1,385 @@
-//! Kurin operations (create/add/delete/upgrade/certs/status); implementation lands in WP-14.
+//! Kurin operations layer: every CLI operation is prepared, planned and
+//! executed here. `kurin/src/main.rs` only parses argv and calls into this
+//! crate.
+//!
+//! The public shape follows the architecture contract:
+//!
+//! ```text
+//! OpRequest { kind, spec, params }
+//!    -> prepare(req, out) -> Prepared { run, lock, facts, ... }
+//!    -> plan(&prepared)   -> Plan
+//!    -> execute(prepared, plan) -> OpResult
+//! ```
+//!
+//! Read-only operations bypass the plan API: [`status`], [`precheck`],
+//! [`certs_check`] return structured reports (they still open an operation
+//! session so the JSONL log and `tracing` output behave like any other
+//! operation), and [`plan_view`] projects a [`Plan`] into its serializable
+//! DTO.
+
+#![allow(clippy::result_large_err)]
+
+pub mod add_nodes;
+mod artifact;
+mod certs;
+mod create;
+mod delete;
+mod execute;
+mod logs;
+mod output;
+mod plan_view;
+mod precheck;
+mod status;
+mod upgrade;
+
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+use kurin_config::Cluster;
+use kurin_core::executor::SessionPool;
+use kurin_core::facts::FactsTable;
+use kurin_core::lock::{ClusterLock, ClusterLockGuard};
+use kurin_core::plan::OpKind;
+use kurin_core::run::{ArtifactSources, RunContext};
+use miette::{IntoDiagnostic, Result};
+use semver::Version;
+
+pub use kurin_components::certs::NodeCerts;
+pub use kurin_components::precheck::PrecheckReport;
+pub use kurin_components::status::StatusOpts;
+pub use kurin_components::status::StatusReport;
+pub use logs::LogsRequest;
+pub use output::{JsonMode, OpOutcome, OpResult, OutputOpts};
+pub use plan_view::{plan_view, DriftView, PhaseView, PlanView, TaskView};
+
+/// One operation request: what to do, against which cluster, with which
+/// operation-specific parameters.
+#[derive(Debug, Clone)]
+pub struct OpRequest {
+    pub kind: OpKind,
+    pub spec: Cluster,
+    pub params: Params,
+}
+
+/// Operation-specific parameters. The variant must match [`OpRequest::kind`].
+#[derive(Debug, Clone)]
+pub enum Params {
+    Create {
+        dry_run: bool,
+        check: bool,
+        resume: bool,
+        offline: Option<PathBuf>,
+    },
+    AddNodes {
+        offline: Option<PathBuf>,
+    },
+    DeleteNode {
+        node: String,
+        dry_run: bool,
+        check: bool,
+    },
+    DeleteCluster {
+        dry_run: bool,
+        check: bool,
+    },
+    Upgrade {
+        target: Option<Version>,
+        dry_run: bool,
+        batch: usize,
+        offline: Option<PathBuf>,
+        force_drain_failure: bool,
+    },
+    CertsRenew {
+        force: bool,
+    },
+}
+
+impl Params {
+    /// True when the operation only renders a plan.
+    pub fn dry_run(&self) -> bool {
+        match self {
+            Params::Create { dry_run, .. }
+            | Params::DeleteNode { dry_run, .. }
+            | Params::DeleteCluster { dry_run, .. }
+            | Params::Upgrade { dry_run, .. } => *dry_run,
+            Params::AddNodes { .. } | Params::CertsRenew { .. } => false,
+        }
+    }
+
+    /// True when `--check` should probe live nodes.
+    pub fn check(&self) -> bool {
+        match self {
+            Params::Create { check, .. }
+            | Params::DeleteNode { check, .. }
+            | Params::DeleteCluster { check, .. } => *check,
+            _ => false,
+        }
+    }
+
+    /// Operation name used for the `OpStarted` event.
+    pub fn op_name(&self) -> &'static str {
+        match self {
+            Params::Create { .. } => "create-cluster",
+            Params::AddNodes { .. } => "add-nodes",
+            Params::DeleteNode { .. } => "delete-node",
+            Params::DeleteCluster { .. } => "delete-cluster",
+            Params::Upgrade { .. } => "upgrade",
+            Params::CertsRenew { .. } => "certs-renew",
+        }
+    }
+}
+
+/// Everything [`plan`] and [`execute`] need, produced by [`prepare`].
+///
+/// `lock` holds the cluster mutation lock for the whole operation (dropping
+/// it releases the lock); it is `None` for read-only (`--dry-run`) runs.
+pub struct Prepared {
+    pub run: Arc<RunContext>,
+    pub lock: Option<ClusterLockGuard>,
+    pub facts: FactsTable,
+    pub pool: Arc<dyn SessionPool>,
+    pub spec: Cluster,
+    pub params: Params,
+    pub(crate) session: output::OpSession,
+    pub(crate) out: OutputOpts,
+}
+
+/// Load a config file through the full pipeline: kurin-config's structural
+/// checks plus every enabled component's validation rules.
+pub fn load_config(file: &Path) -> Result<Cluster> {
+    let cluster = kurin_config::load(file)?;
+    kurin_components::component::validate(&cluster)?;
+    Ok(cluster)
+}
+
+/// Resolve the download zone: `KURIN_ZONE` env wins over config's
+/// `[artifacts] zone`.
+pub(crate) fn resolve_zone(config_zone: Option<&str>) -> Result<kurin_core::zone::Zone> {
+    let zone_str = std::env::var("KURIN_ZONE")
+        .ok()
+        .filter(|z| !z.is_empty())
+        .or_else(|| config_zone.map(str::to_string))
+        .unwrap_or_else(|| "global".to_string());
+    let zone = kurin_core::zone::Zone::parse(&zone_str)
+        .ok_or_else(|| miette::miette!(r#"invalid zone {zone_str:?} (expected "cn")"#))?;
+    if zone == kurin_core::zone::Zone::Cn {
+        eprintln!("[zone] artifact downloads via domestic mirrors");
+    }
+    Ok(zone)
+}
+
+/// Artifact sources for one operation: effective zone, embedded manifest
+/// and the cluster's offline dir.
+pub(crate) fn sources_for(cluster: &Cluster) -> Result<ArtifactSources> {
+    Ok(ArtifactSources {
+        zone: resolve_zone(cluster.zone.as_deref())?,
+        manifest_json: None,
+        offline_dir: cluster.offline_dir.clone(),
+    })
+}
+
+/// Run context for read-only operations: no persisted Blackboard, so a
+/// `status`/`precheck`/`certs` run never truncates another op's secrets.
+pub(crate) fn ephemeral_run(cluster: &Cluster) -> Result<Arc<RunContext>> {
+    ephemeral_run_with_op_id(cluster, kurin_core::events::new_op_id())
+}
+
+/// [`ephemeral_run`] with a caller-chosen operation id.
+pub(crate) fn ephemeral_run_with_op_id(
+    cluster: &Cluster,
+    op_id: String,
+) -> Result<Arc<RunContext>> {
+    Ok(Arc::new(RunContext::new(
+        op_id,
+        &cluster.name,
+        sources_for(cluster)?,
+    )))
+}
+
+/// Run context carrying the cluster's persisted Blackboard: `resume == true`
+/// loads it, `false` starts (and truncates) fresh.
+pub(crate) fn run_with_blackboard(
+    cluster: &Cluster,
+    resume: bool,
+    op_id: String,
+) -> Result<Arc<RunContext>> {
+    let bb = match kurin_core::blackboard::Blackboard::default_path(&cluster.name) {
+        Some(path) => kurin_core::blackboard::Blackboard::open(path, resume)
+            .map_err(|e| miette::miette!("{e}"))?,
+        None => kurin_core::blackboard::Blackboard::in_memory(),
+    };
+    Ok(Arc::new(
+        RunContext::new(op_id, &cluster.name, sources_for(cluster)?).with_blackboard(bb),
+    ))
+}
+
+/// Publish a warning line on the operation's bus. The terminal renderer
+/// prints it verbatim (`warn: ...`), so the text is unchanged from the old
+/// direct `eprintln!`; `--json` consumers now see it as a `log` event.
+pub(crate) fn warn(run: &RunContext, line: impl Into<String>) {
+    run.events.publish(kurin_core::events::Body::Log {
+        level: kurin_core::events::Level::Warn,
+        node: None,
+        task: None,
+        stream: kurin_core::events::Stream::Kurin,
+        line: line.into(),
+    });
+}
+
+/// Prepare an operation: acquire the lock, build the run context, start the
+/// event session, discover facts and run operation-specific preflight work.
+pub async fn prepare(req: OpRequest, out: OutputOpts) -> Result<Prepared> {
+    let OpRequest {
+        kind,
+        mut spec,
+        params,
+    } = req;
+    // `create`/`add nodes` accept an offline-dir override; `upgrade` passes
+    // its bundle path to the binary source instead.
+    match &params {
+        Params::Create {
+            offline: Some(dir), ..
+        }
+        | Params::AddNodes { offline: Some(dir) } => spec.offline_dir = Some(dir.clone()),
+        _ => {}
+    }
+    kurin_components::component::validate(&spec)?;
+
+    let op_id = kurin_core::events::new_op_id();
+    let lock = if params.dry_run() {
+        None
+    } else {
+        Some(ClusterLock::acquire_with(&spec.name, &op_id)?)
+    };
+    let pool: Arc<dyn SessionPool> = match kind {
+        // The teardown plan ends with a control-machine step; the wrapper
+        // answers the `local` node without an SSH connection.
+        OpKind::DeleteCluster => kurin_components::teardown::with_local_node(Arc::new(
+            kurin_ssh::SshSessionPool::from_cluster(&spec)?,
+        )),
+        _ => Arc::new(kurin_ssh::SshSessionPool::from_cluster(&spec)?),
+    };
+
+    match kind {
+        OpKind::Create => create::prepare(spec, params, pool, op_id, out, lock).await,
+        OpKind::AddNodes => add_nodes::prepare(spec, params, pool, op_id, out, lock).await,
+        OpKind::DeleteNode | OpKind::DeleteCluster => {
+            delete::prepare(spec, params, pool, op_id, out, lock).await
+        }
+        OpKind::Upgrade => upgrade::prepare(spec, params, pool, op_id, out, lock).await,
+        OpKind::CertsRenew => certs::prepare(spec, params, pool, op_id, out, lock).await,
+        other => Err(miette::miette!(
+            "operation {other:?} is not implemented by this build"
+        )),
+    }
+}
+
+/// Build the operation's plan. Zero or more round trips: `upgrade` resolves
+/// its binary source here, exactly like the pre-WP-14 CLI did before it
+/// started executing.
+pub async fn plan(prepared: &Prepared) -> Result<kurin_core::plan::Plan> {
+    let spec = &prepared.spec;
+    let run = &prepared.run;
+    let pool = &prepared.pool;
+    match &prepared.params {
+        Params::Create { .. } | Params::AddNodes { .. } => {
+            kurin_components::plan::build_with_pool(spec, Some(Arc::clone(pool)), run)
+        }
+        Params::DeleteNode { node, .. } => {
+            let target =
+                spec.nodes.iter().find(|n| &n.name == node).ok_or_else(|| {
+                    miette::miette!("node {node:?} is not declared in the config")
+                })?;
+            kurin_components::plan::build_delete(spec, run, Some(target))
+        }
+        Params::DeleteCluster { .. } => kurin_components::plan::build_delete(spec, run, None),
+        Params::Upgrade {
+            target,
+            dry_run,
+            batch,
+            offline,
+            force_drain_failure,
+        } => {
+            let target = target
+                .clone()
+                .unwrap_or_else(|| spec.kubernetes_version.clone());
+            let opts = kurin_components::upgrade::UpgradeOptions {
+                batch: *batch,
+                force_drain_failure: *force_drain_failure,
+            };
+            if *dry_run {
+                kurin_components::upgrade::plan(spec, &target, pool, &prepared.facts, opts, run)
+                    .await
+            } else if let Some(dir) = offline.as_deref() {
+                kurin_components::upgrade::prepare_offline(
+                    spec,
+                    &target,
+                    dir,
+                    pool,
+                    opts,
+                    &prepared.facts,
+                    run,
+                )
+                .await
+            } else {
+                kurin_components::upgrade::prepare_online(
+                    spec,
+                    &target,
+                    pool,
+                    opts,
+                    &prepared.facts,
+                    run,
+                )
+                .await
+            }
+        }
+        Params::CertsRenew { force } => kurin_components::certs::build_plan(spec, run, *force),
+    }
+}
+
+/// Execute a prepared plan, publishing `OpStarted`/`OpFinished` and the
+/// terminal or `--json` event stream.
+pub async fn execute(prepared: Prepared, plan: kurin_core::plan::Plan) -> Result<OpResult> {
+    execute::run(prepared, plan).await
+}
+
+/// `kurin status`: probe the cluster and print the report. Returns the
+/// structured report so the caller can map `healthy` to an exit code.
+pub async fn status(spec: &Cluster, opts: StatusOpts, out: OutputOpts) -> Result<StatusReport> {
+    status::status(spec, opts, out).await
+}
+
+/// `kurin precheck`: read-only host audit; prints the report and returns it.
+pub async fn precheck(spec: &Cluster, out: OutputOpts) -> Result<PrecheckReport> {
+    precheck::precheck(spec, out).await
+}
+
+/// `kurin certs check`: certificate inventory + expiry table.
+pub async fn certs_check(
+    spec: &Cluster,
+    warn_days: i64,
+    out: OutputOpts,
+) -> Result<Vec<NodeCerts>> {
+    certs::certs_check(spec, warn_days, out).await
+}
+
+/// `kurin logs`: read the JSONL operation logs.
+pub async fn logs(args: logs::LogsRequest, out: OutputOpts) -> Result<()> {
+    logs::logs(args, out).await
+}
+
+/// `kurin artifact`: build an offline bundle.
+pub async fn build_artifacts(
+    out_dir: PathBuf,
+    arch: Option<String>,
+    with_kubernetes: Option<String>,
+) -> Result<()> {
+    artifact::build(out_dir, arch, with_kubernetes).await
+}
+
+/// `kurin capabilities --json`: the aggregated component capability table.
+pub fn capabilities() -> Result<String> {
+    serde_json::to_string_pretty(&kurin_components::component::capabilities_report())
+        .into_diagnostic()
+        .map_err(|e| miette::miette!("serialize capability table: {e}"))
+}

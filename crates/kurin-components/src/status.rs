@@ -11,13 +11,14 @@ use std::sync::Arc;
 
 use kurin_config::{Cluster, Distribution};
 use miette::Result;
+use serde::Serialize;
 use serde_json::Value;
 
 use kurin_core::executor::SessionPool;
 use kurin_kube::{connect, Gvk, ALL_NAMESPACES};
 
 /// One row of the node table.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct NodeStatus {
     pub name: String,
     pub ready: bool,
@@ -26,7 +27,7 @@ pub struct NodeStatus {
 }
 
 /// Aggregated probe result; `healthy` gates the CLI exit code.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct StatusReport {
     pub healthy: bool,
     pub nodes: Vec<NodeStatus>,
@@ -143,23 +144,65 @@ pub(crate) async fn cert_min_days(
         .min())
 }
 
+/// Knobs for a status probe.
+#[derive(Debug, Clone, Copy)]
+pub struct StatusOpts {
+    /// Also probe certificate expiry. The core health data (nodes, pods,
+    /// etcd) is independent, so callers that poll certificates less often
+    /// can skip the extra SSH round trips.
+    pub certs: bool,
+}
+
+impl Default for StatusOpts {
+    fn default() -> Self {
+        StatusOpts { certs: true }
+    }
+}
+
 /// Probe the cluster through the control-plane anchors.
-pub async fn collect(cluster: &Cluster, pool: &Arc<dyn SessionPool>) -> Result<StatusReport> {
+///
+/// The anchors are tried in config order: when the first control plane is
+/// unreachable, the next one is used. On HA clusters kubectl pins
+/// `--server https://127.0.0.1:6443` so a broken VIP cannot blind the probe.
+pub async fn collect(
+    cluster: &Cluster,
+    pool: &Arc<dyn SessionPool>,
+    opts: StatusOpts,
+) -> Result<StatusReport> {
     let cp: Vec<_> = cluster.control_plane().collect();
     if cp.is_empty() {
         return Err(miette::miette!("cluster has no control-plane node"));
     }
-    let anchors: Vec<String> = cp.iter().map(|n| n.name.clone()).collect();
     let mut log = |msg: &str| eprintln!("{msg}");
-    let connected = connect(
-        pool,
-        &anchors,
-        cluster.distribution.into(),
-        None,
-        cp.len() >= 2,
-        &mut log,
-    )
-    .await?;
+    let mut connected = None;
+    let mut last_err = None;
+    for node in &cp {
+        match connect(
+            pool,
+            std::slice::from_ref(&node.name),
+            cluster.distribution.into(),
+            None,
+            cp.len() >= 2,
+            &mut log,
+        )
+        .await
+        {
+            Ok(c) => {
+                connected = Some(c);
+                break;
+            }
+            Err(err) => {
+                log(&format!(
+                    "status: control plane {} unreachable ({err}); trying the next one",
+                    node.name
+                ));
+                last_err = Some(err);
+            }
+        }
+    }
+    let connected = connected.ok_or_else(|| {
+        last_err.unwrap_or_else(|| miette::miette!("cluster has no control-plane node"))
+    })?;
     let api = connected.api;
 
     let nodes = parse_nodes(&api.list_json(&Gvk::core("v1", "Node"), None, None).await?);
@@ -188,7 +231,11 @@ pub async fn collect(cluster: &Cluster, pool: &Arc<dyn SessionPool>) -> Result<S
             .unwrap_or(false)
     };
 
-    let cert_min_days = cert_min_days(cluster, pool).await?;
+    let cert_min_days = if opts.certs {
+        cert_min_days(cluster, pool).await?
+    } else {
+        None
+    };
 
     let healthy = nodes.iter().all(|n| n.ready)
         && pods_not_running.is_empty()

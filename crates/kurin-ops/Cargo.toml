@@ -7,3 +7,14 @@ repository.workspace = true
 description = "Kurin operations: create, add-nodes, delete, upgrade, certs, status"
 
 [dependencies]
+kurin-config.workspace = true
+kurin-core.workspace = true
+kurin-components.workspace = true
+kurin-ssh.workspace = true
+kurin-artifact.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+miette.workspace = true
+tokio.workspace = true
+semver.workspace = true
+tracing.workspace = true

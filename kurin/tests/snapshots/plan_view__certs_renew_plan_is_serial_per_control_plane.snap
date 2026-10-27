@@ -1,0 +1,79 @@
+---
+source: kurin/tests/plan_view.rs
+expression: view
+---
+{
+  "op": "certs-renew",
+  "phases": [
+    {
+      "id": "discover",
+      "label": "discover",
+      "tasks": []
+    },
+    {
+      "id": "renew",
+      "label": "renew",
+      "tasks": [
+        {
+          "key": "renew/certs-renew@master01",
+          "node": "master01",
+          "describe": "renew control-plane certificates on master01",
+          "drift": null
+        },
+        {
+          "key": "restart-static-pods/restart-static-pods@master01",
+          "node": "master01",
+          "describe": "restart static control-plane pods on master01",
+          "drift": null
+        },
+        {
+          "key": "apiready-gate/apiready-gate@master01",
+          "node": "master01",
+          "describe": "wait for the apiserver on master01",
+          "drift": null
+        },
+        {
+          "key": "renew/certs-renew@master02",
+          "node": "master02",
+          "describe": "renew control-plane certificates on master02",
+          "drift": null
+        },
+        {
+          "key": "restart-static-pods/restart-static-pods@master02",
+          "node": "master02",
+          "describe": "restart static control-plane pods on master02",
+          "drift": null
+        },
+        {
+          "key": "apiready-gate/apiready-gate@master02",
+          "node": "master02",
+          "describe": "wait for the apiserver on master02",
+          "drift": null
+        },
+        {
+          "key": "renew/certs-renew@master03",
+          "node": "master03",
+          "describe": "renew control-plane certificates on master03",
+          "drift": null
+        },
+        {
+          "key": "restart-static-pods/restart-static-pods@master03",
+          "node": "master03",
+          "describe": "restart static control-plane pods on master03",
+          "drift": null
+        },
+        {
+          "key": "apiready-gate/apiready-gate@master03",
+          "node": "master03",
+          "describe": "wait for the apiserver on master03",
+          "drift": null
+        }
+      ]
+    },
+    {
+      "id": "verify",
+      "label": "verify",
+      "tasks": []
+    }
+  ]
+}

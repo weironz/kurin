@@ -62,7 +62,7 @@ worker 按 `--batch` 分批。`--dry-run` 输出计划树（保留“当前 → 
 sha256）。计划变化时拒绝续跑并提示去掉 `--resume`；v1 状态文件没有
 指纹，仍可续跑。
 
-## status（以首控制面为锚）
+## status（首控制面不可达时依次尝试其余控制面）
 
 | | k8s | k3s |
 |---|---|---|
@@ -75,7 +75,7 @@ sha256）。计划变化时拒绝续跑并提示去掉 `--resume`；v1 状态文
 | | k8s | k3s |
 |---|---|---|
 | check | ✅ | ✅ |
-| renew | ✅（`kubeadm certs renew`）| ✅（`k3s certificate rotate` + restart + `/readyz` 门控）|
+| renew | ✅（`kubeadm certs renew` → 静态 pod 重启 → `/readyz` 门控，逐节点 `rolling(1)`）| ✅（`k3s certificate rotate` → restart → `/readyz` 门控，逐节点 `rolling(1)`）|
 
 ## artifact / curl | sh
 

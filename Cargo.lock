@@ -1987,6 +1987,7 @@ dependencies = [
  "kurin-components",
  "kurin-config",
  "kurin-core",
+ "kurin-ops",
  "kurin-ssh",
  "miette",
  "regex",
@@ -2096,6 +2097,19 @@ dependencies = [
 [[package]]
 name = "kurin-ops"
 version = "0.4.0"
+dependencies = [
+ "kurin-artifact",
+ "kurin-components",
+ "kurin-config",
+ "kurin-core",
+ "kurin-ssh",
+ "miette",
+ "semver",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
 
 [[package]]
 name = "kurin-server"

@@ -118,6 +118,18 @@ All notable changes to kurin. Format follows Keep a Changelog; semver.
   before publication.
 
 ### Changed
+- Operations moved behind `kurin-ops` (WP-14): `kurin/src/main.rs` now only
+  parses argv, and every operation goes through
+  `OpRequest -> prepare -> plan -> execute`. No user-visible change: CLI
+  output, plan trees and `--json` events are unchanged. `status` serializes
+  its `StatusReport` directly for `--json` (same fields), can skip the
+  certificate probe (`StatusOpts { certs }`), and tries the remaining
+  control planes when the first one is unreachable. `certs renew` is now a
+  plan: each control plane runs `renew -> restart-static-pods ->
+  apiready-gate` as a `rolling(1)` group, so the next node starts only
+  after the previous apiserver answers. The `create cluster` HA warnings
+  are published as warn-level log events (terminal text unchanged; `--json`
+  and the JSONL log now contain them).
 - Internal: the os, runtime and distro areas now contribute to the create
   plan through a `Component` trait and an explicit registry in
   `kurin-components` (WP-15) instead of planner functions; the k3s
