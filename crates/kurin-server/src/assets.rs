@@ -8,7 +8,6 @@
 
 use std::borrow::Cow;
 use std::collections::HashMap;
-use std::path::Path;
 use std::sync::Arc;
 
 use axum::body::Body;
@@ -103,9 +102,11 @@ pub async fn fallback(State(state): State<AppState>, method: Method, uri: Uri) -
 
 /// Resolve `path` against `assets` and build the response.
 ///
-/// Resolution order: exact file, then `index.html.gz` for extension-less
-/// paths (client-side routes). A missing file with an extension is a 404,
-/// never the SPA entry point.
+/// Resolution order: exact file, then `index.html.gz` for client-side
+/// routes. Only `/assets/…` is treated as a static namespace (a missing
+/// bundle is a 404); every other unmatched path is an SPA route, even
+/// when its last segment contains a dot (operation ids do, e.g.
+/// `20261027T225627.255Z-f656e10a`).
 pub fn serve(assets: &StaticAssets, path: &str) -> Response {
     let relative = path.trim_start_matches('/');
     if relative.split('/').any(|segment| segment == "..") {
@@ -120,11 +121,9 @@ pub fn serve(assets: &StaticAssets, path: &str) -> Response {
     if let Some(data) = assets.get(&key) {
         return asset_response(relative, data.as_ref());
     }
-    let has_extension = Path::new(relative)
-        .file_name()
-        .and_then(|name| name.to_str())
-        .is_some_and(|name| name.contains('.'));
-    if !has_extension {
+    // Vite bundles live under `assets/`; a miss there is a real 404. All
+    // other paths are client-side routes (including dotted operation ids).
+    if !relative.starts_with("assets/") {
         if let Some(data) = assets.get("index.html.gz") {
             return asset_response("index.html", data.as_ref());
         }
@@ -194,6 +193,14 @@ mod tests {
             assert_eq!(response.headers()[header::CONTENT_TYPE], "text/html");
             assert_eq!(body(response).await, b"<html>spa</html>", "{path}");
         }
+    }
+
+    #[tokio::test]
+    async fn a_dotted_operation_id_is_an_spa_route() {
+        let response = serve(&assets(), "/operations/20261027T225627.255Z-f656e10a");
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()[header::CONTENT_TYPE], "text/html");
+        assert_eq!(body(response).await, b"<html>spa</html>");
     }
 
     #[tokio::test]
