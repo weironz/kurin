@@ -18,7 +18,7 @@ use semver::Version;
 
 use crate::artifact::{Arch, ArtifactKind, ArtifactManifest, ArtifactStore, DirManifest};
 use crate::dynamic_manifest;
-use crate::engine::Session;
+use crate::engine::{ExecOutput, Session};
 use crate::executor::SessionPool;
 
 // `lib.rs` is integrator-owned: until `pub mod artifact_bundle;` lands
@@ -27,6 +27,25 @@ use crate::executor::SessionPool;
 pub use crate::artifact_bundle;
 
 const KUBE_BINS: [&str; 3] = ["kubeadm", "kubelet", "kubectl"];
+
+/// Knobs for an upgrade run.
+#[derive(Debug, Clone, Copy)]
+pub struct UpgradeOptions {
+    /// Worker batch size (control-plane nodes always go one at a time).
+    pub batch: usize,
+    /// Continue when `kubectl drain` fails, as `kurin upgrade` did before
+    /// WP-01. Off by default: a failed drain aborts the node's upgrade.
+    pub force_drain_failure: bool,
+}
+
+impl Default for UpgradeOptions {
+    fn default() -> Self {
+        UpgradeOptions {
+            batch: 1,
+            force_drain_failure: false,
+        }
+    }
+}
 
 fn report(node: &str, step: &str, ok: bool, detail: &str) {
     let mark = if ok { "ok" } else { "!!" };
@@ -40,7 +59,7 @@ fn report(node: &str, step: &str, ok: bool, detail: &str) {
 
 /// Where upgrade binaries come from: the shared online cache or a
 /// checksum-verified offline bundle.
-enum BinSource<'a> {
+pub enum BinSource<'a> {
     Cache {
         store: &'a ArtifactStore,
         manifest: &'a ArtifactManifest,
@@ -209,7 +228,7 @@ pub async fn run(
     cluster: &Cluster,
     target: &Version,
     pool: &Arc<dyn SessionPool>,
-    batch: usize,
+    opts: UpgradeOptions,
 ) -> Result<()> {
     ensure_supported(cluster).await?;
     let arch = host_arch()?;
@@ -233,7 +252,7 @@ pub async fn run(
         store: &store,
         manifest: &manifest,
     };
-    execute(cluster, target, pool, batch, arch, &manifest, &source, &cp).await
+    execute(cluster, target, pool, opts, arch, &manifest, &source, &cp).await
 }
 
 /// Air-gapped upgrade: the same walk as [`run`], but every payload comes
@@ -241,12 +260,36 @@ pub async fn run(
 /// The bundle's own manifest is the authority for versions and checksums —
 /// nothing is re-resolved over the network and the embedded manifest of a
 /// different release is never consulted.
+///
+/// Kept for callers that only need a batch size; [`run_offline_with`] also
+/// carries the drain policy.
 pub async fn run_offline(
     cluster: &Cluster,
     target: &Version,
     offline: &Path,
     pool: &Arc<dyn SessionPool>,
     batch: usize,
+) -> Result<()> {
+    run_offline_with(
+        cluster,
+        target,
+        offline,
+        pool,
+        UpgradeOptions {
+            batch,
+            ..UpgradeOptions::default()
+        },
+    )
+    .await
+}
+
+/// [`run_offline`] with the full [`UpgradeOptions`] (drain policy included).
+pub async fn run_offline_with(
+    cluster: &Cluster,
+    target: &Version,
+    offline: &Path,
+    pool: &Arc<dyn SessionPool>,
+    opts: UpgradeOptions,
 ) -> Result<()> {
     ensure_supported(cluster).await?;
     let manifest = artifact_bundle::read_bundle_manifest(offline)?;
@@ -267,7 +310,7 @@ pub async fn run_offline(
         })?;
     let cp = connect_cp0(cluster, pool).await?;
     let source = BinSource::Bundle(&dir);
-    execute(cluster, target, pool, batch, arch, &manifest, &source, &cp).await
+    execute(cluster, target, pool, opts, arch, &manifest, &source, &cp).await
 }
 
 /// The upgrade walk shared by the online ([`run`]) and offline
@@ -277,7 +320,7 @@ async fn execute(
     cluster: &Cluster,
     target: &Version,
     pool: &Arc<dyn SessionPool>,
-    batch: usize,
+    opts: UpgradeOptions,
     arch: Arch,
     manifest: &ArtifactManifest,
     source: &BinSource<'_>,
@@ -299,6 +342,7 @@ async fn execute(
         cp0,
         kubectl,
         target,
+        force_drain_failure: opts.force_drain_failure,
     };
 
     // 1. First control-plane node: plan + apply (validates the whole upgrade).
@@ -347,7 +391,7 @@ async fn execute(
     // 3. Workers in batches: batch size N means N nodes are drained and
     // upgraded before the next batch starts (each node still goes through
     // cordon/drain/update/uncordon serially within the batch).
-    let batch = batch.max(1);
+    let batch = opts.batch.max(1);
     for (i, node) in cluster.workers().enumerate() {
         if i % batch == 0 {
             eprintln!(
@@ -367,17 +411,82 @@ async fn execute(
 }
 
 /// Shared per-node context for the upgrade walk.
-struct NodeCtx<'a> {
-    pool: &'a dyn SessionPool,
-    source: &'a BinSource<'a>,
-    arch: Arch,
-    cp0: &'a dyn Session,
-    kubectl: &'a str,
-    target: &'a Version,
+///
+/// Public so the drain gate's ordering guarantee (nothing runs after a
+/// failed drain) is testable from `kurin/tests/upgrade.rs`.
+pub struct NodeCtx<'a> {
+    pub pool: &'a dyn SessionPool,
+    pub source: &'a BinSource<'a>,
+    pub arch: Arch,
+    pub cp0: &'a dyn Session,
+    pub kubectl: &'a str,
+    pub target: &'a Version,
+    /// Continue after a failed drain (old behavior); see [`UpgradeOptions`].
+    pub force_drain_failure: bool,
 }
 
-#[allow(clippy::too_many_arguments)] // grouped into NodeCtx; the remaining args below are the node itself
-async fn upgrade_one_node(ctx: &NodeCtx<'_>, node: &Node) -> Result<()> {
+/// Verdict of the per-node drain gate.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DrainOutcome {
+    /// `kubectl drain` exited 0.
+    Drained,
+    /// Drain failed, but `force_drain_failure` let the node continue.
+    /// `detail` is the warning exactly as it was printed.
+    ForcedFailure { detail: String },
+}
+
+/// First non-empty line of `text`, trimmed.
+fn first_nonempty_line(text: &str) -> Option<&str> {
+    text.lines().map(str::trim).find(|line| !line.is_empty())
+}
+
+/// Failure text for a non-zero drain: stderr's first non-empty line, else
+/// stdout's.
+fn drain_failure_detail(out: &ExecOutput) -> String {
+    first_nonempty_line(&out.stderr)
+        .or_else(|| first_nonempty_line(&out.stdout))
+        .unwrap_or("kubectl drain exited non-zero")
+        .to_string()
+}
+
+/// Cordon + drain `node` through the control-plane session.
+///
+/// The exit code is the verdict — no `; true`, no stdout sniffing. A failed
+/// drain is a hard stop: the caller must not install binaries, run
+/// `kubeadm upgrade`, or uncordon. `force_drain_failure` restores the
+/// pre-WP-01 behavior (warn and continue); the warning is returned as
+/// [`DrainOutcome::ForcedFailure`] and is already printed.
+pub async fn drain_node(
+    cp0: &dyn Session,
+    kubectl: &str,
+    node: &str,
+    force_drain_failure: bool,
+) -> Result<DrainOutcome> {
+    let out = cp0
+        .exec(&format!(
+            "{kubectl} drain {node} --ignore-daemonsets --delete-emptydir-data --force"
+        ))
+        .await?;
+    if out.exit_code == 0 {
+        report(node, "drain", true, "");
+        return Ok(DrainOutcome::Drained);
+    }
+    let detail = drain_failure_detail(&out);
+    if force_drain_failure {
+        let detail = format!("{detail} (forced: drain failure ignored, continuing)");
+        report(node, "drain", false, &detail);
+        return Ok(DrainOutcome::ForcedFailure { detail });
+    }
+    report(node, "drain", false, &detail);
+    Err(miette::miette!("drain {node} failed: {detail}"))
+}
+
+/// Upgrade one non-init node: drain gate, binary swap, `kubeadm upgrade
+/// node`, kubelet restart, uncordon.
+///
+/// A failed drain returns before any of those steps, so the node is left
+/// cordoned for inspection and the walk stops at the caller's `?`.
+pub async fn upgrade_one_node(ctx: &NodeCtx<'_>, node: &Node) -> Result<()> {
     // Per-node idempotency: a kubelet already at the target skips the turn.
     let kv = kubectl_kubelet_version(ctx.cp0, &node.name, ctx.kubectl).await?;
     if kv.as_deref() == Some(ctx.target.to_string().as_str()) {
@@ -390,23 +499,8 @@ async fn upgrade_one_node(ctx: &NodeCtx<'_>, node: &Node) -> Result<()> {
         return Ok(());
     }
 
-    let k = ctx.kubectl;
-    let drain = ctx
-        .cp0
-        .exec(&format!(
-            "{k} drain {} --ignore-daemonsets --delete-emptydir-data --force 2>&1; true",
-            node.name
-        ))
-        .await?;
-    let drain_ok = drain.stdout.contains(&format!("{} drained", node.name))
-        || drain.stdout.contains("drained")
-        || drain.exit_code == 0;
-    report(
-        &node.name,
-        "drain",
-        drain_ok,
-        drain.stderr.lines().next().unwrap_or("").trim(),
-    );
+    drain_node(ctx.cp0, ctx.kubectl, &node.name, ctx.force_drain_failure).await?;
+
     let session = ctx.pool.get(&node.name).await?;
     install_kube_bins(session.as_ref(), ctx.source, node, ctx.arch).await?;
     report(&node.name, "binaries", true, "");

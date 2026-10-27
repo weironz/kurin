@@ -60,6 +60,10 @@ enum Commands {
         /// Offline bundle directory (built by `kurin artifact --with-kubernetes`).
         #[arg(long)]
         offline: Option<PathBuf>,
+        /// Continue when `kubectl drain` fails instead of aborting the node's
+        /// upgrade (unsafe: the node is upgraded while still running pods).
+        #[arg(long)]
+        force_drain_failure: bool,
     },
     /// Build an offline artifact bundle for air-gapped installs.
     Artifact {
@@ -220,6 +224,7 @@ async fn run(cli: Cli) -> Result<()> {
             dry_run,
             batch,
             offline,
+            force_drain_failure,
         } => {
             let cluster = kurin_config::load(&file)?;
             let target = with_kubernetes
@@ -231,12 +236,16 @@ async fn run(cli: Cli) -> Result<()> {
                 .unwrap_or_else(|| cluster.kubernetes_version.clone());
             let pool: std::sync::Arc<dyn kurin::SessionPool> =
                 std::sync::Arc::new(kurin::ssh::SshSessionPool::from_cluster(&cluster)?);
+            let opts = kurin::upgrade::UpgradeOptions {
+                batch,
+                force_drain_failure,
+            };
             if dry_run {
                 kurin::upgrade::plan(&cluster, &target, &pool).await
             } else if let Some(offline) = offline {
-                kurin::upgrade::run_offline(&cluster, &target, &offline, &pool, batch).await
+                kurin::upgrade::run_offline_with(&cluster, &target, &offline, &pool, opts).await
             } else {
-                kurin::upgrade::run(&cluster, &target, &pool, batch).await
+                kurin::upgrade::run(&cluster, &target, &pool, opts).await
             }
         }
         Commands::Artifact {

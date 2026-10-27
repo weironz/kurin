@@ -8,7 +8,7 @@
 | WP | 状态 | 提交 | 快照变化 | 需人工 e2e 命令 | 备注 |
 |---|---|---|---|---|---|
 | WP-00 行为基线快照 | todo | | | | |
-| WP-01 修复 upgrade drain 判定 | todo | | | `just tier2-upgrade-minor` | |
+| WP-01 修复 upgrade drain 判定 | done | 见提交 | 无（CLI 新增 `--force-drain-failure`） | `just tier2-upgrade-minor`（含人为 drain 失败场景） | 行为变更已写入 CHANGELOG；`run_offline` 保留旧签名 |
 | WP-02 workspace 拆分 | todo | | | | |
 | WP-03 提权 become/sudo | todo | | | `e2e/tier1/nonroot.sh` | |
 | WP-04 节点 facts 与按节点架构 | todo | | | tier1/tier2 不回归；`e2e/tier1/mixed-arch.md` | |
@@ -84,6 +84,8 @@
 ## 待人工 e2e
 
 （随 WP 完成追加）
+
+- WP-01：`just tier2-upgrade-minor`。额外验证：让某 worker 的 drain 失败（如带 PDB 的 Pod），确认升级在该节点前中止且节点保持 cordon；再用 `--force-drain-failure` 复跑确认告警与继续执行。
 
 ## 待决问题
 

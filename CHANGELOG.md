@@ -19,6 +19,12 @@ All notable changes to kurin. Format follows Keep a Changelog; semver.
 - Rocky 9 e2e (rpm family).
 
 ### Fixed
+- `kurin upgrade`: a failed `kubectl drain` now aborts that node's upgrade
+  with `drain <node> failed: <reason>` instead of being masked by `; true`;
+  no binaries are installed, no `kubeadm upgrade` runs and the node stays
+  cordoned. This is a user-visible behavior change: upgrades that used to
+  "succeed" while draining failed now stop. `--force-drain-failure` restores
+  the old warn-and-continue behavior (explicitly marked as forced).
 - containerd: `registry.config_path = /etc/containerd/certs.d` is now set;
   without it every certs.d mirror/CA/auth was silently ignored.
 - base64 table: UVWYYZ typo (Y replaced X) — visible only in credentials
