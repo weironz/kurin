@@ -272,6 +272,21 @@ impl TryFrom<ClusterConfig> for ClusterSpec {
                 "registry.kind = \"external\" requires registry.address",
             ));
         }
+        // One payload source: a legacy bundle directory and a base
+        // package are mutually exclusive (WP-34).
+        if cfg.artifacts.offline_dir.is_some() && cfg.packages.base.is_some() {
+            return Err(ConfigError::invalid(
+                String::new(),
+                "artifacts.offline-dir and packages.base are both set; keep exactly one \
+                 payload source",
+            ));
+        }
+        if cfg.packages.verify == Verify::Signature && cfg.packages.trusted_keys.is_empty() {
+            return Err(ConfigError::invalid(
+                String::new(),
+                "packages.verify = \"signature\" requires packages.trusted-keys",
+            ));
+        }
         let v1 = crate::config::ClusterConfig {
             version: crate::config::CONFIG_VERSION.to_string(),
             name: cfg.name,

@@ -14,7 +14,7 @@ use crate::{warn, Params, Prepared};
 /// Prepare a create run: blackboard (resume-aware), event session, HA
 /// warnings and node facts.
 pub(crate) async fn prepare(
-    spec: Cluster,
+    mut spec: Cluster,
     params: Params,
     pool: Arc<dyn SessionPool>,
     op_id: String,
@@ -35,6 +35,10 @@ pub(crate) async fn prepare(
             ))
         }
     };
+    // Resolve the payload source before the run context is built: its
+    // artifact sources record the outcome (WP-34). A legacy bundle
+    // keeps its behaviour; a base package is opened for validation.
+    let payload = crate::packages::resolve_payload(&mut spec)?;
     let run = crate::run_with_blackboard(&spec, resume, op_id)?;
     let session = OpSession::start(&run, out)?;
     session.register_cluster(&spec);
@@ -85,7 +89,10 @@ pub(crate) async fn prepare(
         kurin_components::discover::run(&spec, &pool).await?
     };
     run.set_facts(facts.clone());
-
+    // With the architectures known, the base package must cover the
+    // cluster (WP-34 step 3); a mutating run additionally stops at the
+    // delivery boundary (WP-35 lands preload).
+    crate::packages::validate_payload(&spec, &facts, &payload, !dry_run)?;
     Ok(Prepared {
         run,
         lock,

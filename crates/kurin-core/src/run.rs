@@ -20,11 +20,18 @@ use crate::events::EventBus;
 use crate::facts::FactsTable;
 use crate::zone::Zone;
 
-/// Where artifacts (and the manifest that pins them) come from for one run.
+/// Where artifacts (and the manifest that pins them) come from for one
+/// run (WP-34, 04 §4).
 ///
 /// This replaces the old process-global zone + manifest override. The
 /// manifest itself stays in `kurin-artifact`; core only carries the JSON
-/// because it must not depend on the artifact crate.
+/// because it must not depend on the artifact crate. Package fields are
+/// the same five `[packages]` settings the config declares: a base
+/// package URI (plus per-OS packages) selects package-based payload
+/// sources, while `offline_dir` keeps carrying a legacy offline bundle
+/// directory through the compatibility reader. How packages reach the
+/// nodes (`delivery`) is decided by WP-35/36; `verify`/`trusted_keys`
+/// gate integrity checking (WP-39).
 #[derive(Debug, Clone, Default)]
 pub struct ArtifactSources {
     /// Mirror zone for downloads and image references.
@@ -32,8 +39,21 @@ pub struct ArtifactSources {
     /// Manifest JSON to use instead of the embedded table (dynamic manifest
     /// for `add nodes` / `upgrade`). `None` means the embedded manifest.
     pub manifest_json: Option<String>,
-    /// Offline bundle directory, when the run is air-gapped.
+    /// Legacy offline bundle directory, when the run is air-gapped the
+    /// pre-package way (`kurin-manifest.json`, no `oci-layout`).
     pub offline_dir: Option<PathBuf>,
+    /// Base package URI (`oci-layout://DIR`, `file://X.tar[.zst]`); the
+    /// run's payloads come from that package instead of the network.
+    pub base: Option<String>,
+    /// OS dependency packages (04 §3.4 `os` kind), matched against node
+    /// facts (the node side lands with WP-38).
+    pub os: Vec<String>,
+    /// How package payloads reach the nodes (04 §5.5).
+    pub delivery: kurin_config::v1alpha2::Delivery,
+    /// Package integrity policy (04 §6).
+    pub verify: kurin_config::v1alpha2::Verify,
+    /// cosign public keys, required when `verify` is `signature` (WP-39).
+    pub trusted_keys: Vec<PathBuf>,
 }
 
 impl ArtifactSources {
@@ -52,6 +72,18 @@ impl ArtifactSources {
     pub fn with_offline_dir(mut self, dir: Option<PathBuf>) -> Self {
         self.offline_dir = dir;
         self
+    }
+
+    /// Same sources reading payloads from a base package.
+    pub fn with_base_package(mut self, uri: impl Into<String>) -> Self {
+        self.base = Some(uri.into());
+        self
+    }
+
+    /// True when the run is air-gapped: a legacy bundle directory or a
+    /// base package is selected, so nothing may be fetched online.
+    pub fn is_offline(&self) -> bool {
+        self.offline_dir.is_some() || self.base.is_some()
     }
 }
 

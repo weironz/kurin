@@ -69,13 +69,14 @@
 |---|---|---|
 | 常规升级 | ✅ | ❌ 拒绝（换二进制或按目标版本重装）|
 | 跨 minor +1 | ✅ | ❌ 拒绝 |
-| `upgrade --offline <dir>` | ✅ | ❌ 拒绝 |
+| `upgrade --offline <dir>` | ✅（旧 bundle 目录） | ❌ 拒绝（包来源等 WP-35） |
 
 `upgrade` 走计划与执行器：每个节点一条任务链（`version-check` → `cordon`
 → `drain` → `install-bins` → `kubeadm-upgrade` → `restart-kubelet` →
 `ready-gate` → `uncordon`），首个控制面单独执行，其余控制面逐个滚动，
 worker 按 `--batch` 分批。`--dry-run` 输出计划树（保留“当前 → 目标”版本
-表头）；`--offline` 复用同一计划，只替换制品来源；已在目标版本的节点为
+表头）；`--offline` 复用同一计划，只替换制品来源（接受旧 bundle 目录；
+ 包 URI 报“等 WP-35”）；已在目标版本的节点为
 `InSync`，不会 cordon/drain/安装/重启。drain 失败会中止该节点并阻塞后续
 节点与批次，且不会 uncordon。
 

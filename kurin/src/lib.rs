@@ -21,6 +21,9 @@ pub mod artifact {
 pub mod artifact_bundle {
     pub use kurin_artifact::artifact_bundle::*;
 }
+pub mod deploy {
+    pub use kurin_artifact::deploy::*;
+}
 pub mod blackboard {
     pub use kurin_core::blackboard::*;
 }

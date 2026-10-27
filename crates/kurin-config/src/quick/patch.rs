@@ -267,6 +267,9 @@ impl ConfigPatch {
             set_str(doc, "artifacts.zone", zone)?;
         }
         if let Some(dir) = &self.offline_dir {
+            // A CLI-chosen bundle replaces the config's package (the
+            // two must not survive together: one payload source).
+            remove_key(doc, "packages", "base");
             set_str(doc, "artifacts.offline-dir", dir)?;
         }
         self.apply_packages(doc)?;
@@ -305,6 +308,8 @@ impl ConfigPatch {
             }
         }
         if let Some(base) = base {
+            // A CLI-chosen package replaces the config's bundle dir.
+            remove_key(doc, "artifacts", "offline-dir");
             set_str(doc, "packages.base", base)?;
         }
         if !os.is_empty() {
@@ -680,13 +685,24 @@ pub fn split_assignment(input: &str) -> Result<(&str, &str), PatchError> {
     }
 }
 
-/// True when a package URI looks like an OS package rather than the base
-/// package: an `/os/` path segment (or a trailing `os-…` name).
-fn is_os_package(uri: &str) -> bool {
+/// True when a package URI looks like an OS package rather than the
+/// base package: an `/os/` path segment (or a trailing `os-…` name).
+///
+/// Shared with the deploy-side `--offline <URI>` classification
+/// (WP-34), which must file URIs exactly like `--package` does.
+pub fn is_os_package(uri: &str) -> bool {
     let without_scheme = uri.split_once("://").map_or(uri, |(_, rest)| rest);
     let path = without_scheme.split(':').next().unwrap_or(without_scheme);
     path.split('/')
         .any(|segment| segment == "os" || segment.starts_with("os-"))
+}
+
+/// Remove `key` from the top-level `[table]` if present — an override
+/// replaces the config's value instead of conflicting with it.
+fn remove_key(doc: &mut DocumentMut, table: &str, key: &str) {
+    if let Some(Item::Table(t)) = doc.as_table_mut().get_mut(table) {
+        t.remove(key);
+    }
 }
 
 /// Hide the header of a table that only contains sub-tables.

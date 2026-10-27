@@ -38,7 +38,7 @@
 | WP-31 BlobStore 与 OCI layout | done | 见提交 | 无 | 无 | `oci-spec 0.9`；26 单测 + 12 集成测试通过；oras/skopeo 未安装，未做外部 CLI 读取验证 |
 | WP-32 包格式与 package create base | done | 见提交 | 新增包元数据快照 | `kurin package create base --arch amd64,arm64 -o file:///tmp/base.tar.zst && kurin package inspect file:///tmp/base.tar.zst` | OCI index 布局；SPDX 边车；确定性构建；`artifact` 转发并弃用提示 |
 | WP-33 package 子命令 | done | 见提交 | 无 | zot 容器三形态互转（已本地实跑） | push/pull/verify/inspect/list/prune；`inspect --manifest`（避开全局 --json）；修复 WP-32 镜像 index 未传输 bug |
-| WP-34 部署侧接入包 | todo | | | | |
+| WP-34 部署侧接入包 | done | 见提交 | 新增覆盖性诊断快照 | `just tier1-offline`（旧 bundle 不回归） | `ArtifactSources` 扩展 base/os/delivery/verify/trusted-keys；兼容读取器（旧 bundle 目录、裸路径包）；`--offline <URI>` ≡ `--package`；覆盖性校验（K8s 版本/发行版/CNI/节点架构，缺什么列什么）；包分发（preload/registry）留给 WP-35/36，变更运行明确报错 |
 | WP-35 preload 分发基于包 | todo | | | `just tier1-offline` × 三种来源 | |
 | WP-36 registry 分发与 mirror | todo | | | `e2e/tier3/registry.sh` | |
 | WP-37 离线 CNI 补齐 | todo | | | `just tier1-offline-cni flannel/cilium/kube-ovn` | |
@@ -84,6 +84,7 @@
 - WP-15：为保持快照的 per-node 任务布局，`PlanBuilder` 增加 `add_track`（phase 内按 track/node/调用序重排）；k3s 校验规则移入 `distro/k3s`，错误文本逐字节一致。
 - WP-16：`storage/*` 标为 online-only（镜像在 bundle 但 bootstrap 不预载，WP-47 接管）；`ha/kube-vip` 镜像 pin 在版本表而非 manifest，标 online-only；`capabilities` 为隐藏命令且恒出 JSON。
 - WP-50：Host 拒绝用 403 `forbidden-host`（§7 清单外）；错误/DTO 采用顶层 `{code,message,diagnostics?}` + camelCase（对齐 WP-60 前端）；默认白名单含 `[::1]`；会话 TTL 24h；新增 `GET /session` 与 `GET /api/v1/healthz`。
+- WP-34：`upgrade --offline <包URI>`/`add nodes --offline <包URI>` 在变更期明确拒绝（分发留给 WP-35）；`oci://` 来源报错并指向 `package pull`；`artifacts.offline-dir` 与 `packages.base` 互斥。
 - WP-33：`inspect --json` 改为 `--manifest`（全局 `--json` 与子命令长选项冲突），`list` 用 `--format text|json`；`prune` 需全量重哈希（3.7GiB 约 2 分钟）。
 - WP-32：`kurin artifact` 现在产出 OCI layout（旧目录树由 WP-34 兼容读取）；镜像按所选架构携带子 manifest，上游 index 原样保留；修复 busybox URL 模板（Docker Hub tag 无 `v` 前缀）。
 - WP-51：本 WP 只提供 Rust store API，未接入 HTTP/AppState（WP-52 集成）；`ApiError::Internal` 为增量变体。
@@ -118,10 +119,15 @@
 ## 待人工 e2e
 
 （随 WP 完成追加）
+- WP-34：`just tier1-offline`（用既有旧 bundle 目录，验证不回归）；
+  另可用 `kurin package create base -o file:///tmp/base.tar.zst` 后
+  `create cluster --offline file:///tmp/base.tar.zst --dry-run` 验证
+  覆盖性诊断（真包、真缺口列表）。
 
 - WP-15：纯重构，快照零变化；回归 `just tier1`/`tier2` 即可。
 - WP-16：`just tier1-offline`、`just tier3-external-lb`。
 - WP-50：`kurin serve` 回环冒烟（一次性登录链接、`/session`、401/403/400、TLS h2）；`cargo clippy -p kurin --features ui`。
+- WP-34：`just tier1-offline`（旧 bundle 不回归）；`kurin package create base -o file:///tmp/base.tar.zst && kurin create cluster -f cfg --offline file:///tmp/base.tar.zst --dry-run`。
 - WP-33：本地 zot 容器三形态互转（layout→zot→tar→verify→inspect，二次 push 零发送，错误凭据 401）；已清理容器。
 - WP-32：`kurin package create base --arch amd64,arm64 -o file:///tmp/base.tar.zst`，再 `kurin package inspect file:///tmp/base.tar.zst`（真实网络下载约 10 分钟；本地假上游测试已覆盖校验路径）。
 - WP-51：`cargo test -p kurin-server --test store`；`rusqlite bundled` 的 musl/zig 交叉编译需在发布机验证。

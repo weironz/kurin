@@ -42,7 +42,7 @@ pub fn running_version(
 /// Prepare an add-nodes run: running-version probe, dynamic manifest, join
 /// material refresh, then facts.
 pub(crate) async fn prepare(
-    spec: Cluster,
+    mut spec: Cluster,
     params: Params,
     pool: Arc<dyn SessionPool>,
     op_id: String,
@@ -53,6 +53,16 @@ pub(crate) async fn prepare(
     if !matches!(params, Params::AddNodes { .. }) {
         return Err(miette::miette!(
             "add_nodes::prepare called for another operation"
+        ));
+    }
+    // Resolve the payload source first (WP-34): `add nodes` is always a
+    // mutating run, so a base package stops here — before any session is
+    // opened or the join token refreshed — instead of half-running.
+    let payload = crate::packages::resolve_payload(&mut spec)?;
+    if let crate::packages::Payload::Package { uri, .. } = &payload {
+        return Err(miette::miette!(
+            "add nodes from the base package {uri} is not implemented yet (package delivery \
+             lands in WP-35); pass a legacy offline bundle directory via --offline"
         ));
     }
     let zone = crate::resolve_zone(spec.zone())?;
@@ -131,6 +141,11 @@ pub(crate) async fn prepare(
         zone,
         manifest_json,
         offline_dir: spec.packages.offline_dir.clone(),
+        base: spec.packages.base.clone(),
+        os: spec.packages.os.clone(),
+        delivery: spec.packages.delivery,
+        verify: spec.packages.verify,
+        trusted_keys: spec.packages.trusted_keys.clone(),
     };
     let bb = match kurin_core::blackboard::Blackboard::default_path(&spec.name) {
         Some(path) => kurin_core::blackboard::Blackboard::open(path, false)

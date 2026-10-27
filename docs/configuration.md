@@ -217,11 +217,28 @@ values 的合并顺序为 `defaults` → addon 内置推荐值（`values.yaml.j2
 
 | 字段 | 含义 |
 |---|---|
-| `base` | base 包 URI（`oci://` / `file://` / `oci-layout://`）；不写用内置清单 |
+| `base` | base 包 URI（`oci-layout://DIR` / `file://X.tar[.zst]`）；不写用内置清单。`oci://` 需先 `kurin package pull`（WP-33） |
 | `os` | 按 OS 的包 URI 列表；不写按节点 facts 自动匹配 |
 | `delivery` | `auto`（默认）\| `preload` \| `registry` |
 | `verify` | `none`（默认）\| `digest` \| `signature` |
 | `trusted-keys` | cosign 公钥路径；`verify = "signature"` 时必填 |
+
+行为（WP-34）：
+
+- `base` 与 `[artifacts] offline-dir` 互斥（同一运行只有一个载荷来
+  源）；`verify = "signature"` 必须给出 `trusted-keys`。
+- 选中 base 包后，`create cluster` 在 discover 之后校验覆盖性：包必
+  须覆盖所选 K8s 版本、发行版、CNI 和每个节点架构（来自 facts），
+  缺什么列什么。校验失败在校验期中止，不会开始安装。
+- 兼容读取器：`offline-dir` / `--offline <DIR>` 指向旧 bundle 目录
+  （有 `kurin-manifest.json`、无 `oci-layout`）时行为与之前完全一致；
+  一个裸路径如果其实是包（layout 目录或 `.tar`/`.tar.zst`），会被识
+  别为包。
+- `--offline <URI>` 等价于 `--package <URI>`（`/os/` 路径归入
+  `packages.os`，其余为 base）。
+- 本版本只做校验与计划：从包真正分发载荷（preload/registry）由
+  WP-35/36 提供，因此选中包的**变更**运行会明确报错而不是悄悄回
+  联网下载；`--dry-run` 可完整走通计划。
 
 完整字段一览（v1alpha1），按段组织：
 
@@ -341,7 +358,9 @@ join 时 CLI 显式警告）。
 ### `[artifacts]`
 
 - `offline-dir`：目录必须存在（`kurin artifact --out` 产出）。离线时全部制品
-  （含控制面镜像、CNI manifest）从 bundle 读取，零网络请求。
+  （含控制面镜像、CNI manifest）从 bundle 读取，零网络请求。该字段
+  接受旧 bundle 目录布局（兼容读取器，WP-34），与 `[packages] base`
+  互斥。
 - `zone = "cn"`：`KURIN_ZONE=cn` 环境变量优先于本字段。
 
 ### `[registry]`（私有镜像仓库）

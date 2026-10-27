@@ -27,6 +27,7 @@ use kurin_core::zone::Zone;
 use miette::Result;
 
 pub mod cni;
+pub mod coverage;
 pub mod distro;
 pub mod ha;
 pub mod os;

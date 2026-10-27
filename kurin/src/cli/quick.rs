@@ -312,22 +312,6 @@ impl QuickArgs {
             && !self.yes
     }
 
-    /// The offline directory for the file-based path, when `--offline` named
-    /// a directory rather than a package URI.
-    pub fn offline_dir(&self) -> Option<PathBuf> {
-        self.offline
-            .as_deref()
-            .filter(|value| !value.contains("://"))
-            .map(PathBuf::from)
-    }
-
-    /// True when `--offline` named a package URI, which needs the quick path.
-    pub fn offline_is_package(&self) -> bool {
-        self.offline
-            .as_deref()
-            .is_some_and(|value| value.contains("://"))
-    }
-
     /// Lower the arguments to a [`ConfigPatch`], plus user-facing warnings.
     ///
     /// # Errors

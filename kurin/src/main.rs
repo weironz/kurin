@@ -104,9 +104,11 @@ enum Commands {
         /// Worker batch size (control-plane nodes always go one at a time).
         #[arg(long, default_value_t = 1)]
         batch: usize,
-        /// Offline bundle directory (built by `kurin artifact --with-kubernetes`).
-        #[arg(long)]
-        offline: Option<PathBuf>,
+        /// Offline source: a legacy bundle directory, or a package
+        /// (`file://X.tar.zst`, `oci-layout://DIR`) — equivalent to
+        /// `--package` (WP-34).
+        #[arg(long, value_name = "DIR|URI")]
+        offline: Option<String>,
         /// Continue when `kubectl drain` fails instead of aborting the node's
         /// upgrade (unsafe: the node is upgraded while still running pods).
         #[arg(long)]
@@ -295,9 +297,11 @@ enum AddWhat {
         /// Config file (.toml or .yaml) listing the full desired node set.
         #[arg(short, long)]
         file: PathBuf,
-        /// Offline artifact bundle directory.
-        #[arg(long)]
-        offline: Option<PathBuf>,
+        /// Offline source: a legacy bundle directory, or a package
+        /// (`file://X.tar.zst`, `oci-layout://DIR`) — equivalent to
+        /// `--package` (WP-34).
+        #[arg(long, value_name = "DIR|URI")]
+        offline: Option<String>,
         /// Nodes to append to the config before joining them (WP-27).
         #[command(flatten)]
         quick: quick::AddNodeArgs,
@@ -790,12 +794,6 @@ async fn run(cli: Cli) -> Result<()> {
                              (--name, --control-plane, --worker, …)"
                         ));
                     };
-                    if quick_args.offline_is_package() {
-                        return Err(miette::miette!(
-                            "`--offline` with a package URI needs quick-create arguments; \
-                             pass --package instead"
-                        ));
-                    }
                     let spec = ops::load_config(&file)?;
                     return run_op(
                         OpRequest {
@@ -805,7 +803,10 @@ async fn run(cli: Cli) -> Result<()> {
                                 dry_run,
                                 check,
                                 resume,
-                                offline: quick_args.offline_dir(),
+                                // `--offline DIR|URI`: payload resolution
+                                // classifies it (WP-34) — a URI behaves
+                                // exactly like `--package`.
+                                offline: quick_args.offline.clone(),
                             },
                         },
                         out,

@@ -19,3 +19,6 @@ miette.workspace = true
 tokio.workspace = true
 semver.workspace = true
 tracing.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

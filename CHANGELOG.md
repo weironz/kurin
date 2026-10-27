@@ -90,6 +90,27 @@ All notable changes to kurin. Format follows Keep a Changelog; semver.
   through explicitly unvalidated. Rendered manifests are checked for
   image integrity: every image they reference must be declared
   (digest-pinned) in `spec.images`.
+- Deploy-side package access (WP-34): the `[packages]` config section
+  (`base`/`os`/`delivery`/`verify`/`trusted-keys`) and `--package`
+  now feed the run's `ArtifactSources`. `create cluster` validates a
+  selected base package against the cluster after discover — the
+  Kubernetes version, distribution, CNI and every node architecture
+  must be covered, and each gap is listed (missing files, missing
+  image sets, uncovered archs with their node names) before anything
+  is installed. `artifacts.offline-dir` and `packages.base` are
+  mutually exclusive; `verify = "signature"` requires
+  `trusted-keys`.
+- `--offline <DIR|URI>` is now equivalent to `--package <URI>` when it
+  carries a URI (an `/os/` path segment files it under `packages.os`);
+  a bare path keeps the legacy bundle-directory meaning. A bare path
+  that turns out to be a package layout or a `.tar`/`.tar.zst`
+  archive is recognised as one (compatibility reader), and a legacy
+  bundle directory (`kurin-manifest.json`, no `oci-layout`) keeps its
+  exact pre-package behaviour — existing air-gapped bundles need no
+  rebuild. Because payload distribution from packages lands in
+  WP-35/36, a mutating run that selected a base package fails
+  explicitly instead of silently downloading online; `--dry-run`
+  plans fully.
 - `kurin add nodes -f cfg --worker IPS [--control-plane IPS] [--node KV]`
   (WP-27): the nodes are appended to the config file with `toml_edit`
   (comments, blank lines and key order preserved; automatic names

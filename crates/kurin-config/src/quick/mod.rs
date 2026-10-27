@@ -22,8 +22,9 @@ pub use bulk::{assign_names, parse_bulk, BulkNode};
 pub use iprange::{parse_ips, MAX_IPS};
 pub use nodespec::{parse_node_kv, NodeKv};
 pub use patch::{
-    base_document, merge, parse_literal, rename_nodes, set_path, split_assignment, ConfigPatch,
-    MergedConfig, NodeAuthPatch, NodeNameStrategy, PatchError, PatchNode, SshAuthPatch, SshPatch,
+    base_document, is_os_package, merge, parse_literal, rename_nodes, set_path, split_assignment,
+    ConfigPatch, MergedConfig, NodeAuthPatch, NodeNameStrategy, PatchError, PatchNode,
+    SshAuthPatch, SshPatch,
 };
 
 /// Parse error for the quick-create node notations.

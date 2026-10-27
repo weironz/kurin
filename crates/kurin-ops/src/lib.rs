@@ -27,6 +27,7 @@ mod delete;
 mod execute;
 mod logs;
 mod output;
+mod packages;
 mod plan_view;
 mod precheck;
 mod status;
@@ -69,10 +70,12 @@ pub enum Params {
         dry_run: bool,
         check: bool,
         resume: bool,
-        offline: Option<PathBuf>,
+        /// `--offline DIR|URI`: a legacy bundle directory or a package
+        /// source — the same classification `--package` performs.
+        offline: Option<String>,
     },
     AddNodes {
-        offline: Option<PathBuf>,
+        offline: Option<String>,
     },
     DeleteNode {
         node: String,
@@ -87,7 +90,7 @@ pub enum Params {
         target: Option<Version>,
         dry_run: bool,
         batch: usize,
-        offline: Option<PathBuf>,
+        offline: Option<String>,
         force_drain_failure: bool,
     },
     CertsRenew {
@@ -169,13 +172,19 @@ pub(crate) fn resolve_zone(config_zone: Option<&str>) -> Result<kurin_core::zone
     Ok(zone)
 }
 
-/// Artifact sources for one operation: effective zone, embedded manifest
-/// and the cluster's offline dir.
+/// Artifact sources for one operation: effective zone, embedded
+/// manifest, the payload source (legacy bundle directory or base
+/// package) and the `[packages]` settings.
 pub(crate) fn sources_for(cluster: &Cluster) -> Result<ArtifactSources> {
     Ok(ArtifactSources {
         zone: resolve_zone(cluster.zone())?,
         manifest_json: None,
         offline_dir: cluster.offline_dir().map(|p| p.to_path_buf()),
+        base: cluster.packages.base.clone(),
+        os: cluster.packages.os.clone(),
+        delivery: cluster.packages.delivery,
+        verify: cluster.packages.verify,
+        trusted_keys: cluster.packages.trusted_keys.clone(),
     })
 }
 
@@ -244,13 +253,17 @@ pub async fn prepare(req: OpRequest, out: OutputOpts) -> Result<Prepared> {
         mut spec,
         params,
     } = req;
-    // `create`/`add nodes` accept an offline-dir override; `upgrade` passes
-    // its bundle path to the binary source instead.
+    // `create`/`add nodes` accept `--offline DIR|URI` — the same
+    // classification `--package` performs (WP-34); `upgrade` passes its
+    // source to the binary resolver in `plan` instead.
     match &params {
         Params::Create {
-            offline: Some(dir), ..
+            offline: Some(source),
+            ..
         }
-        | Params::AddNodes { offline: Some(dir) } => spec.packages.offline_dir = Some(dir.clone()),
+        | Params::AddNodes {
+            offline: Some(source),
+        } => packages::apply_offline_override(&mut spec, source),
         _ => {}
     }
     kurin_components::component::validate(&spec)?;
@@ -336,11 +349,27 @@ pub async fn plan(prepared: &Prepared) -> Result<kurin_core::plan::Plan> {
             if *dry_run {
                 kurin_components::upgrade::plan(spec, &target, pool, &prepared.facts, opts, run)
                     .await
-            } else if let Some(dir) = offline.as_deref() {
+            } else if let Some(source) = offline.as_deref() {
+                // The compatibility reader (WP-34): `upgrade --offline`
+                // keeps taking a legacy bundle directory; a package
+                // source names the not-yet-landed delivery instead of
+                // silently resolving versions online.
+                let dir = match kurin_artifact::deploy::open_payload_source(source)
+                    .map_err(|e| miette::miette!("{e}"))?
+                {
+                    kurin_artifact::deploy::PayloadSource::LegacyBundle { dir } => dir,
+                    kurin_artifact::deploy::PayloadSource::Package { uri, .. } => {
+                        return Err(miette::miette!(
+                            "upgrade from the package {uri} is not implemented yet (package \
+                             delivery lands in WP-35); `upgrade --offline` takes a legacy bundle \
+                             directory built by `kurin artifact --with-kubernetes`"
+                        ));
+                    }
+                };
                 kurin_components::upgrade::prepare_offline(
                     spec,
                     &target,
-                    dir,
+                    &dir,
                     pool,
                     opts,
                     &prepared.facts,

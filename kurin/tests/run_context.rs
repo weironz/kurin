@@ -42,7 +42,7 @@ fn parallel_runs_do_not_share_zone_or_manifest() {
         ArtifactSources {
             zone: Zone::Global,
             manifest_json: Some(serde_json::to_string(&modified).expect("manifest encodes")),
-            offline_dir: None,
+            ..ArtifactSources::embedded()
         },
     ));
 
