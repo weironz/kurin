@@ -14,6 +14,7 @@
 | [05-cli-quick-create.md](05-cli-quick-create.md) | 命令行直接传节点、角色、认证信息快速建集群 | 实现者、用户 |
 | [06-dev-plan.md](06-dev-plan.md) | **分阶段开发计划**：P0～P7，60 余个工作包，每个都有依赖、步骤、测试、验收 | 编码 AI、维护者 |
 | [../ui/ui-architecture-final.md](../ui/ui-architecture-final.md) | Web UI 方案（v1.1：表单优先、日志控制台） | 实现者 |
+| [HANDOFF.md](HANDOFF.md) | 交给编码 AI 一次性完成全部开发的提示词（含进度台账与断点续做机制） | 维护者 |
 
 阅读顺序：决策者读本页 + 01；实现者读 02 → 对应专题 → 06 里自己负责的 WP。
 
