@@ -11,7 +11,7 @@ use rusqlite::Connection;
 use super::StoreError;
 
 /// Schema version this build creates and expects.
-pub const LATEST_VERSION: i32 = 2;
+pub const LATEST_VERSION: i32 = 3;
 
 /// The v1 table set, exactly as UI §6.7 lists it.
 const V1: &str = r#"
@@ -70,8 +70,17 @@ ALTER TABLE operations ADD COLUMN log_path TEXT;
 ALTER TABLE operations ADD COLUMN log_lines INTEGER;
 "#;
 
+/// v1.2: read-only operations (`precheck`, `status`) do not take the
+/// mutation lock (UI §6.5), so they must not collide with a running
+/// mutation through the partial unique index.
+const V3: &str = r#"
+DROP INDEX one_active_op;
+CREATE UNIQUE INDEX one_active_op ON operations(cluster)
+  WHERE state IN ('queued','running') AND kind NOT IN ('precheck','status');
+"#;
+
 /// Ordered migrations. Keep append-only: a shipped version is never edited.
-const MIGRATIONS: &[(i32, &str)] = &[(1, V1), (2, V2)];
+const MIGRATIONS: &[(i32, &str)] = &[(1, V1), (2, V2), (3, V3)];
 
 /// Bring `conn` from any older schema up to [`LATEST_VERSION`].
 pub fn migrate(conn: &mut Connection) -> Result<(), StoreError> {

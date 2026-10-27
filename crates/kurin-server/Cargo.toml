@@ -7,8 +7,15 @@ repository.workspace = true
 description = "Kurin web service"
 
 [dependencies]
+async-trait.workspace = true
 axum.workspace = true
 axum-server.workspace = true
+kurin-components.workspace = true
+kurin-config.workspace = true
+kurin-core.workspace = true
+kurin-ops.workspace = true
+miette.workspace = true
+semver.workspace = true
 rand.workspace = true
 rusqlite.workspace = true
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
@@ -16,14 +23,19 @@ serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
-toml_edit.workspace = true
-time = { workspace = true, features = ["formatting"] }
+time = { workspace = true, features = ["formatting", "parsing"] }
 tokio.workspace = true
+tokio-stream = "0.1"
+tokio-util.workspace = true
+toml_edit.workspace = true
 tracing.workspace = true
 tracing-subscriber = { workspace = true, features = ["fmt"] }
 
 [dev-dependencies]
+async-trait.workspace = true
+kurin-core.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
 tokio.workspace = true
+tokio-stream = "0.1"
 tower = { version = "0.5", features = ["util"] }

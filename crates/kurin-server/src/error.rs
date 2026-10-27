@@ -155,7 +155,12 @@ impl From<crate::store::StoreError> for ApiError {
     fn from(error: crate::store::StoreError) -> Self {
         use crate::store::StoreError;
         match error {
-            StoreError::NotFound(_) | StoreError::RevisionNotFound { .. } => Self::NotFound,
+            StoreError::NotFound(_)
+            | StoreError::RevisionNotFound { .. }
+            | StoreError::OperationNotFound(_) => Self::NotFound,
+            StoreError::ActiveOperation { cluster, op_id } => Self::Conflict(format!(
+                "集群 {cluster:?} 已有活动操作 {op_id}；请等待其结束或先取消"
+            )),
             StoreError::AlreadyExists(name) => {
                 Self::Conflict(format!("集群 {name:?} 已存在；集群名是唯一键"))
             }

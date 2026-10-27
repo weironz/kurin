@@ -20,7 +20,7 @@ pub(crate) async fn status(
     crate::register_resolved_secrets(&run, &secrets);
     let pool: Arc<dyn SessionPool> =
         Arc::new(kurin_ssh::SshSessionPool::from_cluster(spec, &secrets)?);
-    let session = OpSession::start(&run, out)?;
+    let session = OpSession::start(&run, out, true)?;
     session.register_cluster(spec);
     session.begin("status", &spec.name, "");
     let result = async {

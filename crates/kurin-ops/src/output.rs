@@ -72,22 +72,28 @@ impl OpSession {
     /// Attach the JSONL writer and the terminal/JSON sink to the run's bus,
     /// install the `tracing` bridge and print the log path once. The log
     /// name is the run's `op_id`.
-    pub(crate) fn start(run: &RunContext, out: OutputOpts) -> Result<Self> {
-        let path = events::log_path(&run.cluster, &run.op_id);
-        let sink = JsonlSink::create(&path)
-            .map_err(|e| miette::miette!("create log {}: {e}", path.display()))?;
+    ///
+    /// `cli_output == false` is the resident-server mode: the caller owns
+    /// the bus sinks (database + JSONL under the data directory) and the
+    /// process-wide tracing router, so this only records the start time.
+    pub(crate) fn start(run: &RunContext, out: OutputOpts, cli_output: bool) -> Result<Self> {
         let bus = Arc::clone(&run.events);
-        bus.add_sink(Arc::new(sink));
-        if out.v2() {
-            bus.add_sink(Arc::new(JsonSink::stdout()));
-        } else {
-            bus.add_sink(Arc::new(TerminalRenderer::stderr(
-                out.timestamps,
-                out.verbose,
-            )));
+        if cli_output {
+            let path = events::log_path(&run.cluster, &run.op_id);
+            let sink = JsonlSink::create(&path)
+                .map_err(|e| miette::miette!("create log {}: {e}", path.display()))?;
+            bus.add_sink(Arc::new(sink));
+            if out.v2() {
+                bus.add_sink(Arc::new(JsonSink::stdout()));
+            } else {
+                bus.add_sink(Arc::new(TerminalRenderer::stderr(
+                    out.timestamps,
+                    out.verbose,
+                )));
+            }
+            events::install_tracing(Arc::clone(&bus));
+            eprintln!("[logs] {}", path.display());
         }
-        events::install_tracing(Arc::clone(&bus));
-        eprintln!("[logs] {}", path.display());
         Ok(Self {
             bus,
             started: Instant::now(),

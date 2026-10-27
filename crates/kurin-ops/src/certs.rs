@@ -16,7 +16,7 @@ pub(crate) async fn prepare(
     spec: Cluster,
     params: Params,
     pool: Arc<dyn SessionPool>,
-    op_id: String,
+    seed: crate::RunSeed,
     out: OutputOpts,
     lock: Option<ClusterLockGuard>,
     secrets: Arc<ResolvedSecrets>,
@@ -26,8 +26,8 @@ pub(crate) async fn prepare(
             "certs::prepare called for another operation"
         ));
     }
-    let run = crate::ephemeral_run_with_op_id(&spec, op_id)?;
-    let session = OpSession::start(&run, out)?;
+    let run = crate::ephemeral_run_seeded(&spec, &seed)?;
+    let session = OpSession::start(&run, out, seed.cli_output)?;
     session.register_cluster(&spec);
     crate::register_resolved_secrets(&run, &secrets);
     Ok(Prepared {
@@ -53,7 +53,7 @@ pub(crate) async fn certs_check(
     crate::register_resolved_secrets(&run, &secrets);
     let pool: Arc<dyn SessionPool> =
         Arc::new(kurin_ssh::SshSessionPool::from_cluster(spec, &secrets)?);
-    let session = OpSession::start(&run, out)?;
+    let session = OpSession::start(&run, out, true)?;
     session.register_cluster(spec);
     session.begin("certs-check", &spec.name, "");
     let result = async {

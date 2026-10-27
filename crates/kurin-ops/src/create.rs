@@ -17,7 +17,7 @@ pub(crate) async fn prepare(
     mut spec: Cluster,
     params: Params,
     pool: Arc<dyn SessionPool>,
-    op_id: String,
+    seed: crate::RunSeed,
     out: OutputOpts,
     lock: Option<ClusterLockGuard>,
     secrets: Arc<ResolvedSecrets>,
@@ -35,12 +35,12 @@ pub(crate) async fn prepare(
             ))
         }
     };
-    // Resolve the payload source before the run context is built: its
+// Resolve the payload source before the run context is built: its
     // artifact sources record the outcome (WP-34). A legacy bundle
     // keeps its behaviour; a base package is opened for validation.
     let payload = crate::packages::resolve_payload(&mut spec).await?;
-    let run = crate::run_with_blackboard(&spec, resume, op_id)?;
-    let session = OpSession::start(&run, out)?;
+    let run = crate::run_with_blackboard(&spec, resume, &seed)?;
+    let session = OpSession::start(&run, out, seed.cli_output)?;
     session.register_cluster(&spec);
     crate::register_resolved_secrets(&run, &secrets);
 

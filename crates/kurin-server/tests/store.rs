@@ -70,7 +70,10 @@ fn migrates_an_empty_database_to_the_latest_schema() {
                 .map_err(StoreError::from)
         })
         .expect("user_version");
-    assert_eq!(version, 2, "v1 + the v1.1 log columns");
+    assert_eq!(
+        version, 3,
+        "v1 + v1.1 log columns + the read-only index exemption"
+    );
 
     let journal: String = store
         .read(|conn| {
@@ -133,7 +136,7 @@ fn migrates_an_empty_database_to_the_latest_schema() {
                 .map_err(StoreError::from)
         })
         .expect("user_version after reopen");
-    assert_eq!(version, 2);
+    assert_eq!(version, 3);
 }
 
 #[test]

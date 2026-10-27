@@ -232,13 +232,13 @@ struct GroupRuntime {
 /// One instance drives one run; [`Executor::run`] owns the loop that fills
 /// the join set up to the caps, drains the event channel and applies the
 /// failure/cancellation rules.
-struct Executor<'a> {
+struct Executor<'a, F: FnMut(Event)> {
     plan: &'a Plan,
     pool: Arc<dyn SessionPool>,
     run: &'a Arc<RunContext>,
     bus: Arc<EventBus>,
     rx: tokio::sync::mpsc::Receiver<Envelope>,
-    emit: &'a mut dyn FnMut(Event),
+    emit: &'a mut F,
     state: RunState,
     set: JoinSet<(TaskIdx, Result<()>)>,
 
@@ -282,14 +282,14 @@ struct Executor<'a> {
     cancelled: bool,
 }
 
-impl<'a> Executor<'a> {
+impl<'a, F: FnMut(Event)> Executor<'a, F> {
     fn new(
         plan: &'a Plan,
         pool: &Arc<dyn SessionPool>,
         run: &'a Arc<RunContext>,
         bus: &Arc<EventBus>,
         rx: tokio::sync::mpsc::Receiver<Envelope>,
-        emit: &'a mut impl FnMut(Event),
+        emit: &'a mut F,
         state: RunState,
     ) -> Self {
         let n = plan.tasks.len();

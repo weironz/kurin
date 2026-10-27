@@ -37,6 +37,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use kurin_config::{Cluster, ResolvedSecrets};
+use kurin_core::events::EventBus;
 use kurin_core::executor::SessionPool;
 use kurin_core::facts::FactsTable;
 use kurin_core::lock::{ClusterLock, ClusterLockGuard};
@@ -44,6 +45,7 @@ use kurin_core::plan::OpKind;
 use kurin_core::run::{ArtifactSources, RunContext, RunSettings};
 use miette::{IntoDiagnostic, Result};
 use semver::Version;
+use tokio_util::sync::CancellationToken;
 
 pub use kurin_components::certs::NodeCerts;
 pub use kurin_components::precheck::PrecheckReport;
@@ -53,6 +55,7 @@ pub use kurin_components::tasks::post::ClusterStateRecord;
 pub use logs::LogsRequest;
 pub use output::{JsonMode, OpOutcome, OpResult, OutputOpts};
 pub use plan_view::{plan_view, DriftView, PhaseView, PlanView, TaskView};
+pub use precheck::precheck_with_handle;
 
 /// One operation request: what to do, against which cluster, with which
 /// operation-specific parameters.
@@ -135,6 +138,64 @@ impl Params {
     }
 }
 
+/// Handles a resident caller (the Web server's OpRunner) owns for one
+/// operation: the id it already persisted, the bus subscribers attached to,
+/// the cancellation token, and the cluster lock it acquired at submission.
+///
+/// The CLI builds the same struct with [`OpHandle::cli`], so both entry
+/// points share one code path.
+pub struct OpHandle {
+    /// Operation id; also the JSONL log name.
+    pub op_id: String,
+    /// Event bus the caller subscribed to before the first event.
+    pub events: Arc<EventBus>,
+    /// Cancellation token checked by the executor at stage boundaries.
+    pub cancel: CancellationToken,
+    /// Cluster mutation lock; `None` for read-only operations.
+    pub lock: Option<ClusterLockGuard>,
+    /// Attach the CLI's JSONL/terminal sinks and install global tracing.
+    pub cli_output: bool,
+}
+
+impl OpHandle {
+    /// Handles for a CLI run: fresh id/bus/token, CLI output attached.
+    pub fn cli(op_id: impl Into<String>, lock: Option<ClusterLockGuard>) -> Self {
+        let op_id = op_id.into();
+        Self {
+            events: Arc::new(EventBus::new(&op_id)),
+            op_id,
+            cancel: CancellationToken::new(),
+            lock,
+            cli_output: true,
+        }
+    }
+}
+
+/// The subset of [`OpHandle`] the per-operation `prepare` functions need.
+pub struct RunSeed {
+    pub op_id: String,
+    pub events: Arc<EventBus>,
+    pub cancel: CancellationToken,
+    pub cli_output: bool,
+}
+
+impl RunSeed {
+    /// Assemble a seed from its parts (the Web server builds one per run).
+    pub fn new(
+        op_id: String,
+        events: Arc<EventBus>,
+        cancel: CancellationToken,
+        cli_output: bool,
+    ) -> Self {
+        Self {
+            op_id,
+            events,
+            cancel,
+            cli_output,
+        }
+    }
+}
+
 /// Everything [`plan`] and [`execute`] need, produced by [`prepare`].
 ///
 /// `lock` holds the cluster mutation lock for the whole operation (dropping
@@ -201,11 +262,23 @@ pub(crate) fn ephemeral_run_with_op_id(
     cluster: &Cluster,
     op_id: String,
 ) -> Result<Arc<RunContext>> {
-    Ok(Arc::new(RunContext::new(
-        op_id,
-        &cluster.name,
-        sources_for(cluster)?,
-    )))
+    let seed = RunSeed::new(
+        op_id.clone(),
+        Arc::new(EventBus::new(&op_id)),
+        CancellationToken::new(),
+        true,
+    );
+    ephemeral_run_seeded(cluster, &seed)
+}
+
+/// Read-only run context seeded with the caller's bus, cancellation token
+/// and operation id.
+pub(crate) fn ephemeral_run_seeded(cluster: &Cluster, seed: &RunSeed) -> Result<Arc<RunContext>> {
+    Ok(Arc::new(
+        RunContext::new(seed.op_id.clone(), &cluster.name, sources_for(cluster)?)
+            .with_events(Arc::clone(&seed.events))
+            .with_cancel(seed.cancel.clone()),
+    ))
 }
 
 /// Run context carrying the cluster's persisted Blackboard: `resume == true`
@@ -213,7 +286,7 @@ pub(crate) fn ephemeral_run_with_op_id(
 pub(crate) fn run_with_blackboard(
     cluster: &Cluster,
     resume: bool,
-    op_id: String,
+    seed: &RunSeed,
 ) -> Result<Arc<RunContext>> {
     let bb = match kurin_core::blackboard::Blackboard::default_path(&cluster.name) {
         Some(path) => kurin_core::blackboard::Blackboard::open(path, resume)
@@ -221,7 +294,10 @@ pub(crate) fn run_with_blackboard(
         None => kurin_core::blackboard::Blackboard::in_memory(),
     };
     Ok(Arc::new(
-        RunContext::new(op_id, &cluster.name, sources_for(cluster)?).with_blackboard(bb),
+        RunContext::new(seed.op_id.clone(), &cluster.name, sources_for(cluster)?)
+            .with_blackboard(bb)
+            .with_events(Arc::clone(&seed.events))
+            .with_cancel(seed.cancel.clone()),
     ))
 }
 
@@ -250,6 +326,26 @@ pub(crate) fn register_resolved_secrets(run: &RunContext, secrets: &ResolvedSecr
 /// Prepare an operation: acquire the lock, build the run context, start the
 /// event session, discover facts and run operation-specific preflight work.
 pub async fn prepare(req: OpRequest, out: OutputOpts) -> Result<Prepared> {
+    // Validate before taking the lock so a bad config never blocks the
+    // cluster; `prepare_with_handle` repeats the check (it is cheap).
+    kurin_components::component::validate(&req.spec)?;
+    let op_id = kurin_core::events::new_op_id();
+    let lock = if req.params.dry_run() {
+        None
+    } else {
+        Some(ClusterLock::acquire_with(&req.spec.name, &op_id)?)
+    };
+    let handle = OpHandle::cli(op_id, lock);
+    prepare_with_handle(req, out, handle).await
+}
+
+/// [`prepare`] for a caller that already persisted the operation and owns
+/// its bus, cancellation token and cluster lock (the Web server's OpRunner).
+pub async fn prepare_with_handle(
+    req: OpRequest,
+    out: OutputOpts,
+    handle: OpHandle,
+) -> Result<Prepared> {
     let OpRequest {
         kind,
         mut spec,
@@ -281,12 +377,15 @@ pub async fn prepare(req: OpRequest, out: OutputOpts) -> Result<Prepared> {
     };
     let secrets = Arc::new(secrets);
 
-    let op_id = kurin_core::events::new_op_id();
-    let lock = if params.dry_run() {
-        None
-    } else {
-        Some(ClusterLock::acquire_with(&spec.name, &op_id)?)
-    };
+    let OpHandle {
+        op_id,
+        events,
+        cancel,
+        lock,
+        cli_output,
+    } = handle;
+    let seed = RunSeed::new(op_id, events, cancel, cli_output);
+
     let pool: Arc<dyn SessionPool> = match kind {
         // The teardown plan ends with a control-machine step; the wrapper
         // answers the `local` node without an SSH connection.
@@ -296,14 +395,14 @@ pub async fn prepare(req: OpRequest, out: OutputOpts) -> Result<Prepared> {
         _ => Arc::new(kurin_ssh::SshSessionPool::from_cluster(&spec, &secrets)?),
     };
 
-    let prepared = match kind {
-        OpKind::Create => create::prepare(spec, params, pool, op_id, out, lock, secrets).await,
-        OpKind::AddNodes => add_nodes::prepare(spec, params, pool, op_id, out, lock, secrets).await,
+let prepared = match kind {
+        OpKind::Create => create::prepare(spec, params, pool, seed, out, lock, secrets).await,
+        OpKind::AddNodes => add_nodes::prepare(spec, params, pool, seed, out, lock, secrets).await,
         OpKind::DeleteNode | OpKind::DeleteCluster => {
-            delete::prepare(spec, params, pool, op_id, out, lock, secrets).await
+            delete::prepare(spec, params, pool, seed, out, lock, secrets).await
         }
-        OpKind::Upgrade => upgrade::prepare(spec, params, pool, op_id, out, lock, secrets).await,
-        OpKind::CertsRenew => certs::prepare(spec, params, pool, op_id, out, lock, secrets).await,
+        OpKind::Upgrade => upgrade::prepare(spec, params, pool, seed, out, lock, secrets).await,
+        OpKind::CertsRenew => certs::prepare(spec, params, pool, seed, out, lock, secrets).await,
         other => Err(miette::miette!(
             "operation {other:?} is not implemented by this build"
         )),

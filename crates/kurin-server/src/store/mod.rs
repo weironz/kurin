@@ -16,11 +16,15 @@
 
 mod cluster;
 mod error;
+mod operation;
 mod schema;
 mod secret;
 
 pub use cluster::{ClusterRecord, ConfigRevision, Lifecycle, RevisionSummary};
 pub use error::StoreError;
+pub use operation::{
+    is_read_only_kind, NewOperation, OperationFilter, OperationRecord, OperationState, StoredEvent,
+};
 pub use secret::SECRET_SENTINEL;
 
 use std::fs;

@@ -169,6 +169,14 @@ impl RunContext {
         self
     }
 
+    /// Use a caller-owned cancellation token. The Web server creates the
+    /// token when the operation is submitted so `POST /operations/{id}/cancel`
+    /// can cancel a run that has not reached its executor yet.
+    pub fn with_cancel(mut self, cancel: CancellationToken) -> Self {
+        self.cancel = cancel;
+        self
+    }
+
     /// Use a persistent (or resumed) blackboard.
     pub fn with_blackboard(mut self, bb: Blackboard) -> Self {
         self.bb = bb.with_events(Arc::clone(&self.events));

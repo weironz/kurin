@@ -2533,6 +2533,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
+ "tokio-util",
  "tracing",
 ]
 
@@ -2540,11 +2541,18 @@ dependencies = [
 name = "kurin-server"
 version = "0.4.0"
 dependencies = [
+ "async-trait",
  "axum",
  "axum-server",
+ "kurin-components",
+ "kurin-config",
+ "kurin-core",
+ "kurin-ops",
+ "miette",
  "rand",
  "rusqlite",
  "rustls",
+ "semver",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -2552,6 +2560,8 @@ dependencies = [
  "thiserror",
  "time",
  "tokio",
+ "tokio-stream",
+ "tokio-util",
  "toml_edit 0.22.27",
  "tower",
  "tracing",
@@ -4762,6 +4772,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c9cc2678c2cdd569ef8215e2afd7954ada2ae20b4fdd2c5fe6139a3b02d105db"
 dependencies = [
  "rustls",
+ "tokio",
+]
+
+[[package]]
+name = "tokio-stream"
+version = "0.1.19"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a3d06f0b082ba57c26b79407372e57cf2a1e28124f78e9479fe80322cf53420b"
+dependencies = [
+ "futures-core",
+ "pin-project-lite",
  "tokio",
 ]
 

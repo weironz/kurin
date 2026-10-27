@@ -1,10 +1,7 @@
-//! Kurin web service (WP-50): the axum router skeleton, the UI §6.10
-//! security guards and the token → cookie authentication flow.
+//! Kurin web service (WP-50/51/52): the axum router, the UI §6.10 security
+//! guards, the SQLite store and the operation runner (events, SSE, logs).
 //!
-//! Design: `docs/ui/ui-architecture-final.md` §3.1/§6.10/§7. The crate is
-//! deliberately free of `kurin-ops` dependencies until WP-52 introduces
-//! the OpRunner; the surface is `/healthz`, `/api/v1/session` and a
-//! placeholder `/api/v1/meta`.
+//! Design: `docs/ui/ui-architecture-final.md` §3.1/§6.4/§6.7/§6.8/§7.
 //!
 //! The auth flow:
 //!
@@ -16,11 +13,13 @@
 //! 4. `DELETE /api/v1/session` logs out, `--rotate-token` starts a fresh
 //!    token and invalidates every session.
 
+mod api;
 mod auth;
 mod config;
 mod error;
 mod guard;
 mod host;
+pub mod ops;
 mod routes;
 mod session;
 mod state;
@@ -37,12 +36,16 @@ pub use config::{
 };
 pub use error::{ApiError, Diagnostic, Label};
 pub use host::HostAllowlist;
+pub use ops::{
+    BusRegistry, KurinBackend, LogFilter, LogPage, OpContext, OpExecution, OpRunner,
+    OperationBackend, RouterLayer, SubmitRequest,
+};
 pub use routes::router;
 pub use session::{SessionStore, SESSION_COOKIE, SESSION_TTL};
 pub use state::AppState;
 pub use store::{
-    ClusterRecord, ConfigRevision, Lifecycle, RevisionSummary, Store, StoreError, StoreOptions,
-    SECRET_SENTINEL,
+    ClusterRecord, ConfigRevision, Lifecycle, NewOperation, OperationFilter, OperationRecord,
+    OperationState, RevisionSummary, Store, StoreError, StoreOptions, SECRET_SENTINEL,
 };
 
 /// Failures of `kurin serve` itself (bad arguments, IO).
@@ -52,6 +55,8 @@ pub enum ServeError {
     InvalidArgs(String),
     #[error(transparent)]
     Io(#[from] std::io::Error),
+    #[error(transparent)]
+    Store(#[from] StoreError),
 }
 
 /// Result of [`startup`]: the ready state plus the one-time print flag.
@@ -64,6 +69,24 @@ pub struct Startup {
 
 /// Validate `opts`, load (create/rotate) the token and build the state.
 pub fn startup(opts: &ServeOptions) -> Result<Startup, ServeError> {
+    let (token, fresh) = load_token(opts)?;
+    let store = Store::open_with(StoreOptions::new(&opts.data_dir))?;
+    let backend = std::sync::Arc::new(KurinBackend::new(store.clone()));
+    startup_with_backend_and_store(opts, token, fresh, store, backend)
+}
+
+/// [`startup`] with a caller-supplied backend (tests drive deterministic
+/// operations without SSH).
+pub fn startup_with_backend(
+    opts: &ServeOptions,
+    backend: std::sync::Arc<dyn OperationBackend>,
+) -> Result<Startup, ServeError> {
+    let (token, fresh) = load_token(opts)?;
+    let store = Store::open_with(StoreOptions::new(&opts.data_dir))?;
+    startup_with_backend_and_store(opts, token, fresh, store, backend)
+}
+
+fn load_token(opts: &ServeOptions) -> Result<(TokenStore, bool), ServeError> {
     validate(opts).map_err(ServeError::InvalidArgs)?;
     std::fs::DirBuilder::new()
         .recursive(true)
@@ -74,8 +97,19 @@ pub fn startup(opts: &ServeOptions) -> Result<Startup, ServeError> {
         token.rotate()?;
         fresh = true;
     }
+    Ok((token, fresh))
+}
+
+fn startup_with_backend_and_store(
+    opts: &ServeOptions,
+    token: TokenStore,
+    fresh: bool,
+    store: Store,
+    backend: std::sync::Arc<dyn OperationBackend>,
+) -> Result<Startup, ServeError> {
+    let state = AppState::new(opts, token, store, backend)?;
     Ok(Startup {
-        state: AppState::new(opts, token),
+        state,
         fresh_token: fresh,
     })
 }
@@ -83,9 +117,8 @@ pub fn startup(opts: &ServeOptions) -> Result<Startup, ServeError> {
 /// Run the server until SIGINT/SIGTERM, then drain: `/api/v1` answers 503,
 /// in-flight requests get 30 s to finish (UI §6.4/§7).
 pub async fn serve(opts: ServeOptions) -> Result<(), ServeError> {
-    install_logger();
-
     let startup = startup(&opts)?;
+    install_logger(startup.state.bus_registry());
     if startup.fresh_token {
         println!(
             "登录链接（仅此一次）：{}",
@@ -105,8 +138,8 @@ pub async fn serve(opts: ServeOptions) -> Result<(), ServeError> {
 
     let app: Router = router(startup.state.clone());
     let handle = axum_server::Handle::new();
-    let draining = drain(handle.clone(), startup.state);
-    tokio::spawn(draining);
+    let draining = drain(handle.clone(), startup.state.clone());
+    let drain_task = tokio::spawn(draining);
 
     match opts.tls.as_ref() {
         Some(tls) => {
@@ -115,16 +148,18 @@ pub async fn serve(opts: ServeOptions) -> Result<(), ServeError> {
                 axum_server::tls_rustls::RustlsConfig::from_pem_file(&tls.cert, &tls.key).await?;
             axum_server::bind_rustls(opts.listen, config)
                 .handle(handle)
-                .serve(app.into_make_service())
+                .serve(app.into_make_service_with_connect_info::<std::net::SocketAddr>())
                 .await?;
         }
         None => {
             axum_server::bind(opts.listen)
                 .handle(handle)
-                .serve(app.into_make_service())
+                .serve(app.into_make_service_with_connect_info::<std::net::SocketAddr>())
                 .await?;
         }
     }
+    let _ = drain_task.await;
+    startup.state.runner().finish_shutdown().await;
     Ok(())
 }
 
@@ -133,6 +168,7 @@ pub async fn serve(opts: ServeOptions) -> Result<(), ServeError> {
 async fn drain(handle: axum_server::Handle<std::net::SocketAddr>, state: AppState) {
     shutdown_signal().await;
     state.begin_shutdown();
+    state.runner().begin_shutdown();
     tracing::info!(target: guard::REQUEST_TARGET, "shutdown signal received; draining");
     handle.graceful_shutdown(Some(Duration::from_secs(30)));
 }
@@ -175,11 +211,19 @@ fn login_url(opts: &ServeOptions, token: String) -> String {
 /// (see [`guard::REQUEST_TARGET`]) so they stay separable from operation
 /// output. WP-52 will compose the per-operation `TracingLayer` into this
 /// subscriber instead of installing a second global one.
-fn install_logger() {
-    let _ = tracing_subscriber::fmt()
-        .with_writer(std::io::stderr)
-        .with_target(true)
-        .with_max_level(tracing::Level::INFO)
+fn install_logger(registry: BusRegistry) {
+    use tracing_subscriber::layer::SubscriberExt;
+    use tracing_subscriber::util::SubscriberInitExt;
+    use tracing_subscriber::Layer;
+
+    let _ = tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_writer(std::io::stderr)
+                .with_target(true)
+                .with_filter(tracing::level_filters::LevelFilter::INFO),
+        )
+        .with(RouterLayer::new(registry))
         .try_init();
 }
 

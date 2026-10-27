@@ -482,6 +482,9 @@ struct ServeArgs {
     /// Generate a fresh access token, invalidating every session.
     #[arg(long)]
     rotate_token: bool,
+    /// Global cap on concurrently executing operations (default: 2).
+    #[arg(long, value_name = "N", default_value_t = 2)]
+    max_concurrent_ops: usize,
 }
 
 #[tokio::main(flavor = "multi_thread")]
@@ -876,6 +879,7 @@ async fn serve(args: ServeArgs) -> Result<()> {
             },
             allow_insecure_http: args.allow_insecure_http,
             rotate_token: args.rotate_token,
+            max_concurrent_ops: args.max_concurrent_ops,
         };
         kurin_server::serve(options)
             .await

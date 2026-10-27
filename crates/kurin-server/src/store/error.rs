@@ -31,6 +31,13 @@ pub enum StoreError {
     /// The cluster name is already taken (UI §6.6: name is the unique key).
     #[error("集群 {0:?} 已存在")]
     AlreadyExists(String),
+    /// No operation with that id.
+    #[error("操作 {0:?} 不存在")]
+    OperationNotFound(String),
+    /// The cluster already has a queued/running mutating operation
+    /// (UI §6.5: the partial unique index plus the lock).
+    #[error("集群 {cluster:?} 已有活动操作 {op_id}")]
+    ActiveOperation { cluster: String, op_id: String },
     /// A revision number was requested that does not exist.
     #[error("集群 {cluster:?} 没有 rev {rev}")]
     RevisionNotFound { cluster: String, rev: i64 },
@@ -60,8 +67,8 @@ impl StoreError {
     /// HTTP status the API must answer with (UI §7).
     pub fn status_code(&self) -> u16 {
         match self {
-            Self::NotFound(_) | Self::RevisionNotFound { .. } => 404,
-            Self::AlreadyExists(_) | Self::RevConflict { .. } => 409,
+            Self::NotFound(_) | Self::RevisionNotFound { .. } | Self::OperationNotFound(_) => 404,
+            Self::AlreadyExists(_) | Self::RevConflict { .. } | Self::ActiveOperation { .. } => 409,
             Self::Toml(_) | Self::InvalidName(_) | Self::MissingSecret { .. } => 400,
             Self::Sqlite(_)
             | Self::Io(_)

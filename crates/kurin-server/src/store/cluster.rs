@@ -120,7 +120,7 @@ impl fmt::Debug for ConfigRevision {
 }
 
 /// A revision without its (potentially secret) body.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct RevisionSummary {
     pub rev: i64,
     pub sha256: String,

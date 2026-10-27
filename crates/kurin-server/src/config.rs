@@ -51,6 +51,9 @@ pub struct ServeOptions {
     pub allow_insecure_http: bool,
     /// Generate a fresh token at startup, invalidating every session.
     pub rotate_token: bool,
+    /// Global cap on concurrently executing mutating operations
+    /// (`--max-concurrent-ops`, UI §6.5; default 2).
+    pub max_concurrent_ops: usize,
 }
 
 impl Default for ServeOptions {
@@ -62,6 +65,7 @@ impl Default for ServeOptions {
             tls: None,
             allow_insecure_http: false,
             rotate_token: false,
+            max_concurrent_ops: 2,
         }
     }
 }

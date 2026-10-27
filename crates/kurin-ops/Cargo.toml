@@ -17,6 +17,7 @@ serde.workspace = true
 serde_json.workspace = true
 miette.workspace = true
 tokio.workspace = true
+tokio-util.workspace = true
 semver.workspace = true
 tracing.workspace = true
 

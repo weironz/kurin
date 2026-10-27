@@ -39,6 +39,28 @@ All notable changes to kurin. Format follows Keep a Changelog; semver.
 - manifests addons are rendered on the control machine and applied
   through `ClusterApi` with server-side apply. Both install paths return
   the applied object list for the readiness tracker (WP-18).
+### Added (WP-52)
+- `kurin serve` now runs operations: `POST /api/v1/clusters/{name}/operations`
+  persists a `queued` row, takes the cluster `flock` and the database
+  active-operation index, waits for the global `--max-concurrent-ops`
+  semaphore (default 2) and executes `kurin-ops` in a background task.
+- `GET /api/v1/operations/{id}/events` streams SSE: subscribe first, then
+  backfill by `seq` (structured events from `op_events` merged with JSONL
+  log lines), 15 s heartbeat, `Last-Event-ID` resume, and a disconnect when
+  the bounded subscriber channel drops events so the client reconnects.
+- `GET /api/v1/operations/{id}/logs` pages/filters the JSONL log
+  (`after`, `before`, `limit`, `node`, `level`, `q`) through a sparse
+  per-file `seq` index.
+- `POST /api/v1/operations/{id}/cancel` and `/retry`; retries create a new
+  operation with `retry_of` and, for create/add-nodes, `resume = true`.
+- `GET /api/v1/clusters`, `POST /api/v1/clusters` (TOML import),
+  `GET /api/v1/clusters/{name}` and the config revision endpoints needed
+  by the operation flow.
+- Startup marks `queued`/`running` operations `interrupted`; graceful
+  shutdown refuses new submissions, cancels running operations at the next
+  stage boundary and marks the rest interrupted.
+- `scripts/api-smoke.sh`: manual curl flow import → precheck → create →
+  live logs → status → delete.
 
 ### Fixed (WP-33)
 - `kurin package inspect <src>` panicked on every invocation since

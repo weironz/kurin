@@ -8,7 +8,9 @@ use std::time::SystemTime;
 use crate::auth::TokenStore;
 use crate::config::ServeOptions;
 use crate::host::HostAllowlist;
+use crate::ops::{BusRegistry, OpRunner, OperationBackend};
 use crate::session::{Session, SessionStore};
+use crate::store::{Store, StoreError};
 
 /// Cloneable handle to the server state.
 #[derive(Clone)]
@@ -21,19 +23,55 @@ struct Inner {
     version: &'static str,
     shutdown: AtomicBool,
     secure_cookies: bool,
+    store: Store,
+    runner: OpRunner,
 }
 
 impl AppState {
-    /// Wrap an already loaded token store.
-    pub fn new(opts: &ServeOptions, token: TokenStore) -> Self {
-        Self(Arc::new(Inner {
+    /// Wrap an already loaded token store and open the store/runner.
+    ///
+    /// Startup recovery happens here: operations left `queued`/`running` by
+    /// a previous process become `interrupted` before the API serves a
+    /// request (UI §6.4).
+    pub fn new(
+        opts: &ServeOptions,
+        token: TokenStore,
+        store: Store,
+        backend: Arc<dyn OperationBackend>,
+    ) -> Result<Self, StoreError> {
+        let registry = BusRegistry::new();
+        let runner = OpRunner::new(
+            store.clone(),
+            backend,
+            opts.max_concurrent_ops,
+            registry.clone(),
+        );
+        runner.recover_interrupted()?;
+        Ok(Self(Arc::new(Inner {
             token: Mutex::new(token),
             sessions: SessionStore::new(),
             hosts: HostAllowlist::new(opts.listen.port(), &opts.public_hosts),
             version: env!("CARGO_PKG_VERSION"),
             shutdown: AtomicBool::new(false),
             secure_cookies: opts.tls.is_some(),
-        }))
+            store,
+            runner,
+        })))
+    }
+
+    /// The SQLite store (clusters, revisions, operations).
+    pub fn store(&self) -> &Store {
+        &self.0.store
+    }
+
+    /// The operation runner.
+    pub fn runner(&self) -> &OpRunner {
+        &self.0.runner
+    }
+
+    /// Bus registry used by the process-wide tracing router.
+    pub fn bus_registry(&self) -> BusRegistry {
+        self.0.runner.registry()
     }
 
     /// kurin version reported by `/api/v1/meta` and the session info.

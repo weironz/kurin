@@ -15,7 +15,7 @@ pub(crate) async fn prepare(
     spec: Cluster,
     params: Params,
     pool: Arc<dyn SessionPool>,
-    op_id: String,
+    seed: crate::RunSeed,
     out: OutputOpts,
     lock: Option<ClusterLockGuard>,
     secrets: Arc<ResolvedSecrets>,
@@ -27,8 +27,8 @@ pub(crate) async fn prepare(
             ));
         }
     }
-    let run = crate::ephemeral_run_with_op_id(&spec, op_id)?;
-    let session = OpSession::start(&run, out)?;
+    let run = crate::ephemeral_run_seeded(&spec, &seed)?;
+    let session = OpSession::start(&run, out, seed.cli_output)?;
     session.register_cluster(&spec);
     crate::register_resolved_secrets(&run, &secrets);
     Ok(Prepared {

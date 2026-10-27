@@ -45,7 +45,7 @@ pub(crate) async fn prepare(
     mut spec: Cluster,
     params: Params,
     pool: Arc<dyn SessionPool>,
-    op_id: String,
+    seed: crate::RunSeed,
     out: OutputOpts,
     lock: Option<ClusterLockGuard>,
     secrets: Arc<ResolvedSecrets>,
@@ -152,9 +152,13 @@ pub(crate) async fn prepare(
             .map_err(|e| miette::miette!("{e}"))?,
         None => kurin_core::blackboard::Blackboard::in_memory(),
     };
-    let run =
-        Arc::new(kurin_core::run::RunContext::new(op_id, &spec.name, sources).with_blackboard(bb));
-    let session = OpSession::start(&run, out)?;
+    let run = Arc::new(
+        kurin_core::run::RunContext::new(seed.op_id.clone(), &spec.name, sources)
+            .with_blackboard(bb)
+            .with_events(Arc::clone(&seed.events))
+            .with_cancel(seed.cancel.clone()),
+    );
+    let session = OpSession::start(&run, out, seed.cli_output)?;
     session.register_cluster(&spec);
     crate::register_resolved_secrets(&run, &secrets);
 

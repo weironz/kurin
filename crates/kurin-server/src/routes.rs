@@ -1,6 +1,6 @@
 //! Router and handlers (WP-50 surface: `/healthz`, `/session` and a
-//! placeholder `/api/v1/meta`; the cluster, operation and store APIs land
-//! in WP-51+).
+//! placeholder `/api/v1/meta`; cluster and operation APIs are merged from
+//! [`crate::api`]).
 
 use std::collections::BTreeMap;
 use std::time::SystemTime;
@@ -34,6 +34,7 @@ pub fn router(state: AppState) -> Router {
                 .delete(delete_session),
         )
         .route("/api/v1/meta", get(meta))
+        .merge(crate::api::router())
         .fallback(not_found)
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
