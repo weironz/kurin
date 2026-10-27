@@ -6,5 +6,7 @@
 pub mod artifact;
 pub mod artifact_bundle;
 pub mod dynamic_manifest;
+pub mod oci;
+pub mod store;
 pub mod version;
 pub mod zone;

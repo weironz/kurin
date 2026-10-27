@@ -28,6 +28,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
+use crate::store::BlobStore;
+
 /// The pinned manifest, embedded at compile time.
 pub const MANIFEST_JSON: &str = include_str!("artifacts/manifest.json");
 
@@ -391,6 +393,17 @@ pub struct DirArtifact {
     pub sha256: String,
 }
 
+/// Summary of [`ArtifactStore::migrate_legacy_cache`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct MigrationReport {
+    /// Payload files read from the legacy cache.
+    pub files_imported: u64,
+    /// Total bytes read from the legacy cache.
+    pub bytes_imported: u64,
+    /// Distinct blobs present after the import.
+    pub digests: usize,
+}
+
 /// One missing artifact reported by the offline completeness check.
 #[derive(Debug, Clone)]
 pub struct MissingArtifact {
@@ -400,14 +413,30 @@ pub struct MissingArtifact {
     pub expected: String,
 }
 
+/// Sibling `blobs/` directory for an artifact cache root. The default
+/// cache (`.../kurin/artifacts`) therefore pairs with
+/// `.../kurin/blobs`, matching [`BlobStore::open_default`].
+fn blob_root_for(artifact_root: &Path) -> PathBuf {
+    match artifact_root.file_name().and_then(|n| n.to_str()) {
+        Some("artifacts") => artifact_root
+            .parent()
+            .map(|p| p.join("blobs"))
+            .unwrap_or_else(|| artifact_root.join("blobs")),
+        _ => artifact_root.join("blobs"),
+    }
+}
+
 /// Root of the local artifact cache (`<root>/<name>-<version>-<arch>/`).
 pub struct ArtifactStore {
     root: PathBuf,
+    blobs: BlobStore,
 }
 
 impl ArtifactStore {
     pub fn new(root: impl Into<PathBuf>) -> Self {
-        ArtifactStore { root: root.into() }
+        let root = root.into();
+        let blobs = BlobStore::open(blob_root_for(&root));
+        ArtifactStore { root, blobs }
     }
 
     /// `$KURIN_CACHE_DIR`, else `$HOME/.cache/kurin/artifacts`.
@@ -432,6 +461,58 @@ impl ArtifactStore {
 
     pub fn root(&self) -> &Path {
         &self.root
+    }
+
+    /// The content-addressed blob store paired with this cache. The
+    /// legacy name/version directories stay the primary lookup; blobs
+    /// are the deduplicated backing store that
+    /// [`Self::migrate_legacy_cache`] fills.
+    pub fn blob_store(&self) -> &BlobStore {
+        &self.blobs
+    }
+
+    /// Import every payload file from the legacy name/version cache
+    /// into the blob store. Old files are left untouched, so this is
+    /// safe to run repeatedly and safe to interrupt. Prints one
+    /// informational line.
+    pub fn migrate_legacy_cache(&self) -> Result<MigrationReport, ArtifactError> {
+        let mut report = MigrationReport::default();
+        let mut digests = std::collections::HashSet::new();
+        if self.root.is_dir() {
+            let mut dirs: Vec<PathBuf> = std::fs::read_dir(&self.root)?
+                .collect::<Result<Vec<_>, _>>()?
+                .into_iter()
+                .map(|e| e.path())
+                .filter(|p| p.is_dir())
+                .collect();
+            dirs.sort();
+            for dir in dirs {
+                let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)?
+                    .collect::<Result<Vec<_>, _>>()?
+                    .into_iter()
+                    .map(|e| e.path())
+                    .filter(|p| p.is_file() && !is_sidecar(p) && !is_part(p))
+                    .collect();
+                files.sort();
+                for file in files {
+                    let size = std::fs::metadata(&file)?.len();
+                    let mut handle = std::fs::File::open(&file)?;
+                    let digest = self.blobs.put_stream(&mut handle)?;
+                    digests.insert(digest);
+                    report.files_imported += 1;
+                    report.bytes_imported += size;
+                }
+            }
+        }
+        report.digests = digests.len();
+        eprintln!(
+            "[blobs] imported {} file(s) / {} bytes ({} unique digests) from the legacy cache into {}; old files kept",
+            report.files_imported,
+            report.bytes_imported,
+            report.digests,
+            self.blobs.root().display()
+        );
+        Ok(report)
     }
 
     /// `<root>/<name>-<version>-<arch>` — same layout online and offline.
@@ -1163,6 +1244,9 @@ pub enum ArtifactError {
         #[source]
         source: std::io::Error,
     },
+
+    #[error(transparent)]
+    Blob(#[from] crate::store::StoreError),
 }
 
 impl From<std::io::Error> for ArtifactError {
