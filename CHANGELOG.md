@@ -17,6 +17,16 @@ All notable changes to kurin. Format follows Keep a Changelog; semver.
   (`sha256:73aaf090…`) was verified to match tag `1.36.1` upstream.
 
 ### Added
+- `kurin add nodes -f cfg --worker IPS [--control-plane IPS] [--node KV]`
+  (WP-27): the nodes are appended to the config file with `toml_edit`
+  (comments, blank lines and key order preserved; automatic names
+  continue the `role-index` sequence, e.g. `worker-2`), then the same
+  add-nodes operation runs. `--no-save` merges the nodes in memory only.
+  `--set PATH=VALUE` (WP-26) is covered end to end here: kebab-case
+  dotted paths reach nested tables such as `nodes.cp-1.labels.zone`,
+  values are parsed as TOML literals with a string fallback, and an
+  unknown path is rejected at validation time as `unknown field`,
+  pointing at the merged document titled “来自命令行参数”.
 - Quick-create parameters (WP-26): `kurin create cluster` and
   `kurin create config` can build a cluster from command-line arguments
   only — `--control-plane/--worker/--lb/--registry` (with IP ranges),

@@ -32,7 +32,7 @@
 | WP-22 JSON Schema | done | 见提交 | 无 | 无（纯本地导出） | `kurin config schema`；`docs/schema/cluster.v1alpha2.json` 漂移测试；样例全量校验 |
 | WP-25 节点参数解析器 | done | 见提交 | 无 | 无 | 提前实施（与 WP-21 无代码依赖）；69 条表驱动用例 |
 | WP-26 快速创建参数 | done | 见提交 | 新增 12 个参数→配置快照 + 摘要快照 | `just tier1-quick`、`just tier3-quick-ha` | QuickArgs → v1alpha2 合并；秘密只落引用；确认/落盘规则 |
-| WP-27 --set 与 add nodes 快速参数 | todo | | | tier2 `add nodes --worker` | |
+| WP-27 --set 与 add nodes 快速参数 | done | 见提交 | 新增 add-nodes 改写快照 | `e2e/tier2/add-worker.sh` | `--set` 路径/类型推断；add nodes 追加节点并保留注释；`--no-save` |
 | WP-28 --setup-ssh-key | todo | | | tier1 密码 + setup-key | |
 | WP-30 OCI spike | done | 见提交 | 无 | 无 | 结论见 docs/architecture/spikes/30-oci.md；04 §8/§9 已按实测修正 |
 | WP-31 BlobStore 与 OCI layout | done | 见提交 | 无 | 无 | `oci-spec 0.9`；26 单测 + 12 集成测试通过；oras/skopeo 未安装，未做外部 CLI 读取验证 |
@@ -85,6 +85,7 @@
 - WP-16：`storage/*` 标为 online-only（镜像在 bundle 但 bootstrap 不预载，WP-47 接管）；`ha/kube-vip` 镜像 pin 在版本表而非 manifest，标 online-only；`capabilities` 为隐藏命令且恒出 JSON。
 - WP-50：Host 拒绝用 403 `forbidden-host`（§7 清单外）；错误/DTO 采用顶层 `{code,message,diagnostics?}` + camelCase（对齐 WP-60 前端）；默认白名单含 `[::1]`；会话 TTL 24h；新增 `GET /session` 与 `GET /api/v1/healthz`。
 - WP-32：`kurin artifact` 现在产出 OCI layout（旧目录树由 WP-34 兼容读取）；镜像按所选架构携带子 manifest，上游 index 原样保留；修复 busybox URL 模板（Docker Hub tag 无 `v` 前缀）。
+- WP-27：`add nodes` 复用 `merge()`，v1alpha1 配置会先迁移为 v1alpha2 再写回；`--set` 写在 WP-26 已实现，本 WP 补测试/文档。顺带修复 `package inspect --json` 与全局 `--json` 的 clap 冲突（改用全局开关）。
 - WP-26：`--setup-ssh-key` 留给 WP-28；无凭据时落盘 `{ env = "KURIN_SSH_PASSWORD" }` 并告警；k3s 未给 CNI 默认 flannel；`--registry` 未给 kind 默认 docker-registry；快速参数 + YAML 文件拒绝；`--set` 提前在本 WP 实现。
 - WP-22：`Ipv4Net`/`toml::Value` 无 schemars 原生实现，分别导出为 string/任意 JSON（语义仍由加载器校验）；只入库 v1alpha2 schema。
 - WP-21：未知 addon 名默认拒绝，带 `source` 的外部 addon 名放行；v1alpha2 保留 `[artifacts]` 并新增 `[packages]`；新增 `toml_edit`（纯 Rust）。
@@ -117,6 +118,7 @@
 - WP-16：`just tier1-offline`、`just tier3-external-lb`。
 - WP-50：`kurin serve` 回环冒烟（一次性登录链接、`/session`、401/403/400、TLS h2）；`cargo clippy -p kurin --features ui`。
 - WP-32：`kurin package create base --arch amd64,arm64 -o file:///tmp/base.tar.zst`，再 `kurin package inspect file:///tmp/base.tar.zst`（真实网络下载约 10 分钟；本地假上游测试已覆盖校验路径）。
+- WP-27：`just tier2 && just tier2-test`，再 `e2e/tier2/add-worker.sh target/tier2/debug/kurin`。
 - WP-26：`just tier1-quick`（纯参数 + 密码认证单节点）、`just tier3-quick-ha`（3 控制面 + kube-vip）。
 - WP-22：`just schema && git diff --exit-code docs/schema/cluster.v1alpha2.json`；无需远端 e2e。
 - WP-21：`kurin config migrate` 后 `create cluster --dry-run`；全部 v1alpha1 样例迁移快照与等价断言已自动覆盖。

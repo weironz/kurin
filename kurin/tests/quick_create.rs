@@ -1,9 +1,10 @@
-//! WP-26: quick-create arguments (`05-cli-quick-create.md`).
+//! WP-26/WP-27: quick-create arguments (`05-cli-quick-create.md`).
 //!
 //! Covers the argument → config snapshots (the document is the contract:
 //! same model, same defaults, same validation as a file), the `-p` warning
 //! and no-plaintext-on-disk rule, the pre-execution summary table rendered
-//! from scripted discover facts, and the non-TTY confirmation error.
+//! from scripted discover facts, the non-TTY confirmation error, `--set`
+//! path/type handling and the `add nodes` config rewrite.
 
 mod support;
 
@@ -12,7 +13,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use clap::Parser;
-use kurin::cli::quick::{self, QuickArgs, SaveDefault, SaveOutcome};
+use kurin::cli::quick::{self, AddNodeArgs, QuickArgs, SaveDefault, SaveOutcome};
 use kurin_config::quick::NodeNameStrategy;
 use kurin_config::SecretRef;
 use support::{Reply, Rule, ScriptedPool, ScriptedSession};
@@ -614,6 +615,7 @@ fn unknown_set_path_fails_validation() {
     // unknown field, so the typo fails at validation time.
     let err = quick::build(None, &args, SaveDefault::File, false).expect_err("must fail");
     let rendered = format!("{err:?}");
+    assert!(rendered.contains("unknown field"), "{rendered}");
     assert!(rendered.contains("not-a-field"), "{rendered}");
     assert!(rendered.contains("来自命令行参数"), "{rendered}");
 }
@@ -631,4 +633,164 @@ fn default_save_path_follows_the_cluster_name() {
     let args = parse(&["--name", "demo", "--control-plane", "10.0.0.1"]);
     let config = quick::build(None, &args, SaveDefault::Stdout, false).expect("builds");
     assert_eq!(config.save_path, None, "create config prints to stdout");
+}
+
+// ── WP-27: `--set` paths and `add nodes` quick parameters ──────────────
+
+/// The binary flattens `AddNodeArgs` into `add nodes`; tests parse it the
+/// same way so clap's flags are exercised too.
+#[derive(Parser)]
+struct AddNodesTestCli {
+    #[command(flatten)]
+    nodes: AddNodeArgs,
+}
+
+fn parse_add_nodes(argv: &[&str]) -> AddNodeArgs {
+    AddNodesTestCli::try_parse_from(std::iter::once("kurin").chain(argv.iter().copied()))
+        .expect("arguments parse")
+        .nodes
+}
+
+/// A v1alpha2 config with comments, one control plane and one worker.
+const ADD_BASE: &str = r#"# demo cluster: one control plane, one worker
+version = "v1alpha2"
+name = "demo"
+
+[kubernetes]
+version = "1.33.1"
+
+[ssh]
+user = "root"
+
+[ssh.auth]
+method = "password"
+password = { env = "KURIN_SSH_PASSWORD" }
+
+# the control plane
+[nodes.cp-1]
+address = "10.0.0.11"
+role = "control-plane"
+
+# first worker
+[nodes.worker-1]
+address = "10.0.0.21"
+role = "worker"
+"#;
+
+#[test]
+fn set_writes_nested_node_label_paths() {
+    let config = build(&[
+        "--name",
+        "labels",
+        "--control-plane",
+        "10.0.0.11",
+        "--set",
+        "nodes.cp-1.labels.zone=eu-west",
+        "--set",
+        "nodes.cp-1.labels.tier=control",
+    ]);
+    let node = config
+        .spec
+        .nodes
+        .iter()
+        .find(|node| node.name == "cp-1")
+        .expect("cp-1 exists");
+    assert_eq!(node.labels.get("zone").map(String::as_str), Some("eu-west"));
+    assert_eq!(node.labels.get("tier").map(String::as_str), Some("control"));
+}
+
+#[test]
+fn set_value_type_is_inferred_from_the_toml_literal() {
+    let config = build(&[
+        "--name",
+        "types",
+        "--control-plane",
+        "10.0.0.11",
+        "--set",
+        "ssh.port=2222",
+        "--set",
+        "ssh.user=ops",
+        "--set",
+        "network.pod-cidr=10.244.0.0/16",
+    ]);
+    // `2222` is an integer literal, `ops` falls back to a string.
+    assert_eq!(config.spec.ssh.port, 2222);
+    assert_eq!(config.spec.ssh.user, "ops");
+    assert_eq!(config.spec.pod_cidr.to_string(), "10.244.0.0/16");
+}
+
+#[test]
+fn add_nodes_arguments_parse() {
+    let args = parse_add_nodes(&["--worker", "10.0.0.22", "--control-plane", "10.0.0.12"]);
+    assert!(!args.is_empty());
+    assert_eq!(args.worker, ["10.0.0.22"]);
+    assert_eq!(args.control_plane, ["10.0.0.12"]);
+    assert!(!args.no_save);
+
+    assert!(parse_add_nodes(&[]).is_empty());
+    assert!(parse_add_nodes(&["--worker", "10.0.0.22", "--no-save"]).no_save);
+}
+
+#[test]
+fn add_nodes_appends_workers_and_preserves_comments() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join("demo.kurin.toml");
+    std::fs::write(&path, ADD_BASE).expect("write config");
+
+    let args = parse_add_nodes(&["--worker", "10.0.0.22-23"]);
+    let merged = quick::append_nodes(&path, &args).expect("appends nodes");
+
+    let names: Vec<&str> = merged.spec.nodes.iter().map(|n| n.name.as_str()).collect();
+    assert_eq!(names, ["cp-1", "worker-1", "worker-2", "worker-3"]);
+
+    // The file on disk is the rewritten document; comments survive.
+    let on_disk = std::fs::read_to_string(&path).expect("read back");
+    assert_eq!(on_disk, merged.document);
+    assert!(on_disk.contains("# demo cluster: one control plane, one worker"));
+    assert!(on_disk.contains("# first worker"));
+    insta::assert_snapshot!("add_nodes_rewrite", on_disk);
+}
+
+#[test]
+fn add_nodes_accepts_node_kv_and_continues_names() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join("demo.kurin.toml");
+    std::fs::write(&path, ADD_BASE).expect("write config");
+
+    let args = parse_add_nodes(&[
+        "--node",
+        "name=w9,address=10.0.0.29,role=worker,labels=zone=b",
+        "--node",
+        "address=10.0.0.30,role=worker",
+    ]);
+    let merged = quick::append_nodes(&path, &args).expect("appends nodes");
+
+    let names: Vec<&str> = merged.spec.nodes.iter().map(|n| n.name.as_str()).collect();
+    // The explicit name is kept; the unnamed node continues worker-2.
+    assert_eq!(names, ["cp-1", "w9", "worker-1", "worker-2"]);
+    let w9 = merged
+        .spec
+        .nodes
+        .iter()
+        .find(|node| node.name == "w9")
+        .expect("w9 exists");
+    assert_eq!(w9.labels.get("zone").map(String::as_str), Some("b"));
+}
+
+#[test]
+fn add_nodes_no_save_merges_in_memory_only() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join("demo.kurin.toml");
+    std::fs::write(&path, ADD_BASE).expect("write config");
+    let before = std::fs::read_to_string(&path).expect("read config");
+
+    let args = parse_add_nodes(&["--worker", "10.0.0.22", "--no-save"]);
+    let merged = quick::append_nodes(&path, &args).expect("appends nodes");
+
+    assert_eq!(merged.spec.nodes.len(), 3);
+    assert_eq!(
+        std::fs::read_to_string(&path).expect("read back"),
+        before,
+        "--no-save must not touch the file"
+    );
 }

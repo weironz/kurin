@@ -1,0 +1,35 @@
+---
+source: kurin/tests/quick_create.rs
+expression: on_disk
+---
+# demo cluster: one control plane, one worker
+version = "v1alpha2"
+name = "demo"
+
+[kubernetes]
+version = "1.33.1"
+
+[ssh]
+user = "root"
+
+[ssh.auth]
+method = "password"
+password = { env = "KURIN_SSH_PASSWORD" }
+
+# the control plane
+[nodes.cp-1]
+address = "10.0.0.11"
+role = "control-plane"
+
+# first worker
+[nodes.worker-1]
+address = "10.0.0.21"
+role = "worker"
+
+[nodes.worker-2]
+address = "10.0.0.22"
+role = "worker"
+
+[nodes.worker-3]
+address = "10.0.0.23"
+role = "worker"

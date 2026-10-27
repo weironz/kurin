@@ -879,6 +879,29 @@ mod tests {
     }
 
     #[test]
+    fn literal_parsing_infers_the_toml_type() {
+        assert!(matches!(parse_literal("true"), Value::Boolean(_)));
+        assert!(matches!(parse_literal("3"), Value::Integer(_)));
+        assert!(matches!(parse_literal("1.5"), Value::Float(_)));
+        assert!(matches!(parse_literal("prod"), Value::String(_)));
+        assert!(matches!(parse_literal("\"x\""), Value::String(_)));
+        assert!(matches!(parse_literal("[1,2]"), Value::Array(_)));
+        assert!(matches!(parse_literal("{ a = 1 }"), Value::InlineTable(_)));
+    }
+
+    #[test]
+    fn set_path_accepts_node_label_paths() {
+        let mut doc: DocumentMut = "version = \"v1alpha2\"\nname = \"d\"\n\
+             [nodes.cp-1]\naddress = \"10.0.0.1\"\nrole = \"control-plane\"\n"
+            .parse()
+            .unwrap();
+        set_path(&mut doc, "nodes.cp-1.labels.zone", Value::from("eu")).unwrap();
+        let text = doc.to_string();
+        assert!(text.contains("[nodes.cp-1.labels]"), "{text}");
+        assert!(text.contains("zone = \"eu\""), "{text}");
+    }
+
+    #[test]
     fn os_packages_are_classified_by_path() {
         assert!(is_os_package("oci://harbor.local/kurin/os/rocky-9:1"));
         assert!(!is_os_package("oci://harbor.local/kurin/base:v1"));

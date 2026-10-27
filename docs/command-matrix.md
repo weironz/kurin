@@ -52,6 +52,12 @@
 | `delete --dry-run [--check]` | ✅（计划树 / 漂移）| ✅ |
 | 单节点挂 node | ✅ | ✅ |
 
+`add nodes -f cfg --worker IPS [--control-plane IPS] [--node KV]`（WP-27）
+先用 `toml_edit` 把节点追加进配置文件（注释、空行与键顺序保留；自动名称
+按现有最大序号顺延，如 `worker-2`），再执行与纯文件路径相同的 add nodes；
+`--no-save` 只在内存中合并，不改写文件。`--set` 的未知路径在校验期以
+`unknown field` 拒绝（诊断指向“来自命令行参数”的合并文档）。
+
 删除的每一步都是计划中的任务，并带收敛判断（例如目录已不存在即
 `unchanged`）。清理步骤是显式的 `BestEffort`：失败会发 `task-warn`
 （终端 `warn:`）并在结尾按节点汇总，命令本身仍以 0 退出。锚点控制面

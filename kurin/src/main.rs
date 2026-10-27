@@ -182,9 +182,7 @@ enum PackageWhat {
         /// Package source: `oci-layout://DIR`, `file://X.tar` or
         /// `file://X.tar.zst`.
         source: String,
-        /// Print the full `kurin-package.json` instead of the summary.
-        #[arg(long)]
-        json: bool,
+        // Full `kurin-package.json` output is selected by the global `--json`.
     },
 }
 
@@ -231,6 +229,9 @@ enum AddWhat {
         /// Offline artifact bundle directory.
         #[arg(long)]
         offline: Option<PathBuf>,
+        /// Nodes to append to the config before joining them (WP-27).
+        #[command(flatten)]
+        quick: quick::AddNodeArgs,
     },
 }
 
@@ -499,9 +500,9 @@ async fn run(cli: Cli) -> Result<()> {
                     output,
                 } => package_create_base(kubernetes, distribution, arch, cni, output).await,
             },
-            PackageWhat::Inspect { source, json } => {
+            PackageWhat::Inspect { source } => {
                 let handle = kurin::package::PackageSource::open(&source)?;
-                if json {
+                if out.json_enabled() {
                     let meta = handle.manifest()?;
                     println!("{}", serde_json::to_string_pretty(&meta).into_diagnostic()?);
                 } else {
@@ -554,8 +555,19 @@ async fn run(cli: Cli) -> Result<()> {
             }
         }
         Commands::Add(args) => match args.what {
-            AddWhat::Nodes { file, offline } => {
-                let spec = ops::load_config(&file)?;
+            AddWhat::Nodes {
+                file,
+                offline,
+                quick: node_args,
+            } => {
+                // With quick node arguments the config file is the desired
+                // state: append the nodes (comments preserved) and run the
+                // same add-nodes operation. `--no-save` merges in memory.
+                let spec = if node_args.is_empty() {
+                    ops::load_config(&file)?
+                } else {
+                    quick::append_nodes(&file, &node_args)?.spec
+                };
                 run_op(
                     OpRequest {
                         kind: kurin::plan::OpKind::AddNodes,

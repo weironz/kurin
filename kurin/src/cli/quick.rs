@@ -19,7 +19,7 @@ use clap::{ArgAction, ValueEnum};
 pub use kurin_config::quick::NodeNameStrategy;
 use kurin_config::quick::{
     merge, parse_ips, parse_literal, parse_node_kv, rename_nodes, split_assignment, ConfigPatch,
-    NodeAuthPatch, PatchNode, SshAuthPatch, SshPatch,
+    MergedConfig, NodeAuthPatch, PatchNode, SshAuthPatch, SshPatch,
 };
 use kurin_config::{
     BecomeMode, Cluster, CniConfig, Distribution, HaMode, HostKeyMode, NodeRole, RuntimeKind,
@@ -360,45 +360,13 @@ impl QuickArgs {
             ZoneArg::Cn => "cn".to_string(),
         });
 
-        for (role, lists) in [
-            (NodeRole::ControlPlane, &self.control_plane),
-            (NodeRole::Worker, &self.worker),
-            (NodeRole::Lb, &self.lb),
-            (NodeRole::Registry, &self.registry),
-        ] {
-            for list in lists {
-                for address in parse_ips(list).map_err(|e| miette::miette!("{e}"))? {
-                    patch.nodes.push(PatchNode {
-                        name: None,
-                        address,
-                        role,
-                        internal_address: None,
-                        user: None,
-                        port: None,
-                        labels: Default::default(),
-                        auth: None,
-                    });
-                }
-            }
-        }
-        for spec in &self.node {
-            let kv = parse_node_kv(spec).map_err(|e| miette::miette!("{e}"))?;
-            let auth = kv
-                .password_env
-                .map(NodeAuthPatch::PasswordEnv)
-                .or_else(|| kv.password_file.map(NodeAuthPatch::PasswordFile))
-                .or_else(|| kv.key.map(NodeAuthPatch::PrivateKey));
-            patch.nodes.push(PatchNode {
-                name: kv.name,
-                address: kv.address,
-                role: kv.role,
-                internal_address: kv.internal_address,
-                user: kv.user,
-                port: kv.port,
-                labels: kv.labels,
-                auth,
-            });
-        }
+        patch.nodes = parse_nodes(
+            &self.control_plane,
+            &self.worker,
+            &self.lb,
+            &self.registry,
+            &self.node,
+        )?;
         patch.node_name = self
             .node_name
             .map_or(NodeNameStrategy::RoleIndex, |s| match s {
@@ -510,6 +478,131 @@ impl QuickArgs {
 
         Ok((patch, warnings))
     }
+}
+
+/// Lower the node list arguments (`--control-plane`, `--worker`, `--lb`,
+/// `--registry`, `--node`) to patch nodes, in argument order.
+///
+/// Shared by the quick-create path and `add nodes` so both accept exactly
+/// the same IP ranges and `key=value` node specs.
+///
+/// # Errors
+///
+/// Returns a diagnostic for a malformed IP list or `--node` spec.
+pub fn parse_nodes(
+    control_plane: &[String],
+    worker: &[String],
+    lb: &[String],
+    registry: &[String],
+    node: &[String],
+) -> Result<Vec<PatchNode>> {
+    let mut nodes = Vec::new();
+    for (role, lists) in [
+        (NodeRole::ControlPlane, control_plane),
+        (NodeRole::Worker, worker),
+        (NodeRole::Lb, lb),
+        (NodeRole::Registry, registry),
+    ] {
+        for list in lists {
+            for address in parse_ips(list).map_err(|e| miette::miette!("{e}"))? {
+                nodes.push(PatchNode {
+                    name: None,
+                    address,
+                    role,
+                    internal_address: None,
+                    user: None,
+                    port: None,
+                    labels: Default::default(),
+                    auth: None,
+                });
+            }
+        }
+    }
+    for spec in node {
+        let kv = parse_node_kv(spec).map_err(|e| miette::miette!("{e}"))?;
+        let auth = kv
+            .password_env
+            .map(NodeAuthPatch::PasswordEnv)
+            .or_else(|| kv.password_file.map(NodeAuthPatch::PasswordFile))
+            .or_else(|| kv.key.map(NodeAuthPatch::PrivateKey));
+        nodes.push(PatchNode {
+            name: kv.name,
+            address: kv.address,
+            role: kv.role,
+            internal_address: kv.internal_address,
+            user: kv.user,
+            port: kv.port,
+            labels: kv.labels,
+            auth,
+        });
+    }
+    Ok(nodes)
+}
+
+/// Node-adding parameters for `add nodes` (`05-cli-quick-create.md` §2).
+///
+/// A subset of [`QuickArgs`]: the cluster-wide fields and the credentials
+/// already live in the config file, so only the nodes being added are
+/// accepted here.
+#[derive(clap::Args, Debug, Default)]
+pub struct AddNodeArgs {
+    /// Control-plane address list (comma separated; ranges allowed).
+    #[arg(long = "control-plane", value_name = "IPS", action = ArgAction::Append)]
+    pub control_plane: Vec<String>,
+    /// Worker address list, same syntax as --control-plane.
+    #[arg(long, value_name = "IPS", action = ArgAction::Append)]
+    pub worker: Vec<String>,
+    /// One node as `name=…,address=…,role=…[,…]`, same syntax as
+    /// `create cluster --node`.
+    #[arg(long, value_name = "KV", action = ArgAction::Append)]
+    pub node: Vec<String>,
+    /// Merge the new nodes in memory only; leave the config file untouched.
+    #[arg(long = "no-save")]
+    pub no_save: bool,
+}
+
+impl AddNodeArgs {
+    /// True when no node was given, so `add nodes` keeps its file-only
+    /// behaviour.
+    pub fn is_empty(&self) -> bool {
+        self.control_plane.is_empty() && self.worker.is_empty() && self.node.is_empty()
+    }
+
+    /// Lower the arguments to a [`ConfigPatch`] carrying only nodes.
+    ///
+    /// # Errors
+    ///
+    /// Returns a diagnostic for a malformed IP list or `--node` spec.
+    pub fn patch(&self) -> Result<ConfigPatch> {
+        Ok(ConfigPatch {
+            nodes: parse_nodes(&self.control_plane, &self.worker, &[], &[], &self.node)?,
+            ..ConfigPatch::default()
+        })
+    }
+}
+
+/// Append `args`'s nodes to the config at `file` and return the merged,
+/// validated configuration.
+///
+/// The file is rewritten with `toml_edit` (comments, blank lines and key
+/// order preserved) unless `--no-save`; automatic names continue the
+/// existing `role-index` sequence (`worker-1`, `worker-2`, …).
+///
+/// # Errors
+///
+/// Returns the loader/validator diagnostic titled "来自命令行参数", or a
+/// write error when the config cannot be rewritten.
+pub fn append_nodes(file: &Path, args: &AddNodeArgs) -> Result<MergedConfig> {
+    let patch = args.patch()?;
+    let merged =
+        merge(Some(file), &patch).map_err(|e| miette::Report::new(e.named(SOURCE_NAME)))?;
+    crate::components::validate(&merged.spec)
+        .map_err(|e| miette::Report::new(e.named(SOURCE_NAME)))?;
+    if !args.no_save {
+        std::fs::write(file, &merged.document)
+            .map_err(|e| miette::miette!("failed to write {}: {e}", file.display()))?;
+    }
+    Ok(merged)
 }
 
 /// Whether the caller saves by default (`create cluster`) or only when
