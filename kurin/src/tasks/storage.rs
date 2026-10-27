@@ -56,9 +56,14 @@ impl StorageInstall {
         }
     }
 
+    /// Because YAML block scalars must sit inside their parent node, the
+    /// default=... case expands the full annotations tree (a bare key on
+    /// the class's top level is where the strict-decoding error comes from).
     fn annotation(&self) -> &'static str {
         if self.default_class {
-            "storageclass.kubernetes.io/is-default-class: \"true\"\n"
+            "  annotations:
+    storageclass.kubernetes.io/is-default-class: \"true\"
+"
         } else {
             ""
         }
@@ -446,7 +451,11 @@ role = "control-plane"
         let t = StorageInstall::new(&c).unwrap();
         let m = t.manifest();
         assert!(m.contains("name: kurin-local-path"));
-        assert!(m.contains("storageclass.kubernetes.io/is-default-class: \"true\""));
+        // Indented under metadata: (a class-toplevel key is a strict
+        // decoding error server-side).
+        assert!(
+            m.contains("  annotations:\n    storageclass.kubernetes.io/is-default-class: \"true\"")
+        );
         assert!(m.contains("rancher/local-path-provisioner:v0.0.31"));
         assert!(m.contains("busybox:1.36.1"));
     }
