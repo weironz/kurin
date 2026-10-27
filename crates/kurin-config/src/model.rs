@@ -6,10 +6,11 @@
 //! the CLI runs them right after this crate's load pipeline.
 //!
 //! `ClusterSpec` replaces the old flat `Cluster`. Component-owned config
-//! sections (`registry`, `storage`, `cni`) and artifact sources
-//! (`packages`) are sub-structs, so a component can evolve its section
-//! without touching the core model (ADR-15). Secret-valued fields hold a
-//! [`SecretRef`] until `kurin-ops::prepare` resolves them once.
+//! sections (`registry`, `cni`), the declarative `addons` map and
+//! artifact sources (`packages`) are sub-structs, so a component can
+//! evolve its section without touching the core model (ADR-15).
+//! Secret-valued fields hold a [`SecretRef`] until `kurin-ops::prepare`
+//! resolves them once.
 
 use std::collections::{BTreeMap, HashMap};
 use std::fmt;
@@ -23,7 +24,7 @@ use serde::Serialize;
 
 use crate::config::{
     BecomeMode, ClusterConfig, CniConfig, Distribution, HaMode, HostKeyMode, NodeRole,
-    RegistryKind, RuntimeKind, SshAuth, StorageKind, CONFIG_VERSION,
+    RegistryKind, RuntimeKind, SshAuth, StorageConfig, StorageKind, CONFIG_VERSION,
 };
 use crate::error::{ConfigError, Result};
 use crate::secret::SecretRef;
@@ -143,19 +144,15 @@ fn normalize_endpoint(address: &str, default_port: u16) -> String {
     }
 }
 
-/// Dynamic storage provisioning (component-owned section).
-#[derive(Debug, Clone, Default, PartialEq, Serialize)]
-pub struct StorageSpec {
-    pub kind: Option<StorageKind>,
-    pub default: bool,
-    pub server: Option<String>,
-    pub path: Option<String>,
-}
-
 /// v1alpha1 `[storage]` lowers into the same addon entries a v1alpha2
-/// document would declare, so both versions produce one model (and the
-/// WP-47 cutover changes nothing for existing configs).
-fn storage_addons(storage: &StorageSpec) -> BTreeMap<String, AddonSpec> {
+/// document would declare, so both versions produce one model (WP-47:
+/// the addon engine installs the provisioners; no first-layer storage
+/// component is left to consume a separate section).
+///
+/// The nfs kind's `server`/`path` requirement is enforced by the addon
+/// engine's validation (it owns the addon now), keeping the error text
+/// the former `storage/nfs` component produced.
+fn storage_addons(storage: &StorageConfig) -> BTreeMap<String, AddonSpec> {
     let mut out = BTreeMap::new();
     let mut values = toml::map::Map::new();
     values.insert(
@@ -246,9 +243,6 @@ pub struct ClusterSpec {
     pub ssh: SshDefaultsSpec,
     /// Component-owned section: private registry.
     pub registry: RegistrySpec,
-    /// Component-owned section: dynamic storage (derived from the storage
-    /// addons in v1alpha2; WP-47 removes it).
-    pub storage: StorageSpec,
     /// Artifact sources: offline bundle directory and mirror zone.
     pub packages: PackageSources,
     /// Declarative addons (v1alpha2; v1alpha1 `[storage]` maps into it).
@@ -283,7 +277,6 @@ impl fmt::Debug for ClusterSpec {
             .field("nodes", &self.nodes)
             .field("ssh", &self.ssh)
             .field("registry", &self.registry)
-            .field("storage", &self.storage)
             .field("packages", &self.packages)
             .field("addons", &self.addons)
             .field("source", &"<redacted>")
@@ -377,22 +370,6 @@ impl ClusterSpec {
     pub fn registry_data_dir(&self) -> &Path {
         &self.registry.data_dir
     }
-    /// Storage provisioner kind.
-    pub fn storage_kind(&self) -> Option<StorageKind> {
-        self.storage.kind
-    }
-    /// Whether kurin's StorageClass becomes the cluster default.
-    pub fn storage_default(&self) -> bool {
-        self.storage.default
-    }
-    /// NFS server.
-    pub fn storage_server(&self) -> Option<&str> {
-        self.storage.server.as_deref()
-    }
-    /// NFS export path.
-    pub fn storage_path(&self) -> Option<&str> {
-        self.storage.path.as_deref()
-    }
 
     pub fn from_config(cfg: ClusterConfig) -> Result<ClusterSpec> {
         let kubernetes_version = cfg
@@ -465,7 +442,7 @@ impl ClusterSpec {
         let distribution = cfg.kubernetes.distribution;
         let ha_mode = cfg.ha.mode;
         let runtime = cfg.kubernetes.runtime;
-        let mut spec = ClusterSpec {
+        let spec = ClusterSpec {
             name: cfg.name,
             labels: BTreeMap::new(),
             kubernetes_version,
@@ -499,21 +476,14 @@ impl ClusterSpec {
                     .data_dir
                     .unwrap_or_else(|| "/var/lib/kurin/registry".into()),
             },
-            storage: StorageSpec {
-                kind: cfg.storage.kind,
-                default: cfg.storage.default,
-                server: cfg.storage.server,
-                path: cfg.storage.path,
-            },
             packages: PackageSources {
                 offline_dir,
                 zone,
                 ..PackageSources::default()
             },
-            addons: BTreeMap::new(),
+            addons: storage_addons(&cfg.storage),
             source: String::new(),
         };
-        spec.addons = storage_addons(&spec.storage);
         Ok(spec)
     }
 

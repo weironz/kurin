@@ -31,15 +31,12 @@
 //! never deletes PVCs, and CRDs shipped in a chart's `crds/` directory
 //! survive).
 //!
-//! The storage provisioners stay with the first-layer storage
-//! components until WP-47; entries the storage layer owns are not
-//! planned here.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use kurin_config::{AddonSpec, Cluster, Distribution, StorageKind};
+use kurin_config::{AddonSpec, Cluster, Distribution};
 use kurin_core::arch::Arch;
 use kurin_core::engine::{sha256_hex, Drift, Outcome, Session, Stage, Task};
 use kurin_core::events::Body;
@@ -91,18 +88,6 @@ impl std::fmt::Debug for SelectedAddon {
     }
 }
 
-/// Whether the first-layer storage component still owns this addon name
-/// (WP-47 moves `local-path`/`nfs-subdir` here). `storage.kind` is
-/// derived from exactly those addons, so `Some` means the first layer is
-/// installing it.
-fn first_layer_owned(name: &str, cluster: &Cluster) -> bool {
-    match cluster.storage.kind {
-        Some(StorageKind::LocalPath) => name == "local-path",
-        Some(StorageKind::Nfs) => name == "nfs-subdir",
-        None => false,
-    }
-}
-
 /// Resolve every enabled, engine-owned `[addons.<name>]` entry against
 /// the catalog and validate the resulting selection (03 §4.5 step 1):
 /// `requires` must be enabled, `conflicts` must not be, the dependency
@@ -122,7 +107,7 @@ pub fn resolve_selection(
     let mut embedded = Catalog::embedded()?;
     let mut selected: Vec<SelectedAddon> = Vec::new();
     for (name, user) in &cluster.addons {
-        if !user.enabled || first_layer_owned(name, cluster) {
+        if !user.enabled {
             continue;
         }
         let addon = match &user.source {
@@ -227,9 +212,7 @@ fn validate_selection(
         let path = addon.files().path_for(ADDON_FILE);
 
         for dep in &spec.requires {
-            if !selected.iter().any(|other| other.addon.name() == dep)
-                && !first_layer_owned(dep, cluster)
-            {
+            if !selected.iter().any(|other| other.addon.name() == dep) {
                 return Err(AddonError::invalid(
                     &path,
                     format!("addon `{name}` requires `{dep}`, which is not enabled"),
@@ -237,8 +220,7 @@ fn validate_selection(
             }
         }
         for other in &spec.conflicts {
-            if selected.iter().any(|s| s.addon.name() == other) || first_layer_owned(other, cluster)
-            {
+            if selected.iter().any(|s| s.addon.name() == other) {
                 return Err(AddonError::invalid(
                     &path,
                     format!("addon `{name}` conflicts with `{other}`, which is enabled"),
@@ -404,12 +386,28 @@ impl Component for AddonEngine {
     fn enabled(&self, spec: &Cluster) -> bool {
         // Any engine-owned entry (enabled or explicitly disabled — the
         // disabled ones are the remove targets) makes the engine active.
-        spec.addons
-            .keys()
-            .any(|name| !first_layer_owned(name, spec))
+        !spec.addons.is_empty()
     }
 
     fn validate(&self, spec: &Cluster, d: &mut Diagnostics) {
+        // `nfs-subdir` needs a server and an export path. The values
+        // schema cannot express a conditional requirement (it applies to
+        // the addon whether enabled or not), so the engine enforces it
+        // here — the wording is the former first-layer `storage/nfs`
+        // component's, which WP-47 replaced.
+        if let Some(addon) = spec.addons.get("nfs-subdir").filter(|a| a.enabled) {
+            let value = |key: &str| {
+                addon
+                    .values
+                    .as_ref()
+                    .and_then(|v| v.get(key))
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.is_empty())
+            };
+            if value("server").is_none() || value("path").is_none() {
+                d.error("storage.kind = \"nfs\" requires storage.server and storage.path");
+            }
+        }
         if let Err(err) = resolve_selection(spec, None) {
             d.error(err.to_string());
         }
@@ -430,7 +428,18 @@ impl Component for AddonEngine {
     fn artifacts(&self, _spec: &Cluster, arch: Arch) -> Vec<ArtifactRef> {
         // The control-machine helm payload (04 §3.4): every chart addon
         // executes it on the anchor.
-        vec![ArtifactRef::of("helm", arch)]
+        //
+        // The two built-in storage addons (`local-path`, `nfs-subdir`)
+        // replaced the first-layer storage components in WP-47. Their
+        // images stay in the cluster-agnostic bundle/base package, so an
+        // offline payload keeps carrying them exactly as before; every
+        // other addon's images travel with its addon package (WP-45).
+        vec![
+            ArtifactRef::of("helm", arch),
+            ArtifactRef::of("local-path-provisioner", arch),
+            ArtifactRef::of("busybox", arch),
+            ArtifactRef::of("nfs-subdir-provisioner", arch),
+        ]
     }
 
     fn plan(&self, b: &mut PlanBuilder<'_>) -> Result<()> {
@@ -508,7 +517,7 @@ fn add_install_tasks(b: &mut PlanBuilder<'_>) -> Result<()> {
 fn add_remove_tasks(b: &mut PlanBuilder<'_>, keep_crds: bool) -> Result<()> {
     let phase = b.phase("addons");
     for (name, entry) in &b.cluster().addons {
-        if entry.enabled || first_layer_owned(name, b.cluster()) {
+        if entry.enabled {
             continue;
         }
         let mut task = AddonRemoveTask::new(b.cluster(), b.run(), b.op(), name);

@@ -150,3 +150,45 @@ enabled = true
     assert!(msg.contains("unknown addon"), "message: {msg}");
     assert!(msg.contains("metrics-server"), "message: {msg}");
 }
+
+#[test]
+fn v1alpha1_storage_and_its_v1alpha2_form_are_the_same_spec() {
+    // WP-47: `[storage]` is only a v1alpha1 spelling. Both versions must
+    // lower to exactly the same addon entry (names + values), so the
+    // addon engine cannot tell which file it came from.
+    for (name, addon, values) in [
+        (
+            "storage-local-path.toml",
+            "local-path",
+            vec![("default-class", toml::Value::Boolean(true))],
+        ),
+        (
+            "storage-nfs.toml",
+            "nfs-subdir",
+            vec![
+                ("default-class", toml::Value::Boolean(false)),
+                ("server", toml::Value::String("192.168.10.50".to_string())),
+                ("path", toml::Value::String("/export/kurin".to_string())),
+            ],
+        ),
+    ] {
+        let path = fixture(name);
+        let src = read_fixture(&path);
+        let v1 = parse_str(&path, &src).expect("v1alpha1 loads");
+        let migrated = migrate_str(&path, &src).expect("migrates");
+        let v2 = parse_str(&path, &migrated).expect("v1alpha2 loads");
+
+        assert!(v1.same_spec(&v2), "{name}: specs differ");
+        let entry = v1.addons.get(addon).expect("storage addon present");
+        assert!(entry.enabled, "{name}: addon must be enabled");
+        let table = entry
+            .values
+            .as_ref()
+            .and_then(|v| v.as_table())
+            .expect("values table");
+        for (key, expected) in values {
+            assert_eq!(table.get(key), Some(&expected), "{name}: {key}");
+        }
+        assert_eq!(v1.addons, v2.addons, "{name}: addon maps differ");
+    }
+}

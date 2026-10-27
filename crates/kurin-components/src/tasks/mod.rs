@@ -13,7 +13,6 @@ pub mod post;
 pub mod preflight;
 pub mod prepare;
 pub mod registry;
-pub mod storage;
 
 use kurin_config::v1alpha2::Delivery;
 use kurin_config::Cluster;

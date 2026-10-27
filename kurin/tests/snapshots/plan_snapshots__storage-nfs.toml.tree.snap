@@ -35,10 +35,10 @@ expression: render_tree(&plan)
 ├── stage: api-ready (1 tasks)
 │   └── join/kubeadm@worker01 :: kubeadm join (worker) -> 192.168.10.11:6443
 ├── stage: join (0 tasks)
-├── stage: cni (2 tasks)
-│   ├── cni/calico-operator@master01 :: kubectl apply tigera-operator manifest + Installation CR
-│   └── storage/install@master01 :: deploy Nfs provisioner (StorageClass kurin-nfs)
-├── stage: addons (0 tasks)
+├── stage: cni (1 tasks)
+│   └── cni/calico-operator@master01 :: kubectl apply tigera-operator manifest + Installation CR
+├── stage: addons (1 tasks)
+│   └── addons/nfs-subdir@master01 :: install addon nfs-subdir 4.0.2 via manifests
 └── stage: post (2 tasks)
     ├── post/kubeconfig@master01 :: fetch admin.conf -> merge local kubeconfig (context cluster-storage-nfs)
     └── post/state-record@master01 :: record cluster state in kube-system/kurin-state

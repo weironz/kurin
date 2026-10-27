@@ -187,25 +187,27 @@ expression: plan_matrix(&plan)
     },
     {
       "ids": [
-        "cni/calico-operator@master01",
-        "storage/install@master01"
+        "cni/calico-operator@master01"
       ],
       "stage": "cni",
       "tasks": [
         {
           "describe": "kubectl apply tigera-operator manifest + Installation CR",
           "id": "cni/calico-operator@master01"
-        },
-        {
-          "describe": "deploy LocalPath provisioner (StorageClass kurin-local-path)",
-          "id": "storage/install@master01"
         }
       ]
     },
     {
-      "ids": [],
+      "ids": [
+        "addons/local-path@master01"
+      ],
       "stage": "addons",
-      "tasks": []
+      "tasks": [
+        {
+          "describe": "install addon local-path 0.0.31 via manifests",
+          "id": "addons/local-path@master01"
+        }
+      ]
     },
     {
       "ids": [

@@ -4,9 +4,9 @@ kubernetes-sigs [nfs-subdir-external-provisioner](https://github.com/kubernetes-
 对接用户自备的 NFS 服务器，StorageClass 名为 `kurin-nfs`。
 
 - 版本 / version: **4.0.2**（manifest 安装，无 chart；
-  资源与第一层 storage 组件逐字段一致，WP-47 迁移时不重建）
-- 安装 / install: `[addons.nfs-subdir] enabled = true`
-  （目前由第一层 storage 组件执行，直到 WP-47 把它交给 addon 引擎）
+  对象名称、命名空间与 StorageClass 和迁移前一致，升级 kurin 不删除重建）
+- 安装 / install: `[addons.nfs-subdir] enabled = true`，由 addon 引擎
+  执行（任务 `addons/nfs-subdir@<node>`）
 - 命名空间 / namespace: `default`
 - 镜像 / image:
   `registry.k8s.io/sig-storage/nfs-subdir-external-provisioner:v4.0.2`
@@ -35,9 +35,9 @@ values = { server = "10.0.0.5", path = "/exports/k8s", default-class = true }
 `local-path` 同时启用会在配置校验期被拒绝）。提供
 `provides: [default-storage-class]`。
 
-## 与第一层的过渡 / transitional note
+## 迁移 / migration
 
-在 WP-47 之前，启用本 addon 仍由第一层 `storage/nfs` 组件安装（任务
-`storage/install@<node>`）；`kurin addon remove nfs-subdir` 因此没有
-可卸载的记录（no-op）。WP-47 移除第一层组件后，本目录的 manifest
-模板接手，资源名称与字段保持不变。
+v1alpha1 的 `[storage] kind = "nfs"` 在加载时自动映射为本 addon
+（`values = { server, path, default-class }`），StorageClass 仍叫
+`kurin-nfs`；已有集群重跑 `create cluster` 时由服务端 apply 收敛，
+资源不会被删除重建，第一次运行写入 `kurin-state` 记录后即为 InSync。

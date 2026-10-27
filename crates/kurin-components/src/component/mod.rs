@@ -5,8 +5,9 @@
 //! consults the explicit [`registry()`] — there is no dynamic loading.
 //!
 //! WP-15 migrated the os, runtime and distro components; WP-16 adds ha,
-//! cni, registry, storage (an addon-layer candidate, see WP-47) and the
-//! post-install reporting. `capabilities()` aggregated over the registry
+//! cni, registry and the post-install reporting. Dynamic storage moved to
+//! the declarative addon layer in WP-47 (`addons.local-path` /
+//! `addons.nfs-subdir`). `capabilities()` aggregated over the registry
 //! is the single source of truth behind `kurin capabilities --json` and
 //! `just docs-matrix`.
 //!
@@ -34,7 +35,6 @@ pub mod os;
 pub mod post;
 pub mod registry;
 pub mod runtime;
-pub mod storage;
 
 /// The layer a built-in component belongs to (03 §3): pieces that run on
 /// the node itself, grouped by what they own.
@@ -52,9 +52,6 @@ pub enum ComponentKind {
     Ha,
     /// Node-hosted image registry.
     Registry,
-    /// Dynamic storage provisioning (first-layer until WP-47 moves it
-    /// to the addon layer).
-    Storage,
     /// Post-install reporting (kubeconfig, summary, labels).
     Post,
     /// Declarative addon engine (WP-40+).
@@ -72,7 +69,6 @@ impl ComponentKind {
             ComponentKind::Cni => "cni",
             ComponentKind::Ha => "ha",
             ComponentKind::Registry => "registry",
-            ComponentKind::Storage => "storage",
             ComponentKind::Post => "post",
             ComponentKind::AddonEngine => "addon-engine",
         }
@@ -256,7 +252,7 @@ pub trait Component: Send + Sync {
 /// The explicit registry of built-in components: no dynamic loading, and
 /// the item order is the consultation order — the os track first, then
 /// the runtime, then the distribution that ties them together, then the
-/// kubeadm-track areas (ha, cni, registry, storage, post) in the order
+/// kubeadm-track areas (ha, cni, registry, addons, post) in the order
 /// their `plan_*` functions used to run.
 pub struct ComponentRegistry {
     items: Vec<Arc<dyn Component>>,
@@ -297,8 +293,6 @@ pub fn registry() -> &'static ComponentRegistry {
             Arc::new(registry::DockerRegistry),
             Arc::new(registry::Harbor),
             Arc::new(registry::External),
-            Arc::new(storage::LocalPath),
-            Arc::new(storage::Nfs),
             Arc::new(crate::addon::engine::AddonEngine),
             Arc::new(post::Kubeconfig),
             Arc::new(post::Summary),
@@ -405,7 +399,6 @@ fn bundle_spec() -> Cluster {
             password: None,
             data_dir: "/var/lib/kurin/registry".into(),
         },
-        storage: kurin_config::StorageSpec::default(),
         packages: kurin_config::PackageSources {
             offline_dir: Some(std::path::PathBuf::new()),
             ..Default::default()
@@ -525,10 +518,11 @@ pub struct PackageComponentSpec {
 /// distributions and the unselected CNIs. Components with no artifacts
 /// contribute nothing and are left out.
 ///
-/// The runtime, os, ha, registry and storage layers are included
+/// The runtime, os, ha and registry layers are included
 /// unconditionally: a base package must cover any cluster config of its
-/// distribution (both runtimes, every registry kind, the storage
-/// provisioners), like the legacy cluster-agnostic bundle did.
+/// distribution (both runtimes, every registry kind). The addon engine
+/// carries helm plus the built-in storage addons' images (WP-47), like
+/// the legacy cluster-agnostic bundle did.
 pub fn base_components(
     distribution: kurin_config::Distribution,
     cni: &CniSelection,
@@ -608,8 +602,6 @@ mod tests {
                 "registry/docker-registry",
                 "registry/harbor",
                 "registry/external",
-                "storage/local-path",
-                "storage/nfs",
                 "addon/engine",
                 "post/kubeconfig",
                 "post/summary",
@@ -809,7 +801,18 @@ mod tests {
                 .iter()
                 .find(|c| c.id == "addon/engine")
                 .unwrap_or_else(|| panic!("{distribution:?} package lacks addon/engine"));
-            assert_eq!(engine.artifacts, vec!["helm".to_string()]);
+            assert_eq!(
+                engine.artifacts,
+                vec![
+                    "helm".to_string(),
+                    // WP-47: the built-in storage addons' images stay in
+                    // the cluster-agnostic bundle (they replaced the
+                    // first-layer storage components).
+                    "local-path-provisioner".to_string(),
+                    "busybox".to_string(),
+                    "nfs-subdir-provisioner".to_string(),
+                ]
+            );
         }
         for arch in [Arch::Amd64, Arch::Arm64] {
             assert!(

@@ -26,10 +26,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::{
     ArtifactsConfig, Distribution as DistributionV1, HaConfig, NetworkConfig, NodeConfig, NodeRole,
-    RegistryKind, RuntimeKind, SshDefaults, StorageKind,
+    RegistryKind, RuntimeKind, SshDefaults,
 };
 use crate::error::{ConfigError, Result};
-use crate::model::{AddonSpec, ClusterSpec, PackageSources, StorageSpec};
+use crate::model::{AddonSpec, ClusterSpec, PackageSources};
 use crate::secret::SecretRef;
 
 /// Schema version this module describes.
@@ -282,9 +282,10 @@ fn is_registry_namespace(ns: &str) -> bool {
 ///
 /// The shared sections are converted through the v1alpha1 shape so both
 /// versions necessarily agree on defaults; the v1alpha2-only sections
-/// (`runtime`, `packages`, `addons`) are applied on top. `[storage]` is
-/// derived from `addons.local-path` / `addons.nfs-subdir`, which keeps
-/// the WP-47 cutover a no-op for existing components.
+/// (`runtime`, `packages`, `addons`) are applied on top. Storage is
+/// declared directly as `addons.local-path` / `addons.nfs-subdir`
+/// (WP-47); the values are validated here so a bad storage config still
+/// fails at load time.
 impl TryFrom<ClusterConfig> for ClusterSpec {
     type Error = ConfigError;
 
@@ -410,28 +411,26 @@ impl TryFrom<ClusterConfig> for ClusterSpec {
                 )
             })
             .collect();
-        spec.storage = storage_from_addons(&spec.addons)?;
+        validate_storage_addons(&spec.addons)?;
         Ok(spec)
     }
 }
 
-/// Derive the legacy `StorageSpec` from the storage addons so the
-/// first-layer storage components keep working until WP-47 removes them.
-fn storage_from_addons(addons: &BTreeMap<String, AddonSpec>) -> Result<StorageSpec> {
-    let mut storage = StorageSpec::default();
+/// Validate the storage addons' values (WP-47: the addon engine installs
+/// them, so the rules that used to live in the first-layer storage
+/// component move here — same wording, still at load time).
+fn validate_storage_addons(addons: &BTreeMap<String, AddonSpec>) -> Result<()> {
     let mut selected = 0u8;
     if let Some(addon) = addons.get("local-path").filter(|a| a.enabled) {
         selected += 1;
-        storage.kind = Some(StorageKind::LocalPath);
-        storage.default = bool_value(addon, "local-path", "default-class")?.unwrap_or(false);
+        bool_value(addon, "local-path", "default-class")?;
     }
     if let Some(addon) = addons.get("nfs-subdir").filter(|a| a.enabled) {
         selected += 1;
-        storage.kind = Some(StorageKind::Nfs);
-        storage.default = bool_value(addon, "nfs-subdir", "default-class")?.unwrap_or(false);
-        storage.server = string_value(addon, "nfs-subdir", "server")?;
-        storage.path = string_value(addon, "nfs-subdir", "path")?;
-        if storage.server.is_none() || storage.path.is_none() {
+        bool_value(addon, "nfs-subdir", "default-class")?;
+        let server = string_value(addon, "nfs-subdir", "server")?;
+        let path = string_value(addon, "nfs-subdir", "path")?;
+        if server.is_none() || path.is_none() {
             return Err(ConfigError::invalid(
                 String::new(),
                 "addons.nfs-subdir requires values = { server = \"…\", path = \"…\" }",
@@ -445,7 +444,7 @@ fn storage_from_addons(addons: &BTreeMap<String, AddonSpec>) -> Result<StorageSp
              one dynamic storage provisioner",
         ));
     }
-    Ok(storage)
+    Ok(())
 }
 
 fn addon_value<'a>(addon: &'a AddonSpec, key: &str) -> Option<&'a toml::Value> {
@@ -544,12 +543,20 @@ role = "control-plane"
     }
 
     #[test]
-    fn storage_is_derived_from_addons() {
+    fn storage_addons_keep_their_values() {
         let toml = MINIMAL.to_string()
             + "\n[addons.local-path]\nenabled = true\nvalues = { default-class = true }\n";
         let spec = parse_str(Path::new("x.toml"), &toml).expect("v1alpha2 parses");
-        assert_eq!(spec.storage_kind(), Some(StorageKind::LocalPath));
-        assert!(spec.storage_default());
+        let addon = spec.addons.get("local-path").expect("local-path addon");
+        assert!(addon.enabled);
+        assert_eq!(
+            addon
+                .values
+                .as_ref()
+                .and_then(|v| v.get("default-class"))
+                .and_then(|v| v.as_bool()),
+            Some(true)
+        );
     }
 
     #[test]

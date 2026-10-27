@@ -51,8 +51,12 @@ fi
 grep -q '"cluster-ready"' "$EVENTS" || { echo "[FAIL] no cluster-ready"; exit 1; }
 fails=$(grep -c '"task-failed"' "$EVENTS" || true)
 [ "$fails" -eq 0 ] || { echo "[FAIL] $fails task failures"; grep task-failed "$EVENTS"; exit 1; }
-grep -q '"id":"storage/install@node01"' "$EVENTS" || { echo "[FAIL] no storage task"; exit 1; }
-echo "[ok] cluster ready with storage/install"
+# WP-47: the storage provisioner is a declarative addon now; the task id
+# changed from storage/install@<node> to addons/<name>@<node>.
+ADDON=local-path
+[ "$KIND" = nfs ] && ADDON=nfs-subdir
+grep -q "\"id\":\"addons/$ADDON@node01\"" "$EVENTS" || { echo "[FAIL] no $ADDON addon task"; exit 1; }
+echo "[ok] cluster ready with addons/$ADDON"
 
 CLASS="kurin-$KIND"
 for i in $(seq 1 30); do

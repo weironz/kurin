@@ -1,6 +1,6 @@
 {#- kubernetes-sigs/nfs-subdir-external-provisioner v4.0.2 manifests, matching
-    the first-layer storage component (crates/kurin-components/src/tasks/storage.rs)
-    so the WP-47 cutover does not recreate resources. Upstream source:
+    the former first-layer storage component (removed in WP-47) so the
+    cutover does not recreate resources. Upstream source:
     deploy objects of kubernetes-sigs/nfs-subdir-external-provisioner. -#}
 {%- set provisioner_image -%}
 {%- if zone == "cn" -%}
@@ -8,6 +8,7 @@ k8s.m.daocloud.io/sig-storage/nfs-subdir-external-provisioner:v4.0.2
 {%- else -%}
 registry.k8s.io/sig-storage/nfs-subdir-external-provisioner:v4.0.2
 {%- endif -%}
+{%- endset -%}
 apiVersion: v1
 kind: ServiceAccount
 metadata:

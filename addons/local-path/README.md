@@ -5,9 +5,9 @@ Rancher [local-path-provisioner](https://github.com/rancher/local-path-provision
 StorageClass 名为 `kurin-local-path`，helper Pod 使用 busybox。
 
 - 版本 / version: **0.0.31**（manifest 安装，无 chart；
-  资源与第一层 storage 组件逐字段一致，WP-47 迁移时不重建）
-- 安装 / install: `[addons.local-path] enabled = true`（目前由第一层
-  storage 组件执行，直到 WP-47 把它交给 addon 引擎）
+  对象名称、命名空间与 StorageClass 和迁移前一致，升级 kurin 不删除重建）
+- 安装 / install: `[addons.local-path] enabled = true`，由 addon 引擎
+  执行（任务 `addons/local-path@<node>`）
 - 命名空间 / namespace: `local-path-storage`
 - 镜像 / images: `rancher/local-path-provisioner:v0.0.31`、`busybox:1.36.1`
   （`zone = "cn"` 时经 `docker.m.daocloud.io` 拉取）
@@ -30,9 +30,10 @@ values = { default-class = true }
 `nfs-subdir` 同时启用会在配置校验期被拒绝）。提供
 `provides: [default-storage-class]`。
 
-## 与第一层的过渡 / transitional note
+## 迁移 / migration
 
-在 WP-47 之前，启用本 addon 仍由第一层 `storage/local-path` 组件安装
-（任务 `storage/install@<node>`）；`kurin addon remove local-path`
-因此没有可卸载的记录（no-op）。WP-47 移除第一层组件后，本目录的
-manifest 模板接手，资源名称与字段保持不变。
+v1alpha1 的 `[storage] kind = "local-path"` 在加载时自动映射为本
+addon（`values = { default-class }`），StorageClass 仍叫
+`kurin-local-path`；已有集群重跑 `create cluster` 时由服务端 apply
+收敛，资源不会被删除重建，第一次运行写入 `kurin-state` 记录后即为
+InSync。

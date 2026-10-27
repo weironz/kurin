@@ -670,7 +670,6 @@ pub(crate) async fn probe_nodes(
             auth: Some(auth),
         },
         registry: Default::default(),
-        storage: Default::default(),
         packages: Default::default(),
         addons: BTreeMap::new(),
         source: String::new(),

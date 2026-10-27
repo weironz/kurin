@@ -2,6 +2,24 @@
 
 All notable changes to kurin. Format follows Keep a Changelog; semver.
 
+### Changed (WP-47)
+- Dynamic storage provisioning moved from first-layer components to the
+  declarative addon layer: `local-path` and `nfs-subdir` are installed by
+  the addon engine (`addons/local-path@<node>` / `addons/nfs-subdir@<node>`
+  in the `addons` phase instead of `storage/install@<node>` in `cni`).
+  The `storage/*` components and their task are gone.
+- v1alpha1 `[storage]` lowers to `[addons.local-path]` /
+  `[addons.nfs-subdir]` at load time, so both schema versions produce the
+  same `ClusterSpec`; the object names, namespaces and StorageClass
+  names stay exactly as before (`kurin-local-path` / `kurin-nfs`), so an
+  existing cluster converges through server-side apply — nothing is
+  deleted or recreated — and reports the storage task `InSync` once
+  `kurin-state` records the addon. local-path's rendered image
+  references now use their canonical `docker.io/` form (same digests).
+- The addon engine now declares the built-in storage addons' images, so
+  the cluster-agnostic offline bundle and base package keep carrying
+  `local-path-provisioner`, `busybox` and `nfs-subdir-provisioner`.
+
 ### Added (WP-45)
 - `kurin package create addon -f addons/<name>/addon.yaml` builds an
   offline-installable addon package (04 §3.4): every addon file becomes a

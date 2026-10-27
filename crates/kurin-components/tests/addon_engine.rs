@@ -255,22 +255,33 @@ fn compat_arch_and_distribution_gate_the_selection() {
 }
 
 #[test]
-fn storage_addons_stay_with_the_first_layer() {
-    // A storage.kind = "local-path" cluster derives addons.local-path;
-    // the engine must not plan it (WP-47 owns the hand-off).
-    let (tmp, users) = write_catalog(Path::new("x"), &[("base", BASE_ADDON)]);
-    let mut cluster = cluster_with(users);
-    cluster.storage.kind = Some(kurin_config::StorageKind::LocalPath);
+fn storage_addons_are_engine_owned() {
+    // WP-47: a v1alpha1 `[storage]` lowers to `addons.local-path`; the
+    // engine resolves it from the embedded catalog and plans it like any
+    // other addon (no first-layer storage component is left).
+    let mut cluster = cluster();
     cluster.addons.insert(
         "local-path".to_string(),
-        user_spec(Some(toml::Value::Boolean(true))),
+        user_spec(Some(toml::Value::Table(toml::map::Map::from_iter([(
+            "default-class".to_string(),
+            toml::Value::Boolean(true),
+        )])))),
     );
     let selected = resolve_selection(&cluster, None).expect("valid selection");
     assert_eq!(
         selected.iter().map(|s| s.addon.name()).collect::<Vec<_>>(),
-        ["base"]
+        ["local-path"]
     );
-    drop(tmp);
+
+    let run = run(&cluster);
+    let plan = kurin_components::plan::build(&cluster, &run).expect("plan builds");
+    let addons_group = plan
+        .phase_groups()
+        .into_iter()
+        .find(|g| g.phase.id == "addons")
+        .expect("addons phase");
+    let ids: Vec<String> = addons_group.tasks.iter().map(|t| t.task.id()).collect();
+    assert_eq!(ids, ["addons/local-path@cp-1".to_string()]);
 }
 
 // ---------------------------------------------------------------------------
@@ -466,6 +477,21 @@ impl StateApi {
 impl ClusterApi for StateApi {
     async fn apply(&self, objs: &[DynamicObject], _opts: ApplyOpts) -> Result<ApplyReport> {
         self.applied.lock().unwrap().push(objs.to_vec());
+        // The `kurin-state` ConfigMap write is what a later `check`
+        // reads back; keep the mock's served state in step with it.
+        if let Some(state) = objs.iter().find(|object| {
+            object.metadata.name.as_deref() == Some("kurin-state")
+                && object
+                    .types
+                    .as_ref()
+                    .is_some_and(|types| types.kind == "ConfigMap")
+        }) {
+            *self.state.lock().unwrap() = json!({
+                "kind": "ConfigMap",
+                "metadata": { "name": "kurin-state", "namespace": "kube-system" },
+                "data": state.data.get("data").cloned().unwrap_or(Value::Null),
+            });
+        }
         let applied = objs
             .iter()
             .filter_map(|object| {
@@ -843,4 +869,116 @@ async fn remove_task_uninstalls_and_drops_the_record_entry() {
         "entry must be removed: {addons}"
     );
     drop(tmp);
+}
+
+// ---------------------------------------------------------------------------
+// WP-47: the storage provisioners are engine-owned addons
+// ---------------------------------------------------------------------------
+
+/// A v1alpha1 `[storage]` document: the lowering turns it into the same
+/// `[addons.local-path]` entry a v1alpha2 file would declare.
+fn v1alpha1_storage(storage: &str) -> ClusterSpec {
+    let toml = format!(
+        r#"version = "v1alpha1"
+name = "storage-e2e"
+
+[kubernetes]
+version = "1.33.1"
+
+[network]
+pod-cidr = "10.233.64.0/18"
+service-cidr = "10.233.0.0/18"
+
+[network.cni]
+kind = "calico"
+
+[ssh]
+user = "root"
+
+[ssh.auth]
+method = "password"
+password = "fake"
+
+[storage]
+{storage}
+
+[nodes.cp-1]
+address = "10.99.0.11"
+role = "control-plane"
+"#
+    );
+    parse_str(Path::new("storage.toml"), &toml).expect("v1alpha1 storage parses")
+}
+
+#[test]
+fn nfs_storage_without_server_or_path_is_a_config_error() {
+    // The wording is the former first-layer `storage/nfs` component's;
+    // the engine enforces it now that it owns the addon.
+    let cluster = v1alpha1_storage("kind = \"nfs\"");
+    let err = kurin_components::component::validate(&cluster).expect_err("must be rejected");
+    assert!(
+        format!("{err}")
+            .contains("storage.kind = \"nfs\" requires storage.server and storage.path"),
+        "{err}"
+    );
+
+    let ok = v1alpha1_storage("kind = \"nfs\"\nserver = \"10.99.9.9\"\npath = \"/export/pv\"");
+    kurin_components::component::validate(&ok).expect("server + path validate");
+}
+
+#[tokio::test]
+async fn storage_addon_is_insync_when_create_runs_again_on_an_existing_cluster() {
+    // First `create cluster`: no kurin-state record -> drift -> apply.
+    // The apply writes the addon record; a second create then finds the
+    // storage task InSync (the acceptance criterion for WP-47).
+    let cluster = v1alpha1_storage("kind = \"local-path\"\ndefault = true");
+    let run = run(&cluster);
+    let selected = resolve_selection(&cluster, None).expect("selection resolves");
+    let entry = selected
+        .into_iter()
+        .find(|s| s.addon.name() == "local-path")
+        .expect("local-path selected");
+    let task = AddonInstallTask::new(&cluster, &run, OpKind::Create, entry.addon, entry.user);
+
+    let api = Arc::new(StateApi::default());
+    // The provisioner Deployment is ready by the time the tracker polls.
+    api.objects.lock().unwrap().insert(
+        ("Deployment".into(), "local-path-provisioner".into()),
+        Some(json!({
+            "metadata": { "generation": 1 },
+            "spec": { "replicas": 1 },
+            "status": {
+                "updatedReplicas": 1,
+                "availableReplicas": 1,
+                "observedGeneration": 1,
+            },
+        })),
+    );
+    let kubectl = KubectlSession {
+        api: Arc::clone(&api),
+    };
+    let session = ScriptedSession::default();
+
+    match task
+        .check_with(&session, &kubectl)
+        .await
+        .expect("check runs")
+    {
+        kurin_core::engine::Drift::Drifted(reason) => {
+            assert!(reason.contains("not recorded"), "{reason}")
+        }
+        other => panic!("expected drift, got {other:?}"),
+    }
+    task.apply_with(&session, &kubectl)
+        .await
+        .expect("storage addon applies");
+    assert!(
+        matches!(
+            task.check_with(&session, &kubectl)
+                .await
+                .expect("check runs"),
+            kurin_core::engine::Drift::InSync
+        ),
+        "a re-run must be InSync"
+    );
 }

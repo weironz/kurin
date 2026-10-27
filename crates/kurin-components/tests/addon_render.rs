@@ -10,7 +10,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use kurin_components::addon::{Addon, RenderRequest};
+use kurin_components::addon::{Addon, Catalog, RenderRequest};
 use kurin_config::{parse_str, AddonSpec, ClusterSpec};
 use kurin_core::events::Redactor;
 use serde_json::json;
@@ -157,6 +157,44 @@ fn renders_manifest_templates_from_the_fixture_catalog() {
     assert_eq!(rendered.manifests.len(), 1);
     assert_eq!(rendered.manifests[0].path, "manifests/config.yaml.j2");
     insta::assert_snapshot!("render_local_path_manifest", rendered.manifests[0].text);
+}
+
+#[test]
+fn embedded_storage_addons_render_their_storage_classes() {
+    // WP-47: the shipped local-path / nfs-subdir templates are what the
+    // addon engine renders on a real cluster; both must produce their
+    // StorageClass (`kurin-local-path` / `kurin-nfs`) and the provisioner
+    // Deployment.
+    let catalog = Catalog::embedded().expect("embedded catalog loads");
+    for (name, class, extra) in [
+        (
+            "local-path",
+            "kurin-local-path",
+            "[addons.local-path]\nenabled = true\nvalues = { default-class = true }\n",
+        ),
+        (
+            "nfs-subdir",
+            "kurin-nfs",
+            "[addons.nfs-subdir]\nenabled = true\nvalues = { server = \"10.0.0.5\", path = \"/exports\" }\n",
+        ),
+    ] {
+        let cluster = cluster(extra);
+        let user = cluster.addons.get(name).expect("addon configured");
+        let addon = catalog
+            .addons()
+            .iter()
+            .find(|addon| addon.name() == name)
+            .unwrap_or_else(|| panic!("{name} is in the embedded catalog"));
+        let rendered = addon
+            .render(
+                &RenderRequest::new(&cluster, user).zone("global"),
+                &Redactor::new(),
+            )
+            .unwrap_or_else(|err| panic!("{name} renders: {err}"));
+        let text = &rendered.manifests[0].text;
+        assert!(text.contains(&format!("name: {class}")), "{name}: {text}");
+        assert!(text.contains("kind: Deployment"), "{name}: {text}");
+    }
 }
 
 #[test]

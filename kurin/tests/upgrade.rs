@@ -206,7 +206,6 @@ fn cluster(name: &str, cps: usize, workers: usize) -> Cluster {
             auth: None,
         },
         registry: kurin_config::RegistrySpec::default(),
-        storage: kurin_config::StorageSpec::default(),
         packages: kurin_config::PackageSources {
             offline_dir: None,
             zone: None,

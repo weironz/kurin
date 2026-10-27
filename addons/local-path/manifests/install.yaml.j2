@@ -1,6 +1,6 @@
-{#- Rancher local-path-provisioner v0.0.31 manifests, matching the first-layer
-    storage component (crates/kurin-components/src/tasks/storage.rs) so the
-    WP-47 cutover does not recreate resources. Upstream source:
+{#- Rancher local-path-provisioner v0.0.31 manifests, matching the former
+    first-layer storage component (removed in WP-47) so the cutover does
+    not recreate resources. Upstream source:
     deploy/local-path-storage.yaml of rancher/local-path-provisioner. -#}
 {%- set provisioner_image -%}
 {%- if zone == "cn" -%}
@@ -8,12 +8,14 @@ docker.m.daocloud.io/rancher/local-path-provisioner:v0.0.31
 {%- else -%}
 docker.io/rancher/local-path-provisioner:v0.0.31
 {%- endif -%}
+{%- endset -%}
 {%- set helper_image -%}
 {%- if zone == "cn" -%}
 docker.m.daocloud.io/library/busybox:1.36.1
 {%- else -%}
 docker.io/library/busybox:1.36.1
 {%- endif -%}
+{%- endset -%}
 apiVersion: v1
 kind: Namespace
 metadata:

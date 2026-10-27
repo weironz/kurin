@@ -374,44 +374,6 @@ expression: json
     ]
   },
   {
-    "id": "storage/local-path",
-    "kind": "storage",
-    "distributions": [
-      "k8s"
-    ],
-    "archs": [
-      "amd64",
-      "arm64"
-    ],
-    "offline": "online-only",
-    "zones": [
-      "global",
-      "cn"
-    ],
-    "ops": [
-      "create"
-    ]
-  },
-  {
-    "id": "storage/nfs",
-    "kind": "storage",
-    "distributions": [
-      "k8s"
-    ],
-    "archs": [
-      "amd64",
-      "arm64"
-    ],
-    "offline": "online-only",
-    "zones": [
-      "global",
-      "cn"
-    ],
-    "ops": [
-      "create"
-    ]
-  },
-  {
     "id": "addon/engine",
     "kind": "addon-engine",
     "distributions": [
