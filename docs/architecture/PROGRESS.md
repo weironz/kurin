@@ -46,7 +46,7 @@
 | WP-39 签名/SBOM/发布 | todo | | | | |
 | WP-40 addon.yaml 规范 | done | 见提交 | 无 | 无 | 41 个 addon 专项测试；schema 漂移测试；目录/内嵌/包三种加载；修复 package 文件集两级索引 bug |
 | WP-41 addon 渲染 | done | 见提交 | 新增 4 个渲染快照 | 无（纯本地渲染） | 03 §4.4 上下文；values 合并/校验；秘密脱敏；未声明镜像拒绝 |
-| WP-42 helm 执行器 | todo | | | tier1 测试 chart | |
+| WP-42 helm 执行器 | done | 见提交 | 无 | tier1 安装测试 chart | helm 3.19.0 制品（官方 sha256）；HelmRunner + manifests SSA；渲染镜像检查；返回对象列表 |
 | WP-43 addon-engine 组件 | todo | | | | |
 | WP-44 kurin addon 命令族 | todo | | | tier1 metrics-server 生命周期 | |
 | WP-45 addon 打包与离线 | todo | | | 离线 tier1 ingress-nginx | |
@@ -87,6 +87,7 @@
 - WP-33：`inspect --json` 改为 `--manifest`（全局 `--json` 与子命令长选项冲突），`list` 用 `--format text|json`；`prune` 需全量重哈希（3.7GiB 约 2 分钟）。
 - WP-32：`kurin artifact` 现在产出 OCI layout（旧目录树由 WP-34 兼容读取）；镜像按所选架构携带子 manifest，上游 index 原样保留；修复 busybox URL 模板（Docker Hub tag 无 `v` 前缀）。
 - WP-51：本 WP 只提供 Rust store API，未接入 HTTP/AppState（WP-52 集成）；`ApiError::Internal` 为增量变体。
+- WP-42：helm 制品标 `optional`（旧 bundle 仍兼容，缺 helm 时明确报错）；`oci://` chart 由锚点 helm 拉取；集群级 kind 用内建清单判定。
 - WP-41：「内置推荐值」实现为 `values.yaml.j2` 按集群上下文渲染；`kubernetes.distribution` 暴露 kubeadm/k3s；`registry.mirror` 未配置为 null。
 - WP-40：`BUILTIN_ADDONS` 与内嵌目录接线留给 WP-43/46（目录暂空）；`oci://` 源明确报错，依赖 WP-33 的 pull。
 - WP-27：`add nodes` 复用 `merge()`，v1alpha1 配置会先迁移为 v1alpha2 再写回；`--set` 写在 WP-26 已实现，本 WP 补测试/文档。顺带修复 `package inspect --json` 与全局 `--json` 的 clap 冲突（改用全局开关）。
@@ -124,6 +125,7 @@
 - WP-33：本地 zot 容器三形态互转（layout→zot→tar→verify→inspect，二次 push 零发送，错误凭据 401）；已清理容器。
 - WP-32：`kurin package create base --arch amd64,arm64 -o file:///tmp/base.tar.zst`，再 `kurin package inspect file:///tmp/base.tar.zst`（真实网络下载约 10 分钟；本地假上游测试已覆盖校验路径）。
 - WP-51：`cargo test -p kurin-server --test store`；`rusqlite bundled` 的 musl/zig 交叉编译需在发布机验证。
+- WP-42：tier1 安装测试 chart（`helm upgrade --install ... --wait=false`），确认 `helm status` 与对象列表，再卸载。
 - WP-41：纯本地渲染/校验，无需远端 e2e；13 个集成 + 5 个单测。
 - WP-40：纯本地解析/校验，无需远端 e2e；`just addon-schema` 与漂移测试。
 - WP-27：`just tier2 && just tier2-test`，再 `e2e/tier2/add-worker.sh target/tier2/debug/kurin`。

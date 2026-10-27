@@ -67,6 +67,17 @@ pub enum AddonError {
         path: String,
         message: String,
     },
+
+    /// Execution failed: a helm command, an upload, or the server-side
+    /// apply of the rendered manifests (WP-42). The message is already
+    /// scrubbed of secrets.
+    #[error("failed to apply addon: {path}: {message}")]
+    #[diagnostic(code(kurin::addon::apply))]
+    Apply {
+        /// Addon (or release) the failure is about.
+        path: String,
+        message: String,
+    },
 }
 
 impl AddonError {
@@ -80,6 +91,14 @@ impl AddonError {
     /// A validation rejection at `path`.
     pub(crate) fn invalid(path: impl Into<String>, message: impl Into<String>) -> Self {
         AddonError::Invalid {
+            path: path.into(),
+            message: message.into(),
+        }
+    }
+
+    /// An execution failure at `path` (already redacted).
+    pub(crate) fn apply(path: impl Into<String>, message: impl Into<String>) -> Self {
+        AddonError::Apply {
             path: path.into(),
             message: message.into(),
         }
@@ -101,9 +120,10 @@ impl AddonError {
     /// One-line, span-free rendering for logs and snapshot tests.
     pub fn summary(&self) -> String {
         match self {
-            AddonError::Io { .. } | AddonError::Invalid { .. } | AddonError::Render { .. } => {
-                self.to_string()
-            }
+            AddonError::Io { .. }
+            | AddonError::Invalid { .. }
+            | AddonError::Render { .. }
+            | AddonError::Apply { .. } => self.to_string(),
             AddonError::Parse { path, message, .. } => {
                 format!("invalid addon.yaml: {path}: {message}")
             }

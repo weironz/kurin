@@ -400,6 +400,18 @@
       "optional": true
     },
     {
+      "name": "helm",
+      "kind": "binary",
+      "version": "3.19.0",
+      "file": "helm-v{version}-linux-{arch}.tar.gz",
+      "url_template": "https://get.helm.sh/helm-v{version}-linux-{arch}.tar.gz",
+      "sha256": {
+        "linux-amd64": "a7f81ce08007091b86d8bd696eb4d86b8d0f2e1b9f6c714be62f82f96a594496",
+        "linux-arm64": "440cf7add0aee27ebc93fada965523c1dc2e0ab340d4348da2215737fc0d76ad"
+      },
+      "optional": true
+    },
+    {
       "name": "local-path-provisioner",
       "kind": "image",
       "version": "0.0.31",

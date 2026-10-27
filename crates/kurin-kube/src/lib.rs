@@ -16,6 +16,11 @@
 //! the tunnel cannot be established. Both backends try the control-plane
 //! anchors in order, so one unreachable node does not blind kurin.
 //!
+//! [`HelmRunner`] (WP-42) drives the pinned `helm` binary over the same
+//! SSH session: upload, `helm template` (rendering and image checks),
+//! `helm upgrade --install --wait=false`, `helm status -o json` and
+//! `helm uninstall`. Readiness stays with [`track`], not helm.
+//!
 //! `k8s-openapi` is compiled with exactly one version feature (`v1_33`).
 //! To follow the supported Kubernetes line, bump that feature (and the
 //! `kube` minor if its MSRV moved) in `crates/kurin-kube/Cargo.toml`; the
@@ -31,11 +36,16 @@ use serde_json::Value;
 
 use kurin_core::executor::SessionPool;
 
+mod helm;
 mod kubeconfig;
 mod kubectl;
 mod track;
 mod tunnel;
 
+pub use helm::{
+    extract_helm_command, parse_objects, status_command, template_command, uninstall_command,
+    upgrade_command, HelmInfo, HelmRunner, HelmStatus,
+};
 pub use kubeconfig::rewrite_kubeconfig;
 pub use kubectl::{KubectlApi, SessionKubectl};
 pub use track::{

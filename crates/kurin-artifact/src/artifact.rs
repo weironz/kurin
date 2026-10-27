@@ -1427,6 +1427,37 @@ mod tests {
     }
 
     #[test]
+    fn helm_is_pinned_to_the_official_release() {
+        // WP-42: the addon engine executes this binary; the pin must be
+        // the official get.helm.sh release archive for both arches.
+        let manifest = ArtifactManifest::embedded().unwrap();
+        for (arch, sha) in [
+            (
+                Arch::Amd64,
+                "a7f81ce08007091b86d8bd696eb4d86b8d0f2e1b9f6c714be62f82f96a594496",
+            ),
+            (
+                Arch::Arm64,
+                "440cf7add0aee27ebc93fada965523c1dc2e0ab340d4348da2215737fc0d76ad",
+            ),
+        ] {
+            let spec = manifest.spec("helm", arch).unwrap();
+            assert_eq!(
+                spec.url(),
+                format!(
+                    "https://get.helm.sh/helm-v3.19.0-linux-{}.tar.gz",
+                    arch.as_str()
+                )
+            );
+            assert_eq!(
+                spec.file_name(),
+                format!("helm-v3.19.0-linux-{}.tar.gz", arch.as_str())
+            );
+            assert_eq!(spec.expected_sha256().as_deref(), Some(sha));
+        }
+    }
+
+    #[test]
     fn from_dir_round_trip() {
         let tmp = tempfile::tempdir().unwrap();
         let mut entries = vec![

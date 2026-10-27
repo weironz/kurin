@@ -10,9 +10,14 @@
 //!   violate alone; [`Catalog::validate`] adds the cross-addon rules.
 //! - [`Addon::render`] (WP-41) merges values, validates them against the
 //!   addon's schema, resolves secret references and renders manifest
-//!   templates; Helm execution and applying (WP-42), the `addon-engine`
-//!   component and install-time compat matching against a real cluster
-//!   (WP-43) are deliberately out of scope.
+//!   templates.
+//! - [`apply::apply_addon`] (WP-42) executes the rendered addon: Helm
+//!   through the pinned binary on the anchor control plane (render,
+//!   image check, `upgrade --install`), or server-side apply of the
+//!   rendered manifests. Both report the object list the readiness
+//!   tracker follows.
+//! - The `addon-engine` component and install-time compat matching
+//!   against a real cluster (WP-43) are deliberately out of scope.
 //!
 //! ```no_run
 //! use kurin_components::addon::{Addon, Catalog};
@@ -26,6 +31,7 @@
 //! # }
 //! ```
 
+pub mod apply;
 pub mod error;
 pub mod load;
 pub mod render;
@@ -34,6 +40,9 @@ pub mod source;
 pub mod spec;
 pub mod validate;
 
+pub use apply::{
+    apply_addon, release_status, uninstall_addon, AddonApply, ApplyRequest, HelmPayload,
+};
 pub use error::AddonError;
 pub use load::{embedded_from, Addon, Catalog};
 pub use render::{RenderRequest, RenderedAddon, RenderedManifest, RenderedValues};

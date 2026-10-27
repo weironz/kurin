@@ -2,6 +2,22 @@
 
 All notable changes to kurin. Format follows Keep a Changelog; semver.
 
+### Added (WP-42)
+- helm-based addon execution: the pinned `helm` 3.19.0 binary (official
+  sha256 for amd64/arm64) enters the artifact manifest and the base
+  package as a control-machine payload. `HelmRunner` uploads the binary,
+  the chart archive and the merged `values.yaml` into a work dir on the
+  anchor control plane, renders with `helm template` (the output's
+  images are checked against `spec.images` before anything reaches the
+  cluster), installs with `helm upgrade --install --namespace N
+  --create-namespace -f values.yaml --wait=false`, and reads
+  `helm status -o json` / `helm uninstall`. The admin kubeconfig follows
+  the distribution (`/etc/kubernetes/admin.conf` for kubeadm,
+  `/etc/rancher/k3s/k3s.yaml` for k3s).
+- manifests addons are rendered on the control machine and applied
+  through `ClusterApi` with server-side apply. Both install paths return
+  the applied object list for the readiness tracker (WP-18).
+
 ### Fixed (WP-33)
 - `kurin package inspect <src>` panicked on every invocation since
   WP-32: the global event-stream `--json` (`Option<JsonArg>`) and the

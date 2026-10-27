@@ -661,7 +661,7 @@ fn manifest_files(addon: &Addon, patterns: &[String]) -> Vec<String> {
 // image integrity (03 §4.2 rule 1)
 // ---------------------------------------------------------------------------
 
-fn check_images(
+pub(crate) fn check_images(
     spec: &Spec,
     path: &str,
     images: &BTreeSet<String>,
@@ -687,7 +687,7 @@ fn check_images(
 }
 
 /// Recursively collect every `image` field in a rendered object.
-fn collect_images(value: &Value, out: &mut BTreeSet<String>) {
+pub(crate) fn collect_images(value: &Value, out: &mut BTreeSet<String>) {
     match value {
         Value::Object(map) => {
             for (key, item) in map {
