@@ -62,7 +62,7 @@
 | WP-55 类型生成与静态资源 | todo | | | | |
 | WP-60 前端脚手架 | done | 见提交 | 无 | 无 | 提前实施（先用手写 provisional DTO 对 mock 开发，WP-55 替换为 ts-rs 生成类型）；34 个 Vitest 用例通过 |
 | WP-61 集群总览与详情 | done | 见提交 | 无 | 无（WP-53 验收场景待后端） | 15s 轮询、五态徽标、详情四 Tab；46 个 Vitest 用例 |
-| WP-62 创建向导 | todo | | | tier1 真实创建 | |
+| WP-62 创建向导 | done | 见提交 | 无 | Playwright mock 走完 3 主 HA 模板；tier1 真实创建 | 9 步向导；每步 render→validate；23 个 Vitest + 1 个 Playwright |
 | WP-63 操作详情与日志控制台 | done | 见提交 | 无 | tier1 真实 create 中刷新页面，日志从断点继续 | 阶段×节点网格；资源表；日志控制台（筛选/搜索/跟随/虚拟滚动/下载）；取消/重试；91 Vitest + 1 Playwright |
 | WP-64 Addon 页面与危险操作 | todo | | | tier1 metrics-server | |
 | WP-65 包页面/升级/证书/TOML 编辑器 | todo | | | tier2 页面升级 | |
@@ -139,6 +139,7 @@
 - WP-39：签名包校验、篡改 blob 拒绝、未签名包在 signature 模式拒绝（`cargo test -p kurin-artifact --test transfer`）；CI 工作流需在 tag 上人工验证。
 - WP-49：`just tier3-registry zot`、`docker-registry`、`external`（external 指向 zot）。
 - WP-63：tier1 真实 create 过程中刷新页面，确认日志从断点继续；`pnpm --dir web test:e2e`。
+- WP-62：Playwright `wizard.spec.ts` 在 mock 后端走完 9 步并提交；tier1 真实创建。
 - WP-55：`just release-musl` 后 `kurin serve` 打开页面；`just ts-bindings` 漂移测试。
 - WP-54：tier1 上 `/nodes/probe` 真实节点、`/addons` 安装后采集、`/packages/create-base` → push 到本地 zot。
 - WP-48：`just tier1-cilium`、`e2e/tier1/kube-ovn.sh`、`just tier1-cni-takeover cilium|kube-ovn`、`just tier1-offline-cni cilium`。
@@ -160,6 +161,7 @@
 - WP-39：签名包校验、篡改 blob 拒绝、未签名包在 signature 模式拒绝（`cargo test -p kurin-artifact --test transfer`）；CI 工作流需在 tag 上人工验证。
 - WP-49：`just tier3-registry zot`、`docker-registry`、`external`（external 指向 zot）。
 - WP-63：tier1 真实 create 过程中刷新页面，确认日志从断点继续；`pnpm --dir web test:e2e`。
+- WP-62：Playwright `wizard.spec.ts` 在 mock 后端走完 9 步并提交；tier1 真实创建。
 - WP-55：`just release-musl` 后 `kurin serve` 打开页面；`just ts-bindings` 漂移测试。
 - WP-54：tier1 上 `/nodes/probe` 真实节点、`/addons` 安装后采集、`/packages/create-base` → push 到本地 zot。
 - WP-48：`just tier1-cilium`、`e2e/tier1/kube-ovn.sh`、`just tier1-cni-takeover cilium|kube-ovn`、`just tier1-offline-cni cilium`。

@@ -2,8 +2,15 @@ import { useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Card, Descriptions, Spin, Table, Tag, Typography } from 'antd';
 import { apiFetch } from '../api/client';
-import type { Meta } from '../api/types';
+import type { CapabilityRow, Meta } from '../api/types';
 import { t } from '../i18n/zh-CN';
+
+/** 离线就绪 → 展示标签颜色（component/mod.rs `Offline`）。 */
+const offlineColor: Record<string, string> = {
+  bundle: 'green',
+  rejected: 'red',
+  'online-only': 'gold',
+};
 
 /** `/about`：版本、组件版本表、能力表（UI §8.1）。 */
 export default function AboutPage() {
@@ -35,7 +42,7 @@ export default function AboutPage() {
         rowKey={(r) => r.name}
         pagination={false}
         size="small"
-        dataSource={Object.entries(data?.componentVersions ?? {}).map(([name, version]) => ({
+        dataSource={Object.entries(data?.components ?? {}).map(([name, version]) => ({
           name,
           version,
         }))}
@@ -46,24 +53,21 @@ export default function AboutPage() {
       <Typography.Title level={5} style={{ marginTop: 24 }}>
         {t('about.capabilities')}
       </Typography.Title>
-      <Table
-        rowKey={(r) => r.name}
+      <Table<CapabilityRow>
+        rowKey={(r) => r.id}
         pagination={false}
         size="small"
-        dataSource={Object.entries(data?.capabilities ?? {}).map(([name, reason]) => ({
-          name,
-          reason,
-        }))}
+        dataSource={data?.capabilities ?? []}
       >
         <Table.Column
           title={t('about.column.constraint')}
-          dataIndex="name"
+          dataIndex="id"
           render={(v: string) => <Typography.Text code>{v}</Typography.Text>}
         />
         <Table.Column
           title={t('about.column.reason')}
-          dataIndex="reason"
-          render={(v: string) => <Tag>{v}</Tag>}
+          dataIndex="offline"
+          render={(v: string) => <Tag color={offlineColor[v] ?? 'default'}>{v}</Tag>}
         />
       </Table>
     </div>

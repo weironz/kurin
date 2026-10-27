@@ -42,17 +42,34 @@ export interface ApiErrorEnvelope {
 
 /* ------------------------------- meta (§7) -------------------------------- */
 
+/**
+ * `GET /meta` 能力表的一行（WP-54 `CapabilityRow`）：一个内置组件的支持面。
+ * 前端只用它禁用选项并解释原因（UI §8.3），最终结论以 validate 为准。
+ */
+export interface CapabilityRow {
+  /** 组件 id：`<kind>/<name>`（如 `cni/calico`、`distro/k3s`）。 */
+  id: string;
+  /** 所属层：cni / distro / runtime / ha / registry / addon / post。 */
+  kind: string;
+  /** 支持的发行版：`k8s` / `k3s`。 */
+  distributions: string[];
+  /** 有制品钉定的架构：amd64 / arm64。 */
+  archs: string[];
+  /** 离线就绪：`bundle` | `rejected` | `online-only`。 */
+  offline: string;
+  /** 可用下载区域。 */
+  zones: string[];
+  /** 参与的操作。 */
+  ops: string[];
+}
+
 /** `GET /meta`：版本、组件版本表（`create config --print-versions`）、能力表。 */
 export interface Meta {
   version: string;
   /** 组件版本表：组件名 → 版本（如 `kubernetes: v1.33.1`）。 */
-  componentVersions: Record<string, string>;
-  /**
-   * 能力表（UI §8.3）：`"<subject>:<constraint>"` → 原因。
-   * 例如 `"cni:kube-ovn:offline": "离线不可用"`。前端只用它禁用选项并解释原因，
-   * 不在 TS 复刻校验逻辑。
-   */
-  capabilities: Record<string, string>;
+  components: Record<string, string>;
+  /** 能力表（UI §8.3）：每个内置组件一行，禁用选项的唯一依据。 */
+  capabilities: CapabilityRow[];
 }
 
 /* -------------------------------- 集群 (§7) ------------------------------- */
@@ -217,7 +234,25 @@ export type OperationDetail = OperationSummary & {
    * 老操作可缺失，此时退化为纯事件流聚合（没有「待执行」格子）。
    */
   progress?: OperationProgress;
+  /**
+   * 终态操作携带的结果载荷（WP-62 扩展）：precheck 报表、plan 的 PlanView 等。
+   * 后端已把 result 存进 operations 表，序列化到 API 的字段由 WP-55 绑定收口。
+   */
+  result?: PrecheckReportResult | PlanResult | null;
 };
+
+/** `precheck` 操作的 `result` 载荷：逐节点检查行 + 计数。 */
+export interface PrecheckReportResult {
+  checks: Array<{
+    node: string;
+    check: string;
+    /** ok / warn / fail。 */
+    status: string;
+    detail: string;
+  }>;
+  failed: number;
+  warned: number;
+}
 
 /** 进度网格单元格状态（UI §8.1：待执行/执行中/跳过/完成/已核对/告警/失败）。 */
 export type TaskCellState =
@@ -352,36 +387,57 @@ export type LogDownloadFormat = 'log' | 'jsonl';
 
 /* ------------------------------ PlanView (§7) ----------------------------- */
 
-/** `POST /clusters/{name}/plan` 返回的计划视图（F6：`Plan` 不可序列化）。 */
-export interface PlanView {
-  stages: Array<{
-    stage: string;
+/**
+ * `plan` 操作的 `result` 载荷（kurin-ops `PlanView`，snake_case）：
+ * 阶段 → 任务，带稳定的任务 key 与可选的漂移标注。
+ */
+export interface PlanResult {
+  /** 操作类型（create / certs-renew / …）。 */
+  op: string;
+  phases: Array<{
+    /** 阶段 id（prepare / bootstrap / …）。 */
+    id: string;
+    /** 展示名。 */
+    label: string;
     tasks: Array<{
-      /** 任务 key：`<stage>/<kind>@<node>`。 */
-      id: string;
-      node?: string | null;
+      /** 稳定任务标识 `<stage>/<kind>@<node>`。 */
+      key: string;
+      node: string;
       describe: string;
-      /** 只读漂移探测（`?check=true`）：如 `would-change: net.ipv4.ip_forward=0`。 */
-      drift?: string;
+      /** 只读漂移探测（`?check=true`）：`"unchanged"` 或 `{ "would-change": { reason } }`。 */
+      drift?: unknown;
     }>;
   }>;
 }
 
 /* ----------------------------- Addon (§7, M2) ----------------------------- */
 
-/** `GET /addons/catalog` 目录项。 */
+/**
+ * `GET /addons/catalog` 的一行（WP-54 `CatalogAddon`，snake_case）。
+ * 向导第 6 步的勾选列表与 values 参数表单都由它驱动。
+ */
 export interface AddonCatalogEntry {
   name: string;
-  category: string;
   version: string;
-  /** 离线支持标记（UI §8.2 第 6 步）。 */
-  offline: boolean;
-  /** values JSON Schema（rjsf 参数表单来源）。 */
-  valuesSchema?: Record<string, unknown>;
-  /** 依赖的 addon 名（自动勾选）。 */
-  requires?: string[];
-  /** 兼容性说明：不兼容时置灰并显示原因（UI §8.1 addon 页）。 */
-  incompatibleWith?: string[];
+  title?: string | null;
+  description: string;
+  /** 分类：monitoring / ingress / security / storage / networking / dashboard。 */
+  category: string;
+  icon?: string | null;
+  namespace: string;
+  /** 依赖的 addon 名（勾选时自动勾上，UI §8.2 第 6 步）。 */
+  requires: string[];
+  /** 冲突的 addon 名（互斥）。 */
+  conflicts: string[];
+  /** values JSON Schema（`{}` 表示不接受参数）。 */
+  values_schema: Record<string, unknown>;
+  /** 来源说明（`builtin …` / `dir …` / `package …`）。 */
+  origin: string;
+}
+
+/** `GET /addons/catalog` 响应。 */
+export interface AddonCatalogResponse {
+  addons: AddonCatalogEntry[];
 }
 
 /** `GET /clusters/{name}/addons` 已装项。 */
@@ -394,19 +450,177 @@ export interface InstalledAddon {
 
 /* ------------------------------ 包 (§7, M3) ------------------------------- */
 
-/** `GET /packages` 包条目。 */
+/** `GET /packages` 的一行（WP-54 `PackageView`，snake_case）。 */
 export interface PackageInfo {
   id: string;
-  kind: 'base' | 'kubernetes' | 'addon' | 'image';
+  /** 包来源 URI（选中已导入包时，它就是要写进 DTO `packages` 的值）。 */
+  source: string;
+  /** 登记来源：imported / create-base。 */
+  origin: string;
+  /** base / addon / os / bundle / custom。 */
+  kind: string;
   name: string;
+  /** base 包钉定的 Kubernetes 版本。 */
   version: string;
-  arch: 'amd64' | 'arm64';
-  sizeBytes: number;
-  /** 签名状态。 */
-  signed: boolean;
-  verified?: boolean;
-  sbomUrl?: string;
-  importedAt: Timestamp;
+  /** kubeadm / k3s。 */
+  distribution: string;
+  /** 覆盖的架构。 */
+  arch: string[];
+  /** 载荷总字节数。 */
+  size: number;
+  /** 索引摘要（sha256:…）。 */
+  index: string;
+  signatures: number;
+  sbom?: string | null;
+  created_at: Timestamp;
+  verified_at: Timestamp;
+}
+
+/** `GET /packages` 响应。 */
+export interface PackageListResponse {
+  packages: PackageInfo[];
+}
+
+/* --------------------------- 创建向导 DTO (§8.2, WP-62) --------------------------- */
+
+/**
+ * 向导 DTO：`POST /configs/render` 的请求体（WP-54 `RenderBody`，snake_case）。
+ * 与 CLI 快速参数共用同一套 `ConfigPatch` 降级逻辑；秘密只以引用出现
+ * （env / 文件路径），明文密码从不进入 DTO。
+ */
+export interface WizardDto {
+  name?: string;
+  /** Kubernetes 版本（`v` 前缀可有可无）。 */
+  kubernetes?: string;
+  /** kubeadm / k3s。 */
+  distribution?: string;
+  /** containerd / crio。 */
+  runtime?: string;
+  /** calico / flannel / cilium / kube-ovn / none。 */
+  cni?: string;
+  pod_cidr?: string;
+  service_cidr?: string;
+  dns_domain?: string;
+  vip?: string;
+  /** kube-vip / kurin-lb / external-endpoint。 */
+  ha_mode?: string;
+  /** global / cn。 */
+  zone?: string;
+  /** 包来源 URI（base 与 os 包按 kind 归类）。 */
+  packages?: string[];
+  /** 兼容旧参数：裸目录 = 离线 bundle 目录；URI 归入 packages。 */
+  offline?: string;
+  /** `NAME` 或 `NAME=VERSION`。 */
+  addons?: string[];
+  /** `NAME.dotted.key=TOML 字面量`。 */
+  addon_values?: string[];
+  /** 任意 kebab-case 路径覆盖（registry.kind 等），最后应用。 */
+  sets?: string[];
+  /** role-index / hostname / ip。 */
+  node_name?: string;
+  ssh?: WizardSshDto;
+  nodes?: WizardNodeDto[];
+}
+
+/** 向导 DTO 的集群级 SSH 段。 */
+export interface WizardSshDto {
+  user?: string;
+  port?: number;
+  /** 私钥路径（管理机路径）。 */
+  key?: string;
+  key_passphrase_env?: string;
+  password_env?: string;
+  password_file?: string;
+  become?: boolean;
+  become_password_env?: string;
+  /** tofu / strict / accept-new。 */
+  known_hosts?: string;
+}
+
+/** 向导 DTO 的一个节点。 */
+export interface WizardNodeDto {
+  name?: string;
+  address: string;
+  /** control-plane / worker / lb / registry。 */
+  role?: string;
+  internal_address?: string;
+  /** 节点级覆盖：仅 user / port。 */
+  user?: string;
+  port?: number;
+  labels?: Record<string, string>;
+}
+
+/** `POST /configs/render` 响应：规范 TOML + 一次顺带校验的诊断。 */
+export interface RenderedConfig {
+  toml: string;
+  valid: boolean;
+  diagnostics?: Diagnostic[];
+}
+
+/** `POST /nodes/parse` 请求体（批量录入）。 */
+export interface ParseNodesRequest {
+  input: string;
+  /** 已占用的节点名（避免自动命名冲突）。 */
+  existing?: string[];
+}
+
+/** `POST /nodes/parse` 的一行。 */
+export interface ParsedNodeRow {
+  name: string;
+  address: string;
+  /** controlplane / worker / lb / registry（注意 controlplane 无连字符）。 */
+  role: string;
+}
+
+/** `POST /nodes/parse` 响应。 */
+export interface ParsedNodesResponse {
+  nodes: ParsedNodeRow[];
+}
+
+/**
+ * `POST /nodes/probe` 请求体（逐节点「测试连接」）。
+ * 凭据只接受引用：env 变量名 / 管理机上的文件路径。
+ */
+export interface ProbeRequest {
+  address: string;
+  user?: string;
+  port?: number;
+  key?: string;
+  key_passphrase_env?: string;
+  password_env?: string;
+  password_file?: string;
+  become?: boolean;
+  become_password_env?: string;
+  known_hosts?: string;
+}
+
+/** `POST /nodes/probe` 返回的 facts（回填节点表格；不含任何凭据材料）。 */
+export interface ProbeFacts {
+  arch: string;
+  os: string;
+  os_version: string;
+  kernel: string;
+  cgroup_v2: boolean;
+  init_systemd: boolean;
+  cpus: number;
+  /** MiB。 */
+  mem_mib: number;
+  /** 挂载点 → 空闲 MiB（`/`、`/var/lib`）。 */
+  disk_free_mib: Record<string, number>;
+  hostname: string;
+  user: string;
+  is_root: boolean;
+  /** none / passwordless / needs-password / unknown。 */
+  sudo: string;
+  tcp_forwarding?: boolean | null;
+  curl?: boolean | null;
+  /** none / kubeadm / k3s。 */
+  existing_install: string;
+}
+
+/** `POST /nodes/probe` 响应。 */
+export interface ProbeResponse {
+  facts: ProbeFacts;
 }
 
 /* ------------------------------- 会话 (§6.10) ------------------------------ */

@@ -29,6 +29,7 @@ function useSession() {
 // 动态导入：路由级代码分割由打包器按 chunk 拆分，无法静态导入。
 const ClustersPage = lazy(() => import('./pages/ClustersPage'));
 const ClusterDetailPage = lazy(() => import('./pages/ClusterDetailPage'));
+const NewClusterPage = lazy(() => import('./wizard/WizardPage'));
 const OperationsPage = lazy(() => import('./pages/OperationsPage'));
 const OperationDetailPage = lazy(() => import('./pages/OperationDetailPage'));
 const PackagesPage = lazy(() => import('./pages/PackagesPage'));
@@ -75,7 +76,7 @@ export function App() {
           <Routes>
             <Route element={<AppShell />}>
               <Route index element={lazily(ClustersPage)} />
-              <Route path="clusters/new" element={lazily(ClustersPage)} />
+              <Route path="clusters/new" element={lazily(NewClusterPage)} />
               <Route path="clusters/:name" element={lazily(ClusterDetailPage)} />
               <Route path="operations" element={lazily(OperationsPage)} />
               <Route path="operations/:id" element={lazily(OperationDetailPage)} />

@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { Button, Empty, Result, Skeleton, Table, Tag, Tooltip, Typography } from 'antd';
 import { PlusOutlined } from '@ant-design/icons';
@@ -18,9 +18,8 @@ const healthStyle: Record<ClusterSummary['health'], { color: string; labelKey: M
   unknown: { color: 'default', labelKey: 'cluster.health.unknown' },
 };
 
-/** 集群总览 `/`（UI §8.1）：15 秒轮询快照；`/clusters/new` 是 WP-62 的占位入口。 */
+/** 集群总览 `/`（UI §8.1）：15 秒轮询快照；「新建集群」进入 WP-62 向导。 */
 export default function ClustersPage() {
-  const location = useLocation();
   const navigate = useNavigate();
   const { data, isLoading, isFetching, error, refetch } = useQuery(clustersQuery);
 
@@ -28,16 +27,6 @@ export default function ClustersPage() {
     document.title = `${t('page.clusters.title')} · kurin`;
   }, []);
 
-  if (location.pathname === '/clusters/new') {
-    return (
-      <div>
-        <Typography.Title level={3}>{t('page.clusters.new')}</Typography.Title>
-        <Typography.Paragraph type="secondary">
-          {t('page.clusters.newDescription')}
-        </Typography.Paragraph>
-      </div>
-    );
-  }
 
   const errorMessage = error instanceof Error ? error.message : String(error);
 
