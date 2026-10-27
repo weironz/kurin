@@ -1628,6 +1628,7 @@ dependencies = [
  "petgraph",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "tempfile",
  "tokio",
 ]
@@ -1654,6 +1655,7 @@ dependencies = [
  "kurin-core",
  "miette",
  "russh",
+ "sha2 0.10.9",
  "tokio",
 ]
 

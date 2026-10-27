@@ -24,6 +24,12 @@ All notable changes to kurin. Format follows Keep a Changelog; semver.
   command line). Node-level `become`/`become-password` overrides,
   become-aware precheck (sudo row + sysctl "settable via sudo"), and
   file uploads staged through `install` so modes survive escalation.
+- Remote command output is streamed line by line (`Session::exec_stream`,
+  `Stream::Stdout`/`Stderr`) with per-line redaction, 8 KiB line
+  truncation and a 16 MiB capture cap, and uploads no longer buffer whole
+  files: `Session::upload` streams `UploadSource::File` in 64 KiB chunks,
+  verifies the remote sha256 before installing, and returns an
+  `UploadReport` (bytes, digest, duration).
 
 ### Fixed
 - `kurin upgrade`: a failed `kubectl drain` now aborts that node's upgrade

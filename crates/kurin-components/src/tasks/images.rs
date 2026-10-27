@@ -9,7 +9,7 @@ use kurin_config::Node;
 use miette::Result;
 
 use kurin_artifact::artifact::{Arch, ArtifactKind, ArtifactManifest, ArtifactSpec, ArtifactStore};
-use kurin_core::engine::{Drift, Outcome, Session, Stage, Task};
+use kurin_core::engine::{Drift, Outcome, Session, Stage, Task, UploadSource};
 
 pub struct ImagesImport {
     node: Node,
@@ -174,10 +174,10 @@ impl Task for ImagesImport {
             let dir = self.payload_dir(&spec).await?;
             let tarball = docker_archive(&dir, &spec)?;
             let remote = format!("/tmp/kurin-img-{}.tar", spec.name);
-            let bytes = std::fs::read(&tarball)
-                .map_err(|e| miette::miette!("read {}: {e}", tarball.display()))?;
+            session
+                .upload(UploadSource::File(tarball.clone()), &remote, 0o600)
+                .await?;
             let _ = std::fs::remove_file(&tarball);
-            session.write_file(&remote, &bytes).await?;
             let out = session
                 .exec(&format!(
                     "ctr -n k8s.io images import {remote} 2>&1 && rm -f {remote}"

@@ -12,7 +12,7 @@
 | WP-02 workspace 拆分 | done | 见提交 | 无 | 无 | 依赖图 config←core←{ssh,artifact}←components←bin；`just check`/`build`/`release-musl` 通过 |
 | WP-03 提权 become/sudo | done | 见提交 | 3 个 config 格式快照（Debug 新增 become 字段） | `e2e/tier1/nonroot.sh`；回归 `just tier0-test`、`just tier1` | 非 root 经 sudo；`ResolvedSsh` 字段名为 `r#become`；秘密 Debug 全部打码 |
 | WP-04 节点 facts 与按节点架构 | todo | | | tier1/tier2 不回归；`e2e/tier1/mixed-arch.md` | |
-| WP-05 流式 exec 与上传 | todo | | | `just tier1-offline` | |
+| WP-05 流式 exec 与上传 | done | 见提交 | 无 | `just tier1-offline`（记录控制机 RSS 峰值） | 行 8 KiB 截断、每流 16 MiB 捕获上限；上传 64 KiB 分块 + 远端 sha256 校验 |
 | WP-06 事件 v2 / tracing / 日志 | todo | | | tier1 后 `kurin logs --last -vv` | |
 | WP-07 RunContext 与 Blackboard | todo | | | `just tier2`、`just tier1-zone`、`just tier1-k3s` | |
 | WP-08 SSH 安全与端口转发 | todo | | | `just tier0 tier0-test` | |
@@ -80,6 +80,7 @@
 ## 偏离记录
 
 - WP-00：`ScriptedSession` 在 `(exit, stdout, stderr)` 之外增加了「命令已执行但传输中断」的应答与副作用文件，用于覆盖 `Outcome::Unknown → 重新探测` 路径；`cli_output` 快照对任务耗时与阶段内行序做归一化（并发完成顺序不在 v1 契约内）。
+- WP-05：`exec_stream` 不做透明重试（流式重放会重复行/副作用）；捕获上限按 stdout/stderr 各自 16 MiB 计算，sink 仍收到每一行。
 - WP-03：`become` 是 Rust 保留字，运行期字段写作 `r#become`（配置键不变）；「节点 become=none + 继承集群 become-password」按跨字段冲突拒绝；无新依赖。集成时补上了 `SshDefaults`/`NodeConfig`/`RegistryConfig`/`Cluster` 的 Debug 脱敏（含 `Cluster.source` 原文），并加测试。
 - WP-60：按计划允许“前端先对 mock 开发”，在 WP-55 之前完成脚手架；`src/api/types.ts` 为临时手写 DTO，WP-55 生成 ts-rs 绑定后必须替换并删除该文件的 provisional 标记。
 - WP-02：`kurin-core` 的 `tempfile` 是运行时依赖（`state.rs` 原子写状态文件）；`kurin` 移除已无源码使用的 `futures` 直接依赖；`kurin/tests` 通过 facade 原样保留；`Plan::build*` 改为 `kurin::plan::build*`。
@@ -89,6 +90,7 @@
 
 （随 WP 完成追加）
 
+- WP-05：`just tier1-offline`（最大上传路径），记录上传期间控制机 RSS 峰值，确认无整文件缓冲回归。
 - WP-03：`e2e/tier1/nonroot.sh`（multipass 中 ubuntu 用户 + 免密 sudo，单节点 create + delete）；回归 `just tier0-test`、`just tier1`。
 - WP-01：`just tier2-upgrade-minor`。额外验证：让某 worker 的 drain 失败（如带 PDB 的 Pod），确认升级在该节点前中止且节点保持 cordon；再用 `--force-drain-failure` 复跑确认告警与继续执行。
 

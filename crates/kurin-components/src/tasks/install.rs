@@ -15,7 +15,7 @@ use kurin_config::Node;
 use miette::Result;
 
 use kurin_artifact::artifact::{Arch, ArtifactKind, ArtifactManifest, ArtifactSpec, ArtifactStore};
-use kurin_core::engine::{Drift, Outcome, Session, Stage, Task};
+use kurin_core::engine::{Drift, Outcome, Session, Stage, Task, UploadSource};
 
 /// name -> (install method, remote target path)
 /// Binary tarballs install with tar; plain binaries are written directly.
@@ -190,8 +190,6 @@ impl Task for ArtifactsInstall {
             };
             let spec = manifest.spec(&entry.name, self.arch)?;
             let local: PathBuf = self.payload(&spec).await?;
-            let bytes = std::fs::read(&local)
-                .map_err(|e| miette::miette!("read cached artifact {}: {e}", spec.name))?;
 
             match install {
                 Install::Direct(dest) => {
@@ -199,11 +197,11 @@ impl Task for ArtifactsInstall {
                     // currently executing (ETXTBSY), and keep replacement
                     // atomic for concurrent readers.
                     let tmp = format!("{dest}.kurin-new");
-                    session.write_file(&tmp, &bytes).await?;
+                    session
+                        .upload(UploadSource::File(local), &tmp, 0o755)
+                        .await?;
                     let out = session
-                        .exec(&format!(
-                            "chmod 0755 {tmp} && mv -f {tmp} {dest} && echo installed"
-                        ))
+                        .exec(&format!("mv -f {tmp} {dest} && echo installed"))
                         .await?;
                     if !out.ok() {
                         return Err(miette::miette!(
@@ -216,7 +214,9 @@ impl Task for ArtifactsInstall {
                 }
                 Install::Tar { dir, strip } => {
                     let remote_tmp = format!("/tmp/kurin-{}.tgz", spec.name);
-                    session.write_file(&remote_tmp, &bytes).await?;
+                    session
+                        .upload(UploadSource::File(local), &remote_tmp, 0o600)
+                        .await?;
                     let strip_flag = if strip > 0 {
                         format!("--strip-components={strip}")
                     } else {

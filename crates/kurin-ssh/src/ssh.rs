@@ -25,11 +25,13 @@ use russh::client::{self, Handle};
 use russh::keys::known_hosts::{check_known_hosts_path, learn_known_hosts_path};
 use russh::keys::{ssh_key, PrivateKeyWithHashAlg, PublicKeyOrCertificate};
 use russh::{ChannelMsg, Disconnect};
+use sha2::{Digest, Sha256};
+use tokio::io::AsyncReadExt;
 use tokio::sync::{RwLock, Semaphore};
 
 use kurin_config::{BecomeMode, Cluster, ResolvedSsh, SshAuth};
 
-use kurin_core::engine::{Cmd, ExecOutput, Session};
+use kurin_core::engine::{Cmd, ExecOutput, Session, Stream, UploadReport, UploadSource};
 
 /// Upper bound for one `exec` round trip, including data transfer.
 pub const EXEC_TIMEOUT: Duration = Duration::from_secs(900);
@@ -43,6 +45,20 @@ pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 pub const CONNECT_RETRIES: usize = 3;
 /// Concurrent channels multiplexed over one SSH connection.
 pub const DEFAULT_MAX_CHANNELS: usize = 4;
+
+/// A single reported output line is truncated beyond this many bytes.
+const MAX_LINE_BYTES: usize = 8 * 1024;
+/// Captured output kept per stream in the returned [`ExecOutput`].
+const MAX_CAPTURE_BYTES: usize = 16 * 1024 * 1024;
+/// Once the capture cap is exceeded, only this much tail is retained.
+const CAPTURE_TAIL_BYTES: usize = 1024 * 1024;
+const TRUNCATION_MARKER: &str = "…[truncated]";
+/// Payload chunk size for uploads: small enough to keep the control host's
+/// memory flat, large enough to keep SSH channel overhead low.
+const UPLOAD_CHUNK: usize = 64 * 1024;
+
+/// Callback receiving each remote output line as it arrives.
+type LineSink<'s> = dyn for<'line> FnMut(Stream, &'line str) + Send + 's;
 
 /// One node's endpoint plus credentials.
 #[derive(Debug, Clone)]
@@ -312,10 +328,18 @@ impl SshSession {
     /// Run a command on a freshly opened channel and collect its output.
     /// `stdin`, when given, is written to the channel and closed with EOF
     /// before the output is collected (how `sudo -S` passwords travel).
+    ///
+    /// When `sink` is set, every complete line is handed to it as soon as
+    /// the channel delivers it; the returned output is the same either way.
+    /// Lines are split across arbitrary chunk boundaries, CRLF is
+    /// normalised, and `redact` secrets are scrubbed before either the sink
+    /// or the returned output can see them.
     async fn exec_on(
         handle: &Handle<HostKeyPolicy>,
         command: &str,
         stdin: Option<&[u8]>,
+        redact: &[String],
+        mut sink: Option<&mut LineSink<'_>>,
     ) -> Result<ExecOutput> {
         let mut channel = handle
             .channel_open_session()
@@ -335,16 +359,34 @@ impl SshSession {
                 .await
                 .map_err(|e| miette!("ssh: cannot close stdin: {e}"))?;
         }
-        let mut stdout = Vec::new();
-        let mut stderr = Vec::new();
+        let mut out_lines = LineSplitter::default();
+        let mut err_lines = LineSplitter::default();
+        let mut stdout = Capture::new(MAX_CAPTURE_BYTES, CAPTURE_TAIL_BYTES);
+        let mut stderr = Capture::new(MAX_CAPTURE_BYTES, CAPTURE_TAIL_BYTES);
         let mut exit_code = None;
         while let Some(msg) = channel.wait().await {
             match msg {
-                ChannelMsg::Data { data } => stdout.extend_from_slice(&data),
-                ChannelMsg::ExtendedData { data, .. } => stderr.extend_from_slice(&data),
+                ChannelMsg::Data { data } => {
+                    for line in out_lines.push(&data) {
+                        emit_line(Stream::Stdout, &line, redact, &mut sink, &mut stdout);
+                    }
+                }
+                ChannelMsg::ExtendedData { data, .. } => {
+                    for line in err_lines.push(&data) {
+                        emit_line(Stream::Stderr, &line, redact, &mut sink, &mut stderr);
+                    }
+                }
                 ChannelMsg::ExitStatus { exit_status } => exit_code = Some(exit_status as i32),
                 _ => {}
             }
+        }
+        // A command whose output does not end in a newline still has a
+        // final line to report.
+        if let Some(line) = out_lines.finish() {
+            emit_line(Stream::Stdout, &line, redact, &mut sink, &mut stdout);
+        }
+        if let Some(line) = err_lines.finish() {
+            emit_line(Stream::Stderr, &line, redact, &mut sink, &mut stderr);
         }
         let exit_code = exit_code.ok_or_else(|| {
             miette!(
@@ -358,8 +400,8 @@ impl SshSession {
         let _ = channel.close().await;
         Ok(ExecOutput {
             exit_code,
-            stdout: String::from_utf8_lossy(&stdout).into_owned(),
-            stderr: String::from_utf8_lossy(&stderr).into_owned(),
+            stdout: stdout.into_string(),
+            stderr: stderr.into_string(),
         })
     }
 
@@ -427,10 +469,40 @@ impl Session for SshSession {
             .with_channel(timeout, |handle| {
                 let command = command.clone();
                 let stdin = stdin.clone();
-                async move { Self::exec_on(&handle, &command, stdin.as_deref()).await }
+                let redact = cmd.redact.clone();
+                async move {
+                    Self::exec_on(&handle, &command, stdin.as_deref(), &redact, None).await
+                }
             })
             .await?;
         redact_output(&mut out, cmd);
+        Ok(out)
+    }
+
+    /// Run a command and emit each output line as the channel delivers it.
+    ///
+    /// Deliberately not retried: replaying a mutating command would emit
+    /// duplicate lines and could repeat side effects. A lost connection
+    /// surfaces as an error for the engine to reconcile.
+    #[allow(clippy::type_complexity)]
+    async fn exec_stream(
+        &self,
+        cmd: &Cmd,
+        sink: &mut (dyn for<'a> FnMut(Stream, &'a str) + Send),
+    ) -> Result<ExecOutput> {
+        let (command, stdin) = become_command(&self.conn.target.ssh, cmd);
+        let timeout = cmd.timeout.unwrap_or(EXEC_TIMEOUT);
+        let out = self
+            .with_channel_once(timeout, |handle| {
+                let command = command.clone();
+                let stdin = stdin.clone();
+                let redact = cmd.redact.clone();
+                async move {
+                    Self::exec_on(&handle, &command, stdin.as_deref(), &redact, Some(sink)).await
+                }
+            })
+            .await
+            .wrap_err_with(|| format!("ssh {}", self.conn.label()))?;
         Ok(out)
     }
 
@@ -453,26 +525,48 @@ impl Session for SshSession {
     /// remaining upload against a closed window instead of surfacing the
     /// error. `install` inherits that same contract.
     async fn write_file_mode(&self, path: &str, contents: &[u8], mode: u32) -> Result<()> {
+        self.upload(UploadSource::Bytes(contents.to_vec()), path, mode)
+            .await?;
+        Ok(())
+    }
+
+    /// Stream `src` to `dst` and verify the remote digest before installing.
+    ///
+    /// Files are read in [`UPLOAD_CHUNK`] pieces, so the control host never
+    /// holds the whole payload; the sha256 is computed while writing and
+    /// compared with `sha256sum` on the remote temp file. A mismatch aborts
+    /// before anything is installed and names both digests.
+    async fn upload(&self, src: UploadSource, dst: &str, mode: u32) -> Result<UploadReport> {
+        let started = std::time::Instant::now();
         let tmp = stage_path();
-        self.stage_bytes(&tmp, contents).await?;
+        let (bytes, local_sha) = self.stage_source(&tmp, src).await?;
+        let remote_sha = self.file_sha256(&tmp).await?.ok_or_else(|| {
+            miette!("ssh: uploaded temp file {tmp} disappeared before verification")
+        })?;
+        verify_digest(&local_sha, &remote_sha)
+            .map_err(|e| miette!("ssh: upload to {dst} failed: {e}"))?;
         let install = Cmd::new(format!(
             "install -D -m {:o} -- {} {} && rm -f -- {}",
             mode,
             shell_quote(&tmp),
-            shell_quote(path),
+            shell_quote(dst),
             shell_quote(&tmp),
         ));
         let out = self.exec_cmd(&install).await?;
         if !out.ok() {
             return Err(miette!(
                 "ssh: installing {} (mode {:o}) failed (exit {}): {}",
-                path,
+                dst,
                 mode,
                 out.exit_code,
                 out.stderr.trim()
             ));
         }
-        Ok(())
+        Ok(UploadReport {
+            bytes,
+            sha256: local_sha,
+            ms: started.elapsed().as_millis() as u64,
+        })
     }
 
     async fn file_sha256(&self, path: &str) -> Result<Option<String>> {
@@ -520,79 +614,138 @@ impl Session for SshSession {
 }
 
 impl SshSession {
-    /// Write `contents` to `tmp` via `cat`, as the login user — never
-    /// through sudo: stdin carries the payload, and `sudo -S` would eat its
-    /// first line as the password.
-    async fn stage_bytes(&self, tmp: &str, contents: &[u8]) -> Result<()> {
-        let contents = contents.to_vec();
+    /// Stream `src` to `tmp` via `cat`, as the login user — never through
+    /// sudo: stdin carries the payload, and `sudo -S` would eat its first
+    /// line as the password. Returns the byte count and local sha256.
+    async fn stage_source(&self, tmp: &str, src: UploadSource) -> Result<(u64, String)> {
         let tmp = tmp.to_owned();
-        self.with_channel(WRITE_TIMEOUT, |handle| async move {
-            // Bytes go over the channel's stdin, not the command line: safe
-            // for arbitrary (binary) payloads and free of shell quoting risk.
-            let command = format!("cat > {}", shell_quote(&tmp));
-            let mut channel = handle
-                .channel_open_session()
-                .await
-                .map_err(|e| miette!("ssh: cannot open channel: {e}"))?;
-            channel
-                .exec(true, command)
-                .await
-                .map_err(|e| miette!("ssh: cannot start write command: {e}"))?;
-            let trace = std::env::var_os("KURIN_SSH_TRACE").is_some();
-            // Chunk the payload with a live deadline watchdog per chunk:
-            // an early russh window-negotiation edge case lets a >64MB
-            // writeBytes stall when the remote's receive window refills
-            // slowly. Chunking + progress lets a stall surface as data.
-            let chunks = contents.chunks(1 << 20).collect::<Vec<_>>();
-            let total = chunks.len();
-            for (i, chunk) in chunks.into_iter().enumerate() {
-                channel.data_bytes(chunk.to_vec()).await.map_err(|e| {
-                    miette!(
-                        "ssh: cannot send file contents (chunk {}/{total}): {e}",
-                        i + 1
-                    )
-                })?;
-                if trace && i % 4 == 0 {
-                    eprintln!("[ssh-trace] {tmp}: {}/{} MiB", i + 1, total);
-                }
-            }
-            if trace {
-                eprintln!("[ssh-trace] {tmp}: all chunks sent; eof");
-            }
-
-            channel
-                .eof()
-                .await
-                .map_err(|e| miette!("ssh: cannot close stdin: {e}"))?;
-            let mut stderr = Vec::new();
-            let mut exit_code = None;
-            while let Some(msg) = channel.wait().await {
-                match msg {
-                    ChannelMsg::ExtendedData { data, .. } => stderr.extend_from_slice(&data),
-                    ChannelMsg::ExitStatus { exit_status } => exit_code = Some(exit_status as i32),
-                    _ => {}
-                }
-            }
-            if trace {
-                eprintln!("[ssh-trace] {tmp}: channel closed, exit={exit_code:?}");
-            }
-            // Same MaxSessions leak guard as exec_on.
-            let _ = channel.close().await;
-            match exit_code {
-                Some(0) => Ok(()),
-                Some(code) => Err(miette!(
-                    "ssh: writing {} failed (exit {}): {}",
-                    tmp,
-                    code,
-                    String::from_utf8_lossy(&stderr).trim()
-                )),
-                None => Err(miette!(
-                    "ssh: writing {} failed: channel closed without an exit status",
-                    tmp
-                )),
-            }
+        self.with_channel(WRITE_TIMEOUT, |handle| {
+            let tmp = tmp.clone();
+            let src = src.clone();
+            async move { Self::stage_source_on(&handle, &tmp, src).await }
         })
         .await
+    }
+
+    async fn stage_source_on(
+        handle: &Handle<HostKeyPolicy>,
+        tmp: &str,
+        src: UploadSource,
+    ) -> Result<(u64, String)> {
+        // Payload goes over the channel's stdin, not the command line: safe
+        // for arbitrary (binary) payloads and free of shell quoting risk.
+        let mut channel = handle
+            .channel_open_session()
+            .await
+            .map_err(|e| miette!("ssh: cannot open channel: {e}"))?;
+        channel
+            .exec(true, format!("cat > {}", shell_quote(tmp)))
+            .await
+            .map_err(|e| miette!("ssh: cannot start write command: {e}"))?;
+        let trace = std::env::var_os("KURIN_SSH_TRACE").is_some();
+        let mut reader = UploadReader::new(src).await?;
+        let mut hasher = Sha256::new();
+        let mut total: u64 = 0;
+        let mut chunks: u64 = 0;
+        // 64 KiB chunks keep the control host's memory flat and surface a
+        // stalled window as a per-chunk error instead of a silent hang.
+        while let Some(chunk) = reader.next_chunk().await? {
+            hasher.update(&chunk);
+            total += chunk.len() as u64;
+            chunks += 1;
+            channel
+                .data_bytes(chunk)
+                .await
+                .map_err(|e| miette!("ssh: cannot send file contents (chunk {chunks}): {e}"))?;
+            if trace && chunks.is_multiple_of(16) {
+                eprintln!("[ssh-trace] {tmp}: {total} bytes sent");
+            }
+        }
+        if trace {
+            eprintln!("[ssh-trace] {tmp}: all {total} bytes sent; eof");
+        }
+
+        channel
+            .eof()
+            .await
+            .map_err(|e| miette!("ssh: cannot close stdin: {e}"))?;
+        let mut stderr = Vec::new();
+        let mut exit_code = None;
+        while let Some(msg) = channel.wait().await {
+            match msg {
+                ChannelMsg::ExtendedData { data, .. } => stderr.extend_from_slice(&data),
+                ChannelMsg::ExitStatus { exit_status } => exit_code = Some(exit_status as i32),
+                _ => {}
+            }
+        }
+        if trace {
+            eprintln!("[ssh-trace] {tmp}: channel closed, exit={exit_code:?}");
+        }
+        // Same MaxSessions leak guard as exec_on.
+        let _ = channel.close().await;
+        match exit_code {
+            Some(0) => Ok((total, hex_lower(&hasher.finalize()))),
+            Some(code) => Err(miette!(
+                "ssh: writing {} failed (exit {}): {}",
+                tmp,
+                code,
+                String::from_utf8_lossy(&stderr).trim()
+            )),
+            None => Err(miette!(
+                "ssh: writing {} failed: channel closed without an exit status",
+                tmp
+            )),
+        }
+    }
+}
+
+/// Reads an [`UploadSource`] in bounded chunks.
+///
+/// `File` keeps only one [`UPLOAD_CHUNK`] buffer open, which is what makes
+/// uploads of multi-hundred-MB payloads flat in memory; `Bytes` walks the
+/// in-memory payload without copying it.
+enum UploadReader {
+    File { file: tokio::fs::File, buf: Vec<u8> },
+    Bytes { data: Vec<u8>, offset: usize },
+}
+
+impl UploadReader {
+    async fn new(src: UploadSource) -> Result<Self> {
+        Ok(match src {
+            UploadSource::File(path) => Self::File {
+                file: tokio::fs::File::open(&path).await.map_err(|e| {
+                    miette!("ssh: cannot open upload source {}: {e}", path.display())
+                })?,
+                buf: vec![0u8; UPLOAD_CHUNK],
+            },
+            UploadSource::Bytes(data) => Self::Bytes { data, offset: 0 },
+        })
+    }
+
+    /// Next chunk, or `None` at end of input.
+    async fn next_chunk(&mut self) -> Result<Option<Vec<u8>>> {
+        match self {
+            Self::File { file, buf } => {
+                let read = file
+                    .read(buf)
+                    .await
+                    .map_err(|e| miette!("ssh: cannot read upload source: {e}"))?;
+                if read == 0 {
+                    Ok(None)
+                } else {
+                    Ok(Some(buf[..read].to_vec()))
+                }
+            }
+            Self::Bytes { data, offset } => {
+                if *offset >= data.len() {
+                    return Ok(None);
+                }
+                let end = (*offset + UPLOAD_CHUNK).min(data.len());
+                let chunk = data[*offset..end].to_vec();
+                *offset = end;
+                Ok(Some(chunk))
+            }
+        }
     }
 }
 
@@ -776,9 +929,137 @@ fn redact_output(out: &mut ExecOutput, cmd: &Cmd) {
     }
 }
 
-/// Collision-free staging name under /tmp. Deliberately dependency-free:
-/// pid + nanoseconds + a monotonic counter is unique per process, and the
-/// login user always owns /tmp write access.
+/// Split an arbitrary byte stream into lines across chunk boundaries.
+#[derive(Default)]
+struct LineSplitter {
+    pending: Vec<u8>,
+}
+
+impl LineSplitter {
+    /// Feed one channel chunk; returns every complete line it completed.
+    fn push(&mut self, chunk: &[u8]) -> Vec<String> {
+        self.pending.extend_from_slice(chunk);
+        let mut lines = Vec::new();
+        let mut start = 0;
+        while let Some(pos) = self.pending[start..].iter().position(|b| *b == b'\n') {
+            let end = start + pos;
+            lines.push(finish_line(&self.pending[start..end]));
+            start = end + 1;
+        }
+        if start > 0 {
+            self.pending.drain(..start);
+        }
+        lines
+    }
+
+    /// Flush a trailing partial line at EOF (if any).
+    fn finish(&mut self) -> Option<String> {
+        if self.pending.is_empty() {
+            return None;
+        }
+        let raw = std::mem::take(&mut self.pending);
+        Some(finish_line(&raw))
+    }
+}
+
+fn finish_line(raw: &[u8]) -> String {
+    let raw = raw.strip_suffix(b"\r").unwrap_or(raw);
+    truncate_line(&String::from_utf8_lossy(raw))
+}
+
+fn truncate_line(line: &str) -> String {
+    if line.len() <= MAX_LINE_BYTES {
+        return line.to_owned();
+    }
+    let mut end = MAX_LINE_BYTES;
+    while !line.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}{}", &line[..end], TRUNCATION_MARKER)
+}
+
+/// Bounded per-stream capture for the returned [`ExecOutput`].
+///
+/// Once `max` is exceeded the buffer keeps only the last `tail` bytes, so
+/// a chatty command cannot grow the control host's memory without bound.
+struct Capture {
+    buf: Vec<u8>,
+    max: usize,
+    tail: usize,
+    capped: bool,
+}
+
+impl Capture {
+    fn new(max: usize, tail: usize) -> Self {
+        Self {
+            buf: Vec::new(),
+            max,
+            tail,
+            capped: false,
+        }
+    }
+
+    fn push_line(&mut self, line: &str) {
+        self.buf.extend_from_slice(line.as_bytes());
+        self.buf.push(b'\n');
+        if self.capped || self.buf.len() > self.max {
+            self.capped = true;
+            if self.buf.len() > self.tail {
+                let excess = self.buf.len() - self.tail;
+                self.buf.drain(..excess);
+            }
+        }
+    }
+
+    fn into_string(self) -> String {
+        String::from_utf8_lossy(&self.buf).into_owned()
+    }
+}
+
+fn redact_text(text: &str, secrets: &[String]) -> String {
+    let mut out = text.to_owned();
+    for secret in secrets.iter().filter(|s| !s.is_empty()) {
+        out = out.replace(secret.as_str(), "******");
+    }
+    out
+}
+
+fn emit_line(
+    stream: Stream,
+    line: &str,
+    redact: &[String],
+    sink: &mut Option<&mut LineSink<'_>>,
+    capture: &mut Capture,
+) {
+    let line = redact_text(line, redact);
+    capture.push_line(&line);
+    if let Some(cb) = sink.as_mut() {
+        (**cb)(stream, &line);
+    }
+}
+
+/// Compare the locally computed digest with the remote `sha256sum` result.
+/// A mismatch names both values so the operator can tell which side is wrong.
+fn verify_digest(local: &str, remote: &str) -> std::result::Result<(), String> {
+    if local.eq_ignore_ascii_case(remote) {
+        Ok(())
+    } else {
+        Err(format!("sha256 mismatch: local {local}, remote {remote}"))
+    }
+}
+
+fn hex_lower(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        use std::fmt::Write as _;
+        let _ = write!(out, "{b:02x}");
+    }
+    out
+}
+
+/// Collision-free upload staging name under /tmp: pid + nanoseconds + a
+/// monotonic counter is unique per process, and the login user always owns
+/// /tmp write access.
 fn stage_path() -> String {
     static SEQ: AtomicU64 = AtomicU64::new(0);
     let seq = SEQ.fetch_add(1, Ordering::Relaxed);
@@ -786,7 +1067,7 @@ fn stage_path() -> String {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
-    format!("/tmp/kurin-{:x}-{:x}-{:x}", std::process::id(), nanos, seq)
+    format!("/tmp/kurin-upload-{}-{}-{}", std::process::id(), nanos, seq)
 }
 
 /// POSIX shell single-quote quoting.
@@ -956,7 +1237,7 @@ mod tests {
         let b = stage_path();
         assert_ne!(a, b);
         for p in [a, b] {
-            assert!(p.starts_with("/tmp/kurin-"), "bad staging path: {p}");
+            assert!(p.starts_with("/tmp/kurin-upload-"), "bad staging path: {p}");
         }
     }
 
@@ -980,5 +1261,148 @@ mod tests {
         };
         redact_output(&mut out, &cmd);
         assert_eq!(out.stdout, "keep\n");
+    }
+
+    // -- streaming line splitting ----------------------------------------
+
+    #[test]
+    fn splitter_joins_lines_across_chunk_boundaries() {
+        let mut splitter = LineSplitter::default();
+        assert!(splitter.push(b"hel").is_empty());
+        assert_eq!(splitter.push(b"lo\nwor"), vec!["hello"]);
+        assert_eq!(splitter.push(b"ld\n"), vec!["world"]);
+        assert_eq!(splitter.finish(), None);
+    }
+
+    #[test]
+    fn splitter_strips_crlf() {
+        let mut splitter = LineSplitter::default();
+        assert_eq!(splitter.push(b"a\r\nb\r\n"), vec!["a", "b"]);
+        assert_eq!(splitter.finish(), None);
+    }
+
+    #[test]
+    fn splitter_flushes_a_trailing_partial_line() {
+        let mut splitter = LineSplitter::default();
+        assert_eq!(splitter.push(b"done\npartial"), vec!["done"]);
+        assert_eq!(splitter.finish(), Some("partial".to_string()));
+        assert_eq!(splitter.finish(), None);
+    }
+
+    #[test]
+    fn splitter_preserves_empty_lines() {
+        let mut splitter = LineSplitter::default();
+        assert_eq!(splitter.push(b"a\n\nb\n"), vec!["a", "", "b"]);
+    }
+
+    #[test]
+    fn splitter_truncates_long_lines_with_marker() {
+        let mut splitter = LineSplitter::default();
+        let long = "x".repeat(MAX_LINE_BYTES + 10);
+        let lines = splitter.push(format!("{long}\n").as_bytes());
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].ends_with(TRUNCATION_MARKER));
+        assert_eq!(lines[0].len(), MAX_LINE_BYTES + TRUNCATION_MARKER.len());
+    }
+
+    #[test]
+    fn capture_keeps_only_the_tail_once_over_the_cap() {
+        let mut capture = Capture::new(10, 5);
+        capture.push_line("aaaa");
+        capture.push_line("bbbb");
+        capture.push_line("cccc");
+        assert_eq!(capture.into_string(), "cccc\n");
+    }
+
+    #[test]
+    fn capture_keeps_everything_below_the_cap() {
+        let mut capture = Capture::new(64, 8);
+        capture.push_line("one");
+        capture.push_line("two");
+        assert_eq!(capture.into_string(), "one\ntwo\n");
+    }
+
+    // -- upload digest verification --------------------------------------
+
+    #[test]
+    fn digest_verification_accepts_matching_values() {
+        assert!(verify_digest("abc123", "abc123").is_ok());
+        assert!(verify_digest("ABC123", "abc123").is_ok());
+    }
+
+    #[test]
+    fn digest_verification_names_both_values_on_mismatch() {
+        let err = verify_digest("aaaa", "bbbb").unwrap_err();
+        assert!(
+            err.contains("aaaa"),
+            "error must name the local digest: {err}"
+        );
+        assert!(
+            err.contains("bbbb"),
+            "error must name the remote digest: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn upload_reader_chunks_bytes_at_the_upload_size() {
+        let data = vec![7u8; UPLOAD_CHUNK + 100];
+        let mut reader = UploadReader::new(UploadSource::Bytes(data.clone()))
+            .await
+            .unwrap();
+        let first = reader.next_chunk().await.unwrap().unwrap();
+        assert_eq!(first.len(), UPLOAD_CHUNK);
+        let second = reader.next_chunk().await.unwrap().unwrap();
+        assert_eq!(second.len(), 100);
+        assert!(reader.next_chunk().await.unwrap().is_none());
+        assert_eq!([first, second].concat(), data);
+    }
+
+    fn peak_rss_kib() -> u64 {
+        let status = std::fs::read_to_string("/proc/self/status").unwrap_or_default();
+        for line in status.lines() {
+            if let Some(rest) = line.strip_prefix("VmHWM:") {
+                return rest
+                    .split_whitespace()
+                    .next()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(0);
+            }
+        }
+        0
+    }
+
+    /// The file upload path must not buffer the whole payload: reading a
+    /// 1 GiB sparse file through [`UploadReader`] keeps peak RSS flat.
+    ///
+    /// Ignored by default (it creates a 1 GiB sparse file and reads it).
+    /// Run with:
+    /// `cargo test -p kurin-ssh -- --ignored upload_reader_streams_a_large_file`
+    #[tokio::test]
+    #[ignore = "creates and reads a 1 GiB sparse file; run explicitly"]
+    async fn upload_reader_streams_a_large_file() {
+        let path = std::path::PathBuf::from(stage_path());
+        let file = std::fs::File::create(&path).unwrap();
+        file.set_len(1024 * 1024 * 1024).unwrap();
+        drop(file);
+
+        let before = peak_rss_kib();
+        let mut reader = UploadReader::new(UploadSource::File(path.clone()))
+            .await
+            .unwrap();
+        let mut total: u64 = 0;
+        while let Some(chunk) = reader.next_chunk().await.unwrap() {
+            total += chunk.len() as u64;
+        }
+        let after = peak_rss_kib();
+        let _ = std::fs::remove_file(&path);
+
+        assert_eq!(total, 1024 * 1024 * 1024);
+        if before > 0 {
+            let grew = after.saturating_sub(before);
+            assert!(
+                grew < 256 * 1024,
+                "upload path grew peak RSS by {grew} KiB; it must stream, not buffer"
+            );
+        }
     }
 }

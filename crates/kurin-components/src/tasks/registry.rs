@@ -18,7 +18,7 @@ use kurin_config::{Cluster, Node, RegistryKind};
 use miette::Result;
 
 use kurin_artifact::artifact::{Arch, ArtifactManifest, ArtifactStore};
-use kurin_core::engine::{Drift, Outcome, Session, Stage, Task};
+use kurin_core::engine::{Drift, Outcome, Session, Stage, Task, UploadSource};
 
 /// Where the generated PKI lives on the registry node.
 const PKI_DIR: &str = "/var/lib/kurin/pki";
@@ -319,16 +319,13 @@ impl Task for RegistryInstall {
             }
             None => ArtifactStore::open_default()?.fetch(&spec).await?,
         };
-        let bytes = std::fs::read(&local)
-            .map_err(|e| miette::miette!("read cached artifact {}: {e}", local.display()))?;
-
         match self.kind {
             RegistryKind::Zot => {
                 let tmp = format!("{ZOT_BIN}.kurin-new");
-                session.write_file(&tmp, &bytes).await?;
                 session
-                    .exec(&format!("chmod 0755 {tmp} && mv -f {tmp} {ZOT_BIN}"))
+                    .upload(UploadSource::File(local.clone()), &tmp, 0o755)
                     .await?;
+                session.exec(&format!("mv -f {tmp} {ZOT_BIN}")).await?;
                 session
                     .write_file(
                         HTPASSWD,
@@ -358,7 +355,9 @@ impl Task for RegistryInstall {
             }
             RegistryKind::DockerRegistry => {
                 let remote_tgz = "/tmp/kurin-registry.tgz";
-                session.write_file(remote_tgz, &bytes).await?;
+                session
+                    .upload(UploadSource::File(local.clone()), remote_tgz, 0o600)
+                    .await?;
                 session
                     .exec(&format!(
                         "tar -xzf {remote_tgz} -C /usr/local/bin registry 2>/dev/null || \
@@ -399,7 +398,9 @@ impl Task for RegistryInstall {
                 // Extract straight into /opt/harbor — install.sh must run
                 // from its final location (compose binds relative paths).
                 let remote_tgz = "/tmp/kurin-harbor.tgz";
-                session.write_file(remote_tgz, &bytes).await?;
+                session
+                    .upload(UploadSource::File(local.clone()), remote_tgz, 0o600)
+                    .await?;
                 let prep = session
                     .exec(&format!(
                         "set -e; \
@@ -900,10 +901,10 @@ impl Task for RegistrySeed {
                 .split_once('/')
                 .map(|(_, rest)| rest)
                 .ok_or_else(|| miette::miette!("cannot split image reference {reference}"))?;
-            let bytes = std::fs::read(&path)
-                .map_err(|e| miette::miette!("read image archive {}: {e}", path.display()))?;
             let remote = format!("/tmp/kurin-seed-{name}.tar");
-            session.write_file(&remote, &bytes).await?;
+            session
+                .upload(UploadSource::File(path), &remote, 0o600)
+                .await?;
             // Local ref is the full upstream reference (the docker
             // archive's RepoTags); the pushed ref keeps only the repo
             // path — that is what containerd requests from a mirror.

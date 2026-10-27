@@ -1,11 +1,13 @@
 //! Engine contract (W0). The executor sees only these traits plus the
 //! plan graph; SSH/artifact/CLI live behind them.
 
+use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use miette::Result;
 use serde::Serialize;
+use sha2::{Digest, Sha256};
 
 /// Result of a remote probe: is the node already in the desired state?
 #[derive(Debug, Clone)]
@@ -149,6 +151,49 @@ pub trait Task: Send + Sync {
     async fn apply(&self, session: &dyn Session) -> Result<Outcome>;
 }
 
+/// Which stream a remote output line came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Stream {
+    Stdout,
+    Stderr,
+}
+
+/// Where an upload's bytes come from.
+#[derive(Debug, Clone)]
+pub enum UploadSource {
+    /// A local file, streamed in chunks by the real transport.
+    File(PathBuf),
+    /// An in-memory payload (small configs, rendered manifests).
+    Bytes(Vec<u8>),
+}
+
+/// What an upload actually transferred, for logging and verification.
+#[derive(Debug, Clone, Serialize)]
+pub struct UploadReport {
+    /// Number of payload bytes written.
+    pub bytes: u64,
+    /// Lowercase hex sha256 of the payload, verified against the remote file.
+    pub sha256: String,
+    /// Wall-clock duration of the transfer.
+    pub ms: u64,
+}
+
+/// Lowercase hex sha256 of `bytes`.
+pub fn sha256_hex(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    hex_lower(&hasher.finalize())
+}
+
+fn hex_lower(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        use std::fmt::Write as _;
+        let _ = write!(out, "{b:02x}");
+    }
+    out
+}
+
 /// Remote session abstraction: the only way tasks touch a node.
 /// Implemented by russh (real) and MockSession (tests / dry-run --check).
 ///
@@ -167,6 +212,26 @@ pub trait Session: Send + Sync {
     async fn exec_cmd(&self, cmd: &Cmd) -> Result<ExecOutput> {
         self.exec(&cmd.script).await
     }
+    /// Run a command and report its output line by line as it arrives.
+    ///
+    /// The default waits for `exec_cmd` to finish and then replays the
+    /// captured lines, so mock transports keep compiling and behave exactly
+    /// as before; the real SSH transport emits each line as it is read.
+    /// `cmd.redact` secrets must not reach the sink.
+    async fn exec_stream(
+        &self,
+        cmd: &Cmd,
+        sink: &mut (dyn for<'a> FnMut(Stream, &'a str) + Send),
+    ) -> Result<ExecOutput> {
+        let out = self.exec_cmd(cmd).await?;
+        for line in out.stdout.lines() {
+            sink(Stream::Stdout, line);
+        }
+        for line in out.stderr.lines() {
+            sink(Stream::Stderr, line);
+        }
+        Ok(out)
+    }
     /// Write a file (mkdir -p the parents, overwrite) with mode 0644.
     async fn write_file(&self, path: &str, contents: &[u8]) -> Result<()>;
     /// Write a file with an explicit mode (octal, e.g. `0o600`). The
@@ -174,6 +239,28 @@ pub trait Session: Send + Sync {
     async fn write_file_mode(&self, path: &str, contents: &[u8], mode: u32) -> Result<()> {
         let _ = mode;
         self.write_file(path, contents).await
+    }
+    /// Upload `src` to `dst` with `mode`, verifying the remote digest.
+    ///
+    /// The default reads the whole source into memory and defers to
+    /// `write_file_mode`, so mock transports keep working; the real SSH
+    /// transport streams files in 64 KiB chunks and checks `sha256sum`
+    /// on the remote side before installing.
+    async fn upload(&self, src: UploadSource, dst: &str, mode: u32) -> Result<UploadReport> {
+        let started = Instant::now();
+        let bytes = match src {
+            UploadSource::File(path) => tokio::fs::read(&path)
+                .await
+                .map_err(|e| miette::miette!("read upload source {}: {e}", path.display()))?,
+            UploadSource::Bytes(bytes) => bytes,
+        };
+        let sha256 = sha256_hex(&bytes);
+        self.write_file_mode(dst, &bytes, mode).await?;
+        Ok(UploadReport {
+            bytes: bytes.len() as u64,
+            sha256,
+            ms: started.elapsed().as_millis() as u64,
+        })
     }
     /// sha256 of a remote file, or None if it does not exist.
     async fn file_sha256(&self, path: &str) -> Result<Option<String>>;
@@ -265,6 +352,8 @@ mod tests {
     struct RecordingSession {
         scripts: Mutex<Vec<String>>,
         files: Mutex<Vec<String>>,
+        written: Mutex<Vec<(String, Vec<u8>)>>,
+        output: Mutex<ExecOutput>,
     }
 
     impl RecordingSession {
@@ -272,7 +361,23 @@ mod tests {
             Self {
                 scripts: Mutex::new(Vec::new()),
                 files: Mutex::new(Vec::new()),
+                written: Mutex::new(Vec::new()),
+                output: Mutex::new(ExecOutput {
+                    exit_code: 0,
+                    stdout: String::new(),
+                    stderr: String::new(),
+                }),
             }
+        }
+
+        fn with_output(stdout: &str, stderr: &str) -> Self {
+            let session = Self::new();
+            *session.output.lock().unwrap() = ExecOutput {
+                exit_code: 0,
+                stdout: stdout.to_string(),
+                stderr: stderr.to_string(),
+            };
+            session
         }
     }
 
@@ -280,14 +385,14 @@ mod tests {
     impl Session for RecordingSession {
         async fn exec(&self, command: &str) -> Result<ExecOutput> {
             self.scripts.lock().unwrap().push(command.to_string());
-            Ok(ExecOutput {
-                exit_code: 0,
-                stdout: String::new(),
-                stderr: String::new(),
-            })
+            Ok(self.output.lock().unwrap().clone())
         }
-        async fn write_file(&self, path: &str, _contents: &[u8]) -> Result<()> {
+        async fn write_file(&self, path: &str, contents: &[u8]) -> Result<()> {
             self.files.lock().unwrap().push(path.to_string());
+            self.written
+                .lock()
+                .unwrap()
+                .push((path.to_string(), contents.to_vec()));
             Ok(())
         }
         async fn file_sha256(&self, _path: &str) -> Result<Option<String>> {
@@ -339,6 +444,62 @@ mod tests {
         assert_eq!(
             *s.files.lock().unwrap(),
             vec!["/etc/kurin/x.conf".to_string()]
+        );
+    }
+
+    /// The default `exec_stream` replays `exec`'s captured lines, stream by
+    /// stream, and still returns the full output.
+    #[tokio::test]
+    async fn exec_stream_default_replays_exec_lines() {
+        let s = RecordingSession::with_output("one\ntwo\n", "warn\n");
+        let mut seen: Vec<(Stream, String)> = Vec::new();
+        let out = s
+            .exec_stream(&Cmd::new("x"), &mut |stream, line| {
+                seen.push((stream, line.to_string()));
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            seen,
+            vec![
+                (Stream::Stdout, "one".to_string()),
+                (Stream::Stdout, "two".to_string()),
+                (Stream::Stderr, "warn".to_string()),
+            ]
+        );
+        assert_eq!(out.stdout, "one\ntwo\n");
+        assert_eq!(out.stderr, "warn\n");
+    }
+
+    /// The default `upload` writes the bytes through `write_file_mode` and
+    /// reports the locally computed digest.
+    #[tokio::test]
+    async fn upload_default_writes_bytes_and_reports_sha256() {
+        let s = RecordingSession::new();
+        let report = s
+            .upload(
+                UploadSource::Bytes(b"hello".to_vec()),
+                "/etc/kurin/x",
+                0o600,
+            )
+            .await
+            .unwrap();
+        assert_eq!(report.bytes, 5);
+        assert_eq!(
+            report.sha256,
+            "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+        );
+        assert_eq!(
+            *s.written.lock().unwrap(),
+            vec![("/etc/kurin/x".to_string(), b"hello".to_vec())]
+        );
+    }
+
+    #[test]
+    fn sha256_hex_matches_known_vector() {
+        assert_eq!(
+            sha256_hex(b""),
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
         );
     }
 }
