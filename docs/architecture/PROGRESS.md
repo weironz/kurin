@@ -66,7 +66,7 @@
 | WP-63 操作详情与日志控制台 | done | 见提交 | 无 | tier1 真实 create 中刷新页面，日志从断点继续 | 阶段×节点网格；资源表；日志控制台（筛选/搜索/跟随/虚拟滚动/下载）；取消/重试；91 Vitest + 1 Playwright |
 | WP-64 Addon 页面与危险操作 | todo | | | tier1 metrics-server | |
 | WP-65 包页面/升级/证书/TOML 编辑器 | todo | | | tier2 页面升级 | |
-| WP-66 前端端到端验收 | todo | | | 维护者执行 | |
+| WP-66 前端端到端验收 | done（代码）/待人工 | 见提交 | 无 | 维护者按 `web/e2e/README.md` 在 tier1/tier2 执行 | `web/e2e/` 5 个场景（创建→加/删节点→销毁、关浏览器、重启 retry、CLI 抢锁、密码扫描）；加节点 UI |
 | WP-70 etcd 备份/恢复 | todo | | | | |
 | WP-71 证书自动续期 | todo | | | | |
 | WP-72 k3s 升级 | todo | | | | |
@@ -139,6 +139,7 @@
 - WP-39：签名包校验、篡改 blob 拒绝、未签名包在 signature 模式拒绝（`cargo test -p kurin-artifact --test transfer`）；CI 工作流需在 tag 上人工验证。
 - WP-49：`just tier3-registry zot`、`docker-registry`、`external`（external 指向 zot）。
 - WP-63：tier1 真实 create 过程中刷新页面，确认日志从断点继续；`pnpm --dir web test:e2e`。
+- WP-66：`cd web && KURIN_E2E_URL=… KURIN_E2E_TOKEN=… pnpm test:e2e:real`（tier1/tier2，见 `web/e2e/README.md`）；结果写入 `docs/progress.md`。
 - WP-65：Playwright `packages.spec.ts` 覆盖包导入/校验/推送/制作 base、升级预览+执行、证书续期、TOML 编辑保存；tier2 页面升级一个小版本。
 - WP-64：Playwright `addons.spec.ts` 覆盖安装/卸载与三个危险操作；tier1 页面安装/卸载 metrics-server。
 - WP-62：Playwright `wizard.spec.ts` 在 mock 后端走完 9 步并提交；tier1 真实创建。
@@ -164,6 +165,7 @@
 - WP-39：签名包校验、篡改 blob 拒绝、未签名包在 signature 模式拒绝（`cargo test -p kurin-artifact --test transfer`）；CI 工作流需在 tag 上人工验证。
 - WP-49：`just tier3-registry zot`、`docker-registry`、`external`（external 指向 zot）。
 - WP-63：tier1 真实 create 过程中刷新页面，确认日志从断点继续；`pnpm --dir web test:e2e`。
+- WP-66：`cd web && KURIN_E2E_URL=… KURIN_E2E_TOKEN=… pnpm test:e2e:real`（tier1/tier2，见 `web/e2e/README.md`）；结果写入 `docs/progress.md`。
 - WP-65：Playwright `packages.spec.ts` 覆盖包导入/校验/推送/制作 base、升级预览+执行、证书续期、TOML 编辑保存；tier2 页面升级一个小版本。
 - WP-64：Playwright `addons.spec.ts` 覆盖安装/卸载与三个危险操作；tier1 页面安装/卸载 metrics-server。
 - WP-62：Playwright `wizard.spec.ts` 在 mock 后端走完 9 步并提交；tier1 真实创建。

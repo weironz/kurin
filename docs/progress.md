@@ -1,3 +1,10 @@
+## WP-66：Web 真实环境 e2e 套件（2026-10-28）
+
+- **新增 `web/e2e/`**（独立 Playwright 配置，`pnpm test:e2e:real`）：创建→状态→加 worker→删 worker→销毁、创建中关闭浏览器、重启 serve 后 interrupted→retry、CLI 抢锁、密码明文扫描（DB/事件/日志/API）。未设置 `KURIN_E2E_URL` 时全部 skip；环境变量见 `web/e2e/README.md`。
+- **加节点 UI**：集群详情「节点」Tab 的「添加节点」批量粘贴 → `/nodes/parse` → `POST /clusters/{name}/nodes`（服务端 toml_edit 追加修订 + `add-nodes` 操作），补上 UI 文档 M2 的 `add nodes` 入口。
+- **服务端补齐**：`POST /clusters/{name}/nodes`（WP-54 遗漏的结构化加节点端点）。
+- **待人工**：在 tier1/tier2 执行 `pnpm test:e2e:real`，把通过/失败项记录到本文件；本环境无 multipass，未执行。
+
 # 进度日志
 
 ## rpm 系 OS 支持（gap #4，2026-10-27）

@@ -9,6 +9,8 @@ import {
   Checkbox,
   Descriptions,
   Empty,
+  Input,
+  Modal,
   Result,
   Skeleton,
   Space,
@@ -28,7 +30,8 @@ import type {
   OperationSummary,
 } from '../api/types';
 import { renewCertificates } from '../api/maintenance';
-import { receiptOperationId } from '../api/addons';
+import { addClusterNodes, receiptOperationId } from '../api/addons';
+import { parseNodes } from '../api/wizard';
 import { t, type MessageKey } from '../i18n/zh-CN';
 import {
   formatAbsolute,
@@ -212,10 +215,125 @@ function OverviewTab({ detail }: { detail: ClusterDetail }) {
 
 /* --------------------------------- 节点 ---------------------------------- */
 
+/** 「添加节点」：批量粘贴 → `/nodes/parse` → 结构化追加（服务端 toml_edit）。 */
+function AddNodesModal({
+  detail,
+  open,
+  onClose,
+}: {
+  detail: ClusterDetail;
+  open: boolean;
+  onClose: () => void;
+}) {
+  const navigate = useNavigate();
+  const { message } = App.useApp();
+  const [input, setInput] = useState('');
+  const [rows, setRows] = useState<Array<{ name: string; address: string; role: string }>>([]);
+  const [error, setError] = useState<string | null>(null);
+  const existing = detail.desiredNodes.map((node) => node.name);
+
+  const parse = useMutation({
+    mutationFn: () => parseNodes(input, existing),
+    onSuccess: (parsed) => {
+      setError(null);
+      setRows(
+        parsed.nodes.map((node) => ({
+          name: node.name,
+          address: node.address,
+          // 解析结果用 controlplane（无连字符），服务端用 control-plane。
+          role: node.role === 'controlplane' ? 'control-plane' : node.role,
+        })),
+      );
+    },
+    onError: (err) => setError(err instanceof Error ? err.message : String(err)),
+  });
+  const submit = useMutation({
+    mutationFn: () => addClusterNodes(detail.name, rows),
+    onSuccess: async (receipt) => {
+      onClose();
+      message.info(t('clusterDetail.nodes.addSubmitted'));
+      navigate(`/operations/${encodeURIComponent(receiptOperationId(receipt))}`);
+    },
+    onError: (err) => setError(err instanceof Error ? err.message : String(err)),
+  });
+
+  return (
+    <Modal
+      open={open}
+      title={t('clusterDetail.nodes.addTitle')}
+      okText={t('clusterDetail.nodes.addSubmit')}
+      cancelText={t('common.cancel')}
+      okButtonProps={{
+        disabled: rows.length === 0,
+        loading: submit.isPending,
+        'data-testid': 'add-nodes-submit',
+      }}
+      onCancel={onClose}
+      onOk={() => submit.mutate()}
+      width={640}
+    >
+      <div data-testid="add-nodes-modal">
+        <Typography.Paragraph type="secondary">
+          {t('clusterDetail.nodes.addDescription')}
+        </Typography.Paragraph>
+        <Input.TextArea
+          rows={3}
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          placeholder={'192.168.10.22-23 worker'}
+          data-testid="add-nodes-input"
+        />
+        <Space style={{ marginTop: 8 }}>
+          <Button
+            onClick={() => parse.mutate()}
+            loading={parse.isPending}
+            disabled={input.trim() === ''}
+            data-testid="add-nodes-parse"
+          >
+            {t('clusterDetail.nodes.addParse')}
+          </Button>
+        </Space>
+        {error != null ? (
+          <Alert type="error" showIcon message={error} style={{ marginTop: 8 }} data-testid="add-nodes-error" />
+        ) : null}
+        {rows.length > 0 ? (
+          <Table
+            rowKey="name"
+            size="small"
+            pagination={false}
+            dataSource={rows}
+            style={{ marginTop: 12 }}
+            data-testid="add-nodes-table"
+          >
+            <Table.Column title={t('clusterDetail.nodes.column.name')} dataIndex="name" />
+            <Table.Column title={t('clusterDetail.nodes.column.address')} dataIndex="address" />
+            <Table.Column title={t('clusterDetail.nodes.column.role')} dataIndex="role" />
+          </Table>
+        ) : null}
+      </div>
+    </Modal>
+  );
+}
+
 function NodesTab({ detail }: { detail: ClusterDetail }) {
   const rows = mergeNodes(detail.desiredNodes, detail.observedNodes);
+  const [addOpen, setAddOpen] = useState(false);
+  const busy = isActiveOperation(detail.activeOperation);
   return (
-    <Table<MergedNodeRow>
+    <div>
+      <Space style={{ marginBottom: 12 }}>
+        <Button
+          type="primary"
+          disabled={busy}
+          onClick={() => setAddOpen(true)}
+          data-testid="cluster-add-nodes-open"
+        >
+          {t('clusterDetail.nodes.add')}
+        </Button>
+        {busy ? <Typography.Text type="secondary">{t('danger.disabledByOperation')}</Typography.Text> : null}
+      </Space>
+      <AddNodesModal detail={detail} open={addOpen} onClose={() => setAddOpen(false)} />
+      <Table<MergedNodeRow>
       rowKey="name"
       dataSource={rows}
       pagination={false}
@@ -259,7 +377,8 @@ function NodesTab({ detail }: { detail: ClusterDetail }) {
         title={t('clusterDetail.nodes.column.ready')}
         render={(_, r) => <ReadyTag observed={r.observed} />}
       />
-    </Table>
+      </Table>
+    </div>
   );
 }
 

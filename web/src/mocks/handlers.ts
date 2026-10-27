@@ -1040,6 +1040,42 @@ export const handlers = [
     return HttpResponse.json({ rev: (body.base_rev ?? 1) + 1, sha256: 'deadbeef' });
   }),
 
+  // POST /clusters/:name/nodes：结构化追加节点（WP-66 的「加 worker」）。
+  http.post('/api/v1/clusters/:name/nodes', async ({ request, params }) => {
+    if (!sessionEstablished) return unauthorized();
+    const name = params['name'] as string;
+    const detail = mockClusterDetails[name];
+    if (detail == null) {
+      return HttpResponse.json(
+        { code: 'not-found', message: `集群 ${name} 不存在` },
+        { status: 404 },
+      );
+    }
+    const body = (await request.json()) as {
+      nodes?: Array<{ name: string; address: string; role: string }>;
+    };
+    if (!body.nodes || body.nodes.length === 0) {
+      return HttpResponse.json(
+        { code: 'invalid-request', message: '至少需要一个节点' },
+        { status: 400 },
+      );
+    }
+    for (const node of body.nodes) {
+      if (detail.desiredNodes.some((existing) => existing.name === node.name)) {
+        return HttpResponse.json(
+          { code: 'invalid-request', message: `节点 ${node.name} 已存在` },
+          { status: 400 },
+        );
+      }
+      detail.desiredNodes.push({ name: node.name, address: node.address, role: node.role as never });
+    }
+    detail.currentRev += 1;
+    return HttpResponse.json(
+      { operation: '01JDYADDNODES0001', state: 'queued', cluster: name },
+      { status: 202 },
+    );
+  }),
+
   // POST /clusters/{name}/operations：202 + 操作（precheck / plan / create /
   // upgrade / certs-renew…；params 原样存进记录，dry_run 的升级带计划结果）。
   http.post('/api/v1/clusters/:name/operations', async ({ request, params }) => {

@@ -220,3 +220,36 @@ describe('证书 Tab（WP-65）', () => {
     expect(within(panel).getByTestId('certs-renew')).toBeEnabled();
   });
 });
+
+describe('添加节点（WP-66 的加 worker 流程）', () => {
+  it('批量粘贴 → 解析 → 提交结构化 add-nodes 并跳转操作', async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    server.use(
+      http.post('/api/v1/clusters/:name/nodes', async ({ request }) => {
+        bodies.push((await request.json()) as Record<string, unknown>);
+        return HttpResponse.json(
+          { operation: '01JDYADDNODES0001', state: 'queued', cluster: 'tier1' },
+          { status: 202 },
+        );
+      }),
+    );
+    renderDetail('tier1');
+    await expectDetailLoaded('cp-1');
+    fireEvent.click(screen.getByRole('tab', { name: /节点/ }));
+
+    fireEvent.click(screen.getByTestId('cluster-add-nodes-open'));
+    const modal = await screen.findByTestId('add-nodes-modal');
+    fireEvent.change(within(modal).getByTestId('add-nodes-input'), {
+      target: { value: '10.0.0.22-22 registry' },
+    });
+    fireEvent.click(within(modal).getByTestId('add-nodes-parse'));
+    await waitFor(() => expect(within(modal).getByTestId('add-nodes-table')).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId('add-nodes-submit'));
+
+    await expectNavigatedToOperation();
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0]).toEqual({
+      nodes: [{ name: 'registry-1', address: '10.0.0.22', role: 'registry' }],
+    });
+  });
+});

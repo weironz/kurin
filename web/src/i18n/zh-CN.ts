@@ -85,6 +85,13 @@ const zhCN = {
   'clusterDetail.nodes.column.os': '操作系统',
   'clusterDetail.nodes.column.kubeletVersion': 'kubelet 版本',
   'clusterDetail.nodes.column.ready': '就绪',
+  'clusterDetail.nodes.add': '添加节点',
+  'clusterDetail.nodes.addTitle': '添加节点',
+  'clusterDetail.nodes.addDescription':
+    '批量粘贴「地址/范围 角色」，解析后追加到配置修订并提交 add-nodes 操作。',
+  'clusterDetail.nodes.addParse': '解析',
+  'clusterDetail.nodes.addSubmit': '添加并执行',
+  'clusterDetail.nodes.addSubmitted': '已提交添加节点操作',
   'clusterDetail.nodes.missing': '期望缺失',
   'clusterDetail.nodes.undeclared': '未声明',
   'clusterDetail.nodes.empty': '暂无节点',

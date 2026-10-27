@@ -142,6 +142,27 @@ export function removeAddon(
   });
 }
 
+/* -------------------------------- 添加节点 -------------------------------- */
+
+/** `POST /clusters/{name}/nodes` 的一个节点（结构化动作，服务端用 toml_edit 追加）。 */
+export interface AddNodeRequest {
+  name: string;
+  address: string;
+  /** worker / control-plane / lb / registry。 */
+  role: string;
+}
+
+/** `POST /clusters/{name}/nodes`：追加节点修订并提交 `add-nodes` → 202。 */
+export function addClusterNodes(
+  name: string,
+  nodes: AddNodeRequest[],
+): Promise<OperationReceipt> {
+  return apiFetch<OperationReceipt>(`/clusters/${encodeURIComponent(name)}/nodes`, {
+    method: 'POST',
+    body: { nodes },
+  });
+}
+
 /* ------------------------------ 危险区操作 -------------------------------- */
 
 /** `POST /clusters/{name}/operations`：破坏性操作需要 confirm == 集群名。 */
