@@ -45,7 +45,7 @@
 | WP-38 OS 依赖包 | todo | | | `e2e/tier1/rocky.sh` 离线变体 | |
 | WP-39 签名/SBOM/发布 | todo | | | | |
 | WP-40 addon.yaml 规范 | done | 见提交 | 无 | 无 | 41 个 addon 专项测试；schema 漂移测试；目录/内嵌/包三种加载；修复 package 文件集两级索引 bug |
-| WP-41 addon 渲染 | todo | | | | |
+| WP-41 addon 渲染 | done | 见提交 | 新增 4 个渲染快照 | 无（纯本地渲染） | 03 §4.4 上下文；values 合并/校验；秘密脱敏；未声明镜像拒绝 |
 | WP-42 helm 执行器 | todo | | | tier1 测试 chart | |
 | WP-43 addon-engine 组件 | todo | | | | |
 | WP-44 kurin addon 命令族 | todo | | | tier1 metrics-server 生命周期 | |
@@ -86,6 +86,7 @@
 - WP-50：Host 拒绝用 403 `forbidden-host`（§7 清单外）；错误/DTO 采用顶层 `{code,message,diagnostics?}` + camelCase（对齐 WP-60 前端）；默认白名单含 `[::1]`；会话 TTL 24h；新增 `GET /session` 与 `GET /api/v1/healthz`。
 - WP-33：`inspect --json` 改为 `--manifest`（全局 `--json` 与子命令长选项冲突），`list` 用 `--format text|json`；`prune` 需全量重哈希（3.7GiB 约 2 分钟）。
 - WP-32：`kurin artifact` 现在产出 OCI layout（旧目录树由 WP-34 兼容读取）；镜像按所选架构携带子 manifest，上游 index 原样保留；修复 busybox URL 模板（Docker Hub tag 无 `v` 前缀）。
+- WP-41：「内置推荐值」实现为 `values.yaml.j2` 按集群上下文渲染；`kubernetes.distribution` 暴露 kubeadm/k3s；`registry.mirror` 未配置为 null。
 - WP-40：`BUILTIN_ADDONS` 与内嵌目录接线留给 WP-43/46（目录暂空）；`oci://` 源明确报错，依赖 WP-33 的 pull。
 - WP-27：`add nodes` 复用 `merge()`，v1alpha1 配置会先迁移为 v1alpha2 再写回；`--set` 写在 WP-26 已实现，本 WP 补测试/文档。顺带修复 `package inspect --json` 与全局 `--json` 的 clap 冲突（改用全局开关）。
 - WP-26：`--setup-ssh-key` 留给 WP-28；无凭据时落盘 `{ env = "KURIN_SSH_PASSWORD" }` 并告警；k3s 未给 CNI 默认 flannel；`--registry` 未给 kind 默认 docker-registry；快速参数 + YAML 文件拒绝；`--set` 提前在本 WP 实现。
@@ -121,6 +122,7 @@
 - WP-50：`kurin serve` 回环冒烟（一次性登录链接、`/session`、401/403/400、TLS h2）；`cargo clippy -p kurin --features ui`。
 - WP-33：本地 zot 容器三形态互转（layout→zot→tar→verify→inspect，二次 push 零发送，错误凭据 401）；已清理容器。
 - WP-32：`kurin package create base --arch amd64,arm64 -o file:///tmp/base.tar.zst`，再 `kurin package inspect file:///tmp/base.tar.zst`（真实网络下载约 10 分钟；本地假上游测试已覆盖校验路径）。
+- WP-41：纯本地渲染/校验，无需远端 e2e；13 个集成 + 5 个单测。
 - WP-40：纯本地解析/校验，无需远端 e2e；`just addon-schema` 与漂移测试。
 - WP-27：`just tier2 && just tier2-test`，再 `e2e/tier2/add-worker.sh target/tier2/debug/kurin`。
 - WP-26：`just tier1-quick`（纯参数 + 密码认证单节点）、`just tier3-quick-ha`（3 控制面 + kube-vip）。

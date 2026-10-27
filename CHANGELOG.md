@@ -61,6 +61,19 @@ All notable changes to kurin. Format follows Keep a Changelog; semver.
   (`sha256:73aaf090…`) was verified to match tag `1.36.1` upstream.
 
 ### Added
+- Addon rendering (WP-41): `[addons.<name>]` values are now merged
+  (`defaults` → the addon's built-in recommended values from its
+  `values.yaml.j2` → user `values` → `raw-values`) and rendered with the
+  documented MiniJinja context (`cluster`, `kubernetes`, `network`,
+  `ha`, `registry.mirror`, `nodes`, `addon.values`, `zone`). User
+  `values` are validated against the addon's `values-schema`; violations
+  name the config location (`addons.<name>.values.<path>`) and point at
+  the offending line. `{ env = "…" }` / `{ file = "…" }` secret
+  references inside values are resolved in memory and registered with the
+  redactor, so they never reach logs or diagnostics; `raw-values` pass
+  through explicitly unvalidated. Rendered manifests are checked for
+  image integrity: every image they reference must be declared
+  (digest-pinned) in `spec.images`.
 - `kurin add nodes -f cfg --worker IPS [--control-plane IPS] [--node KV]`
   (WP-27): the nodes are appended to the config file with `toml_edit`
   (comments, blank lines and key order preserved; automatic names

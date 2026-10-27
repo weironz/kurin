@@ -40,6 +40,33 @@ pub enum AddonError {
         path: String,
         message: String,
     },
+
+    /// User `values` violate the addon's `values-schema` (WP-41). The
+    /// message names the config location (`addons.<name>.values.<path>`)
+    /// and, when the config text is known, the span points at the line.
+    #[error("invalid addon values: {path}")]
+    #[diagnostic(code(kurin::addon::values))]
+    Values {
+        /// Config file the values came from (`cluster configuration` when
+        /// the caller did not know it).
+        path: String,
+        #[source_code]
+        text: String,
+        #[label("{message}")]
+        span: Option<miette::SourceSpan>,
+        message: String,
+    },
+
+    /// Rendering failed: a template did not render, rendered invalid
+    /// YAML, or produced an undeclared image (WP-41). The message is
+    /// already scrubbed of secrets.
+    #[error("failed to render addon: {path}: {message}")]
+    #[diagnostic(code(kurin::addon::render))]
+    Render {
+        /// File (template or manifest) the failure is about.
+        path: String,
+        message: String,
+    },
 }
 
 impl AddonError {
@@ -74,9 +101,14 @@ impl AddonError {
     /// One-line, span-free rendering for logs and snapshot tests.
     pub fn summary(&self) -> String {
         match self {
-            AddonError::Io { .. } | AddonError::Invalid { .. } => self.to_string(),
+            AddonError::Io { .. } | AddonError::Invalid { .. } | AddonError::Render { .. } => {
+                self.to_string()
+            }
             AddonError::Parse { path, message, .. } => {
                 format!("invalid addon.yaml: {path}: {message}")
+            }
+            AddonError::Values { path, message, .. } => {
+                format!("invalid addon values: {path}: {message}")
             }
         }
     }

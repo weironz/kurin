@@ -8,9 +8,11 @@
 //! - Parsing and file access are pure: no cluster, no network.
 //! - [`Addon::validate`] checks every rule of 03 §4.2 that one addon can
 //!   violate alone; [`Catalog::validate`] adds the cross-addon rules.
-//! - Rendering (WP-41), helm execution and applying (WP-42), the
-//!   `addon-engine` component and install-time compat matching against a
-//!   real cluster (WP-43) are deliberately out of scope.
+//! - [`Addon::render`] (WP-41) merges values, validates them against the
+//!   addon's schema, resolves secret references and renders manifest
+//!   templates; Helm execution and applying (WP-42), the `addon-engine`
+//!   component and install-time compat matching against a real cluster
+//!   (WP-43) are deliberately out of scope.
 //!
 //! ```no_run
 //! use kurin_components::addon::{Addon, Catalog};
@@ -26,6 +28,7 @@
 
 pub mod error;
 pub mod load;
+pub mod render;
 pub mod schema;
 pub mod source;
 pub mod spec;
@@ -33,6 +36,7 @@ pub mod validate;
 
 pub use error::AddonError;
 pub use load::{embedded_from, Addon, Catalog};
+pub use render::{RenderRequest, RenderedAddon, RenderedManifest, RenderedValues};
 pub use schema::{schema, schema_json};
 pub use source::{AddonFiles, BuiltinCatalog, DirFiles, EmbeddedFiles, PackageFiles};
 pub use spec::{

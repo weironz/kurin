@@ -1,0 +1,5 @@
+---
+source: crates/kurin-components/tests/addon_render.rs
+expression: summary
+---
+invalid addon values: cluster.toml: addons.metrics-server.values.replicas: 0 is less than the minimum of 1

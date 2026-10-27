@@ -1,0 +1,12 @@
+---
+source: crates/kurin-components/tests/addon_render.rs
+expression: "rendered.manifests[0].text"
+---
+# MiniJinja manifest template (03 §4.4); rendering arrives with WP-41.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kurin-local-path-config
+  namespace: kube-system
+data:
+  default-class: "True"

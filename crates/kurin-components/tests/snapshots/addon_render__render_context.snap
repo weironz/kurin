@@ -1,0 +1,22 @@
+---
+source: crates/kurin-components/tests/addon_render.rs
+expression: "rendered.manifests[0].text"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: context
+  namespace: demo
+data:
+  cluster: "demo"
+  domain: "cluster.local"
+  kubernetes: "1.33.1/kubeadm"
+  pod-cidr: "10.244.0.0/16"
+  service-cidr: "10.96.0.0/12"
+  cni: "calico"
+  vip: "10.0.0.100"
+  ha-mode: "kube-vip"
+  mirror: "harbor.local"
+  zone: "cn"
+  nodes: "cp-1=control-plane@10.0.0.11/amd64/a;w-1=worker@10.0.0.21/None/-;"
+  values: ""

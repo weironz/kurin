@@ -201,6 +201,13 @@ values = { default-class = true }
 | `values` | 受 addon 的 values schema 校验的参数（WP-41） |
 | `raw-values` | 透传给 Helm、**不校验**的高级参数 |
 
+values 的合并顺序为 `defaults` → addon 内置推荐值（`values.yaml.j2` 按集群
+上下文渲染）→ 用户 `values` → `raw-values`，后者覆盖前者。用户 `values` 中
+未在 schema 里声明的 key 会在渲染期报错，诊断指向
+`addons.<name>.values.<path>` 及配置文件对应行。`values` 与 `raw-values` 里
+都可以写秘密引用 `{ env = "VAR" }` / `{ file = "/path" }`：渲染时在内存中
+解析一次，并注册到脱敏器，不会出现在日志、事件或错误文本里。
+
 内置 addon 名单（WP-46 起提供具体内容）：`metrics-server`、`local-path`、
 `nfs-subdir`、`ingress-nginx`、`cert-manager`、`metallb`、`headlamp`、
 `kube-prometheus-stack`。名单之外的名字必须带 `source`（外部包），否则加载期
