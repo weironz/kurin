@@ -1,3 +1,13 @@
+## WP-73：kurin import --from-cluster（2026-10-28）
+
+- **`kurin import --from-cluster --host <ip> [--user root] [--port 22] [--key PATH | --password-env NAME] [--known-hosts MODE] [-o FILE]`**：从运行中集群的 `kube-system/kurin-state` 反推 v1alpha2 配置（换控制机 / 纳管到 Web）。单条 SSH 会话直连 `--host`（须为控制面节点）：先按节点实际持有的 kubeconfig 探测 kubectl 形态（k3s `--kubeconfig /etc/rancher/k3s/k3s.yaml`，kubeadm `--kubeconfig /etc/kubernetes/admin.conf`），再读 ConfigMap 的 `data["spec.toml"]`。worker 节点（两个 kubeconfig 都没有）与无记录集群（WP-19 之前）都给明确报错。
+- **凭据回填（存的是脱敏 spec）**：`--password-env NAME` 把每个 `******`（`[ssh.auth]`、become 密码、`[registry]` 密码、`[addons]` values 里的脱敏值、节点覆盖）写成 `{ env = "NAME" }` 引用，并在 stderr 列出清单告警（SSH 密码 ≠ registry 密码，按需改）；`--key PATH` 只重写 `[ssh.auth]` 为 `method = "private_key"`，密码形态字段**明确报错列出字段清单**（提示改用 `--password-env` 重跑）——绝不产出带 `******` 的残缺配置。整个过程只写引用，不落任何秘密值（R8）。
+- **保留原样**：`spec.toml` 用 `toml_edit` 逐字段改写（键序/注释/非秘密值不动）；v1alpha1 记录先经 `kurin config migrate` 的同一套结构化迁移升为 v1alpha2。产物必须能通过 `kurin_config::parse_str` 完整加载（内置校验）。
+- **输出**：`-o FILE` 以 0600 落盘（复用 `kurin-core::local::write_local_file`）；缺省打印到 stdout。`--json` 输出 `{cluster, distribution, kubernetes_version, nodes, output}`（`nodes` 仅名字/角色/地址，无凭据）；`--json` 必须配 `-o`（stdout 归 JSON 报告），缺 `-o` 在任何网络动作前拒绝。
+- **只读直连**：无计划/执行器/集群锁/JSONL 操作日志（配置是输出而非输入，事件总线无锚点）；探测形态与记录 spec 的 distribution 不一致时仅告警（以 spec 为准）。
+- **测试**：`kurin-components` import 单测 10 个（形态探测映射、密码引用全量回填、key 只重写 `[ssh.auth]`、缺口字段清单、无凭据报错、v1alpha1 迁移、注释保留、addon values 意外键、未知版本拒绝、报告字段/JSON 键集）；`kurin/tests/import.rs` 8 个集成测试（mock Session：kubeadm/k3s kubectl 前缀与命令序列、`-o` 0600 与文档内容、记录缺失/worker 报错、key 缺口清单、JSON 报告结构、`--json` 无 `-o` 先拒绝、stdout 模式）。
+- **e2e（tier2，待人工）**：在另一台控制机上 `kurin import --from-cluster --host <tier2-cp> --password-env KURIN_SSH_PASSWORD -o tier2.toml`（`export KURIN_SSH_PASSWORD=…`），检查 `tier2.toml`（0600、无 `******`、引用就位、`kurin status -f tier2.toml` 健康），再 `kurin add nodes -f tier2.toml --worker <新IP>` 验证纳管后可变更。
+
 ## WP-78：英文文案与文档站（2026-10-28）
 
 - **`web/src/i18n/en.ts`**：593 个键全量英文翻译，`Dictionary = Record<MessageKey, string>` 由 zh 字典派生，缺键/多键编译期报错；占位符逐键校验。

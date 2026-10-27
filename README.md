@@ -192,15 +192,18 @@ kurin upgrade      -f cluster.toml --with-kubernetes vX.Y.Z [--dry-run]
                                                    # cross-minor allowed (one minor at a time)
 kurin logs [--cluster C] [--op ID | --last] [--follow] [--node N] [--level L] [--json]
                                                    # read the JSONL operation log
+kurin import --from-cluster --host <cp-ip> --password-env VAR [-o FILE]
+                                                   # rebuild the config from the running
+                                                   # cluster's kurin-state record (WP-73)
 ```
 
-Every operation writes `$XDG_STATE_HOME/kurin/logs/<cluster>/<op-id>.jsonl`
-(fallback `~/.local/state`) and prints that path once at start. Global flags
-apply to every command: `--timestamps` prefixes terminal log lines with their
-UTC timestamp, `-v` shows info-level progress plus a per-command remote-output
-summary, `-vv` also streams every remote stdout/stderr line, and `--json` /
-`--json=v1` keep the frozen v1 event stream (now with a `ts` field) while
-`--json=v2` emits full envelopes.
+Every operation except `import` writes
+`$XDG_STATE_HOME/kurin/logs/<cluster>/<op-id>.jsonl` (fallback `~/.local/state`)
+and prints that path once at start. Global flags apply to every command:
+`--timestamps` prefixes terminal log lines with their UTC timestamp, `-v` shows
+info-level progress plus a per-command remote-output summary, `-vv` also streams
+every remote stdout/stderr line, and `--json` / `--json=v1` keep the frozen v1
+event stream (now with a `ts` field) while `--json=v2` emits full envelopes.
 
 ## Adding, removing, tearing down
 

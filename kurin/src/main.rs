@@ -1,16 +1,19 @@
 //! `kurin` binary: argv parsing only. Every operation lives in `kurin-ops`.
 
 use std::io::IsTerminal;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use clap::{ArgAction, Parser, Subcommand, ValueEnum};
+use kurin_config::{HostKeyMode, SecretRef, SshAuth};
 use miette::{IntoDiagnostic, Result};
 
 use kurin::cli;
 use kurin::cli::addon;
-use kurin::cli::quick::{self, NodeNameStrategy, QuickArgs, QuickConfig, SaveDefault, SaveOutcome};
+use kurin::cli::quick::{
+    self, KnownHostsArg, NodeNameStrategy, QuickArgs, QuickConfig, SaveDefault, SaveOutcome,
+};
 use kurin::ops::{self, JsonMode, OpRequest, OutputOpts, Params, StatusOpts};
 
 #[derive(Parser)]
@@ -163,6 +166,9 @@ enum Commands {
     Delete(DeleteArgs),
     /// Read the JSONL operation logs written by every operation.
     Logs(LogsArgs),
+    /// Reconstruct a cluster config from a running cluster's state
+    /// record (WP-73).
+    Import(ImportArgs),
     /// Run the web UI server (built with `--features ui`).
     Serve(ServeArgs),
 }
@@ -579,6 +585,38 @@ struct LogsArgs {
     /// `-vv` selects debug).
     #[arg(long)]
     level: Option<String>,
+}
+
+/// `kurin import --from-cluster` options (WP-73).
+#[derive(clap::Args)]
+struct ImportArgs {
+    /// Reconstruct from a running cluster's kurin-state record.
+    #[arg(long, required = true)]
+    from_cluster: bool,
+    /// Control-plane node to read the state through.
+    #[arg(long)]
+    host: IpAddr,
+    /// SSH login user on the host.
+    #[arg(long, default_value = "root")]
+    user: String,
+    /// SSH port on the host.
+    #[arg(long, default_value_t = 22)]
+    port: u16,
+    /// Authenticate with this private key; also written into [ssh.auth].
+    #[arg(long, value_name = "PATH", conflicts_with = "password_env")]
+    key: Option<PathBuf>,
+    /// Authenticate with this environment variable's value; written into
+    /// [ssh.auth] (and every other redacted field) as a reference.
+    #[arg(long, value_name = "NAME")]
+    password_env: Option<String>,
+    /// Host-key policy for the import connection: tofu (default),
+    /// strict or accept-new.
+    #[arg(long, value_name = "MODE", value_enum)]
+    known_hosts: Option<KnownHostsArg>,
+    /// Write the reconstructed config here (mode 0600) instead of
+    /// stdout.
+    #[arg(short, long, value_name = "FILE")]
+    output: Option<PathBuf>,
 }
 
 /// `kurin serve` options (UI architecture §3.1 / §6.10).
@@ -1078,6 +1116,7 @@ async fn run(cli: Cli) -> Result<()> {
                 .await
             }
         },
+        Commands::Import(args) => run_import(args, out).await,
         Commands::Serve(args) => serve(args).await,
     }
 }
@@ -1250,6 +1289,43 @@ async fn run_op(req: OpRequest, out: OutputOpts) -> Result<()> {
     let prepared = ops::prepare(req, out).await?;
     let plan = ops::plan(&prepared).await?;
     ops::execute(prepared, plan).await?;
+    Ok(())
+}
+
+/// `kurin import --from-cluster` (WP-73): one SSH session to a
+/// control-plane node, the state record, and a re-credentialed config.
+async fn run_import(args: ImportArgs, out: OutputOpts) -> Result<()> {
+    let auth = match (&args.key, &args.password_env) {
+        (Some(path), None) => SshAuth::PrivateKey {
+            key_path: path.clone(),
+            passphrase: None,
+        },
+        (None, Some(env)) => SshAuth::Password {
+            password: SecretRef::Env { env: env.clone() },
+        },
+        _ => {
+            return Err(miette::miette!(
+                "`kurin import` needs exactly one of --key PATH or --password-env NAME"
+            ))
+        }
+    };
+    let known_hosts = match args.known_hosts {
+        Some(KnownHostsArg::Strict) => HostKeyMode::Strict,
+        Some(KnownHostsArg::AcceptNew) => HostKeyMode::AcceptNew,
+        Some(KnownHostsArg::Tofu) | None => HostKeyMode::Tofu,
+    };
+    ops::import(
+        &ops::ImportOptions {
+            host: args.host,
+            user: args.user,
+            port: args.port,
+            auth,
+            known_hosts,
+            output: args.output,
+        },
+        out,
+    )
+    .await?;
     Ok(())
 }
 

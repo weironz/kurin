@@ -60,6 +60,9 @@ pub mod executor {
 pub mod facts {
     pub use kurin_core::facts::*;
 }
+pub mod import {
+    pub use kurin_components::import::*;
+}
 pub mod lock {
     pub use kurin_core::lock::*;
 }

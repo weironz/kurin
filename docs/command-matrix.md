@@ -111,7 +111,7 @@ worker 按 `--batch` 分批。`--dry-run` 输出计划树（保留“当前 → 
 `$XDG_STATE_HOME/kurin/locks/<cluster>.lock`（回退 `~/.local/state`），
 第二个进程立即失败并显示持有者的 pid、操作 id、命令行与开始时间。
 只读命令（`status`、`precheck`、`certs check`、`logs`、`artifact`、
-`config`）不加锁；`--dry-run` 同样不加锁。
+`config`、`import`）不加锁；`--dry-run` 同样不加锁。
 
 `create cluster --resume` 会校验计划指纹（任务 key + `describe()` 的
 sha256）。计划变化时拒绝续跑并提示去掉 `--resume`；v1 状态文件没有
@@ -137,6 +137,35 @@ sha256）。计划变化时拒绝续跑并提示去掉 `--resume`；v1 状态文
   之前安装的集群）时回退到 `/version` 探测。
 - `status`：显示期望版本（记录）与观测版本（`/version`）的差异。
 - `delete cluster` 不处理记录（集群已销毁）。
+- `import --from-cluster`：读取该记录反推配置（见下一节）。
+
+## import --from-cluster（WP-73）
+
+| | k8s（kubeadm） | k3s |
+|---|---|---|
+| 从 kurin-state 反推配置 | ✅（`kubectl --kubeconfig /etc/kubernetes/admin.conf`）| ✅（`k3s kubectl --kubeconfig /etc/rancher/k3s/k3s.yaml`）|
+| worker 节点作 --host | ❌ 拒绝（无控制面 kubeconfig，报错提示换控制面）| ❌ 同左 |
+| 记录缺失（WP-19 之前安装） | ❌ 拒绝（明确报错）| ❌ 同左 |
+
+`kurin import --from-cluster --host <cp-ip> [--user root] [--port 22]
+[--key PATH | --password-env NAME] [--known-hosts tofu|strict|accept-new]
+[-o FILE]` 用单条 SSH 会话直连 `--host`（须为控制面节点；kubectl 形态
+按节点实际持有的 kubeconfig 探测），读 `kube-system/kurin-state` 的
+`spec.toml` 后回填凭据：
+
+- **凭据**：记录是脱敏的（`******`）。`--password-env NAME` 把每个脱敏
+  字段（`[ssh.auth]`、become 密码、`[registry]` 密码、`[addons]` values
+  里的脱敏值、节点覆盖）写成 `{ env = "NAME" }` 引用并在 stderr 列清单
+  告警；`--key PATH` 只重写 `[ssh.auth]` 为 `private_key`，密码形态字段
+  明确报错列出字段清单（改用 `--password-env` 重跑）。两者互斥、必给
+  其一；全程只写引用，秘密值不落任何输出（R8）。
+- **保真**：`toml_edit` 逐字段改写（键序/注释/非秘密值不动）；v1alpha1
+  记录先经 `config migrate` 的结构化迁移升为 v1alpha2；产物必须能被
+  配置管道完整加载。
+- **输出**：`-o FILE` 0600 落盘；缺省 stdout。`--json` 报告
+  `{cluster, distribution, kubernetes_version, nodes, output}`（`nodes`
+  仅名字/角色/地址）；`--json` 必须配 `-o`，缺 `-o` 在任何网络动作前
+  拒绝。只读操作：不抢集群锁，无 JSONL 操作日志。
 
 ## certs check / renew / schedule
 

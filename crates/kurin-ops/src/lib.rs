@@ -27,6 +27,7 @@ mod create;
 mod delete;
 mod etcd;
 mod execute;
+pub mod import;
 mod logs;
 mod output;
 mod packages;
@@ -51,7 +52,9 @@ use semver::Version;
 use tokio_util::sync::CancellationToken;
 
 pub use addon::inventory as addon_inventory;
+pub use import::ImportOptions;
 pub use kurin_components::certs::NodeCerts;
+pub use kurin_components::import::ImportReport;
 pub use kurin_components::precheck::PrecheckReport;
 pub use kurin_components::status::StatusOpts;
 pub use kurin_components::status::StatusReport;
@@ -555,6 +558,12 @@ pub async fn execute(prepared: Prepared, plan: kurin_core::plan::Plan) -> Result
 /// error so `status` can warn instead of silently ignoring it.
 pub async fn read_state(api: &dyn kurin_kube::ClusterApi) -> Result<Option<ClusterStateRecord>> {
     kurin_components::tasks::post::read_state(api).await
+}
+
+/// `kurin import --from-cluster` (WP-73): reconstruct a config from the
+/// running cluster's state record.
+pub async fn import(opts: &ImportOptions, out: OutputOpts) -> Result<ImportReport> {
+    import::import(opts, out).await
 }
 
 /// `kurin status`: probe the cluster and print the report. Returns the
