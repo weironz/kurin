@@ -50,11 +50,26 @@ vip  = "192.168.10.100"         # 见下表：不同 mode 下语义不同
 offline-dir = "/srv/kurin-bundle"  # 离线安装：bundle 目录（与 --offline 等价）
 zone = "cn"                        # 国内镜像；KURIN_ZONE=cn 环境变量优先
 
+# ── registry（私有镜像仓库，可选） ─────────────────────────────
+# [registry]
+# kind = "zot"                  # docker-registry | zot | harbor
+# port = 5000                   # harbor 默认 8443
+# username = "kurin"            # harbor 只能是 admin
+# password = "s3cret"
+# data-dir = "/var/lib/kurin/registry"
+
+# ── storage（动态存储，可选） ──────────────────────────────────
+# [storage]
+# kind = "local-path"           # local-path | nfs（nfs 需 server+path）
+# default = true                # 是否作为集群默认 StorageClass
+# server = "192.168.10.5"       # 仅 nfs
+# path = "/exports/k8s"         # 仅 nfs
+
 # ── nodes ──────────────────────────────────────────────────────
 [nodes.master01]                 # 键即节点名：DNS label（小写/数字/-，≤63）
 address          = "192.168.10.11"   # SSH 可达地址
 internal-address = "192.168.10.11"   # 集群内通信地址（缺省 = address）
-role   = "control-plane"        # "control-plane" | "worker" | "lb"
+role   = "control-plane"        # "control-plane" | "worker" | "lb" | "registry"
 user   = "root"                 # 节点级覆盖（缺省继承 [ssh]）
 port   = 22
 labels = { "env" = "prod" }    # 生效方式见下  节点标签
@@ -101,6 +116,36 @@ join 时 CLI 显式警告）。
 - `offline-dir`：目录必须存在（`kurin artifact --out` 产出）。离线时全部制品
   （含控制面镜像、CNI manifest）从 bundle 读取，零网络请求。
 - `zone = "cn"`：`KURIN_ZONE=cn` 环境变量优先于本字段。
+
+### `[registry]`（私有镜像仓库）
+
+三种实现（详见 `docs/registry-contracts.md`），装在 `role = "registry"` 的节点上：
+
+| kind | 实现 | 说明 |
+|---|---|---|
+| `docker-registry` | CNCF distribution v3 | 单二进制 + systemd，最简 |
+| `zot` | project-zot | OCI 原生，开 `docker2s2` 兼容 ctr 推送 |
+| `harbor` | Harbor v2 离线安装器 | 唯一实现自带 UI；仅单 registry 节点；username 必须 admin |
+
+- 校验：存在 `role = "registry"` 节点 ⇔ 必须有 `[registry]`；`harbor` 仅支持
+  单个 registry 节点；username/password 必须成对
+- TLS：kurin 生成一次自签 CA，给每个 registry 节点签发证书（SAN 含节点 IP）
+- 认证：docker-registry/zot 用 htpasswd（bcrypt）；harbor 用 admin 密码
+- 镜像源：`docker-registry`/`zot` 在 k8s 节点上安装 containerd mirror（已知
+  上游未命中时回退公网）；`harbor` 因 project/repo 命名形状不做上游 mirror，
+  控制面镜像走 `imageRepository`（seed 到 `library` 项目）
+- 离线：zot / docker-registry / harbor 的安装包都进 `kurin artifact` bundle
+
+### `[storage]`（动态存储）
+
+| kind | StorageClass | 说明 |
+|---|---|---|
+| `local-path` | `kurin-local-path` | rancher local-path-provisioner（hostPath） |
+| `nfs` | `kurin-nfs` | sig-storage nfs-subdir-external-provisioner |
+
+- `default = true` 加 `storageclass.kubernetes.io/is-default-class` 注解
+- `nfs` 必须提供 `server` + `path`（用户自备 NFS 服务器）
+- 离线：local-path 的两个镜像（provisioner + busybox helper）入 bundle
 
 ### `[ssh.auth]` / 节点级 `[nodes.<n>.auth]`（含不同密码示例）
 

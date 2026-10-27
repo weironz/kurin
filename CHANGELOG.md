@@ -2,6 +2,28 @@
 
 All notable changes to kurin. Format follows Keep a Changelog; semver.
 
+## 0.4.0 - 2026-10-27 (unreleased)
+
+### Added
+- `kurin precheck`: read-only host audit before create (swap, kernel
+  modules, sysctls, role-dependent ports, disk, clock, SELinux...),
+  ok/warn/FAIL rows + `--json` event stream, exit 2 on failures.
+- Private registry on `role = "registry"` nodes: `[registry]` with
+  kind docker-registry | zot | harbor, TLS from a kurin-minted CA,
+  basic auth, containerd mirror/trust wiring and bundle image seeding.
+- `[storage]`: local-path and nfs provisioners, `kurin-local-path` /
+  `kurin-nfs` classes, optional cluster-default.
+- `prepare/os-baseline` (rpm-family convergence): swap off + fstab,
+  SELinux permissive, firewalld stopped; kernel modules persisted in
+  modules-load.d; rpm package names for kernel deps.
+- Rocky 9 e2e (rpm family).
+
+### Fixed
+- containerd: `registry.config_path = /etc/containerd/certs.d` is now set;
+  without it every certs.d mirror/CA/auth was silently ignored.
+- base64 table: UVWYYZ typo (Y replaced X) — visible only in credentials
+  whose bytes used the X slot; now covered by a 0..255 sweep test.
+
 ## 0.3.0 - 2026-10-26
 
 ### Added
