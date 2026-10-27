@@ -1,0 +1,23 @@
+{#-
+  Values for the official kube-ovn chart (WP-48), replacing the
+  CIDR-string rewrite of the pre-rendered `templates/cni/kube-ovn.yaml`:
+  the cluster's pod/service CIDRs and the default gateway (first host of
+  the pod CIDR) now ride as chart values, so `helm template` and
+  `helm upgrade` render them natively.
+
+  MASTER_NODES pins the control planes by IP — the chart's live-cluster
+  lookup would fail under `helm template`.
+
+  The CN zone repoints `global.registry.address` at the DaoCloud mirror
+  of docker.io/kubeovn, the same rewrite the old manifest pass did.
+-#}
+MASTER_NODES: {{ master_nodes }}
+ipv4:
+  POD_CIDR: {{ pod_cidr }}
+  POD_GATEWAY: {{ gateway }}
+  SVC_CIDR: {{ service_cidr }}
+{%- if mirror %}
+global:
+  registry:
+    address: {{ mirror_registry }}
+{%- endif %}

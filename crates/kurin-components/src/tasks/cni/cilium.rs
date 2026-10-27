@@ -1,14 +1,23 @@
-//! Cilium CNI: installed with the cilium CLI, which ArtifactsInstall already
-//! placed at /usr/local/bin/cilium (pinned `cilium-cli` in the artifact
-//! manifest). A single `cilium install` on the first control-plane node
-//! renders and applies the whole Helm-derived manifest.
+//! Cilium CNI, applied through the pinned Helm chart (WP-48).
 //!
-//! NOTE on the CN zone: the mirror repos below are the well-known DaoCloud
-//! mirrors of quay.io/cilium/*. The image *digests* are not verified by this
-//! task; if e2e fails under `zone = "cn"`, treat the zone+cilium combo as
-//! unverified (integrator runs the e2e).
+//! The chart archive (`cilium-chart`, matching the image version) and
+//! the `helm` binary are pinned in the artifact manifest and travel the
+//! same payload paths as every other artifact (online cache, offline
+//! bundle, base package). `helm template` renders the exact object set
+//! first — that output is what the image-integrity gate validates —
+//! then `helm upgrade --install --wait=false` records the release and
+//! the readiness tracker (WP-18) watches the cilium DaemonSet and the
+//! operator Deployment converge.
+//!
+//! Existing-cluster takeover: a cluster where the pre-chart kurin (the
+//! cilium CLI) or a manual install left cilium resources without a
+//! `cilium` release is detected by the legacy probe, and the upgrade
+//! runs with `--take-ownership` (helm ≥ 3.17) so those resources are
+//! adopted into the release, never deleted. A failed upgrade errors
+//! out with the old resources untouched.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use kurin_config::Cluster;
 use miette::Result;
@@ -16,13 +25,25 @@ use miette::Result;
 use kurin_core::engine::{Drift, Outcome, Session, Stage, Task};
 use kurin_core::run::RunContext;
 use kurin_core::zone::Zone;
-use kurin_kube::{evaluate, ClusterApi, ObjRef, SessionKubectl};
+use kurin_kube::{
+    evaluate, track, ClusterApi, Flavor, HelmRunner, ObjRef, SessionKubectl, TrackOpts,
+};
 
-/// cilium/cilium image version the CLI installs. The CLI itself is pinned
-/// separately in the artifact manifest (`cilium-cli`); 0.20.x ↔ 1.20.x.
+use crate::addon::apply::HelmPayload;
+use crate::tasks::cni::chart;
+use crate::templates;
+
+/// cilium chart version the release pins; the images resolve to the
+/// same version through the artifact manifest.
 pub const CILIUM_VERSION: &str = "1.20.4";
-
-const KUBECONFIG: &str = "/etc/kubernetes/admin.conf";
+/// The release name the cilium CLI used too — a CLI-era cluster
+/// upgrades in place instead of leaving an orphaned release behind.
+const RELEASE: &str = "cilium";
+const NAMESPACE: &str = "kube-system";
+/// How long the readiness tracker may wait for the fleet to converge.
+const TRACK_TIMEOUT: Duration = Duration::from_secs(300);
+/// Manifest entries the rendered output may reference.
+const PINNED_IMAGES: [&str; 3] = ["cilium-image", "cilium-operator-generic", "cilium-envoy"];
 /// DaoCloud mirrors of quay.io/cilium/{cilium,operator} for zone = "cn".
 const CN_CILIUM_REPO: &str = "quay.m.daocloud.io/cilium/cilium";
 const CN_OPERATOR_REPO: &str = "quay.m.daocloud.io/cilium/operator";
@@ -30,9 +51,8 @@ const CN_OPERATOR_REPO: &str = "quay.m.daocloud.io/cilium/operator";
 pub struct Cilium {
     node_name: String,
     node_internal_ip: String,
-    pod_cidr: String,
     /// kubectl flavor of the distribution (readiness goes through it).
-    flavor: kurin_kube::Flavor,
+    flavor: Flavor,
     run: Arc<RunContext>,
 }
 
@@ -44,45 +64,68 @@ impl Cilium {
             node_internal_ip: cp
                 .map(|n| n.internal_address.to_string())
                 .unwrap_or_default(),
-            pod_cidr: cluster.pod_cidr.to_string(),
             flavor: cluster.distribution.into(),
             run: Arc::clone(run),
         }
     }
 
-    /// Readiness reference of the cilium DaemonSet (shared tracker rule).
-    fn daemon_set() -> ObjRef {
-        ObjRef::namespaced("apps/v1", "DaemonSet", "kube-system", "cilium")
+    /// Readiness of the two objects the install gates on: the agent
+    /// DaemonSet and the operator Deployment.
+    fn readiness_refs() -> [ObjRef; 2] {
+        [
+            ObjRef::namespaced("apps/v1", "DaemonSet", NAMESPACE, "cilium"),
+            ObjRef::namespaced("apps/v1", "Deployment", NAMESPACE, "cilium-operator"),
+        ]
     }
 
-    /// `cilium install` invocation. `zone_cn` swaps the image registries to
-    /// the DaoCloud mirrors; see module docs about unverified digests.
-    ///
-    /// k8sServiceHost/Port must be explicit: on a single-node kubeadm CP the
-    /// default `kubernetes.default.svc` endpoint is not yet routable while
-    /// cilium itself is the CNI being installed, and cilium's service
-    /// discovery fails without the override (common pitfall).
-    fn install_command(&self, zone_cn: bool) -> String {
-        let mut cmd = format!(
-            "cilium install --version {CILIUM_VERSION} \
-             --kubeconfig {KUBECONFIG} \
-             --set ipam.mode=kubernetes \
-             --set nativeRoutingCIDR={pod_cidr} \
-             --set k8sServiceHost={host} \
-             --set k8sServicePort=6443 \
-             --wait=false",
-            pod_cidr = self.pod_cidr,
-            host = self.node_internal_ip,
-        );
-        if zone_cn {
-            cmd.push_str(&format!(
-                " --set image.repository={CN_CILIUM_REPO} \
-                 --set operator.image.repository={CN_OPERATOR_REPO} \
-                 --set image.useDigest=false \
-                 --set operator.image.useDigest=false"
-            ));
-        }
-        cmd
+    /// The values handed to the chart, rendered from the embedded
+    /// template. `k8sServiceHost/Port` must be explicit: on a
+    /// single-node kubeadm CP the `kubernetes.default.svc` endpoint is
+    /// not yet routable while cilium itself is the CNI being installed.
+    fn values(&self) -> String {
+        let zone_cn = self.run.sources.zone == Zone::Cn;
+        templates::render(
+            "cni/cilium-values.yaml.j2",
+            minijinja::context! {
+                k8s_service_host => self.node_internal_ip,
+                k8s_service_port => 6443,
+                mirror => zone_cn,
+                mirror_cilium => CN_CILIUM_REPO,
+                mirror_operator => CN_OPERATOR_REPO,
+            },
+        )
+        .unwrap_or_else(|e| panic!("cilium values template: {e}"))
+    }
+
+    /// The anchor's architecture — the helm binary and the chart
+    /// archive must resolve for the node that runs them.
+    fn anchor_arch(&self) -> kurin_artifact::artifact::Arch {
+        self.run
+            .facts_snapshot()
+            .get(&self.node_name)
+            .map(|facts| facts.arch)
+            .unwrap_or_else(|| {
+                kurin_artifact::artifact::Arch::host()
+                    .unwrap_or(kurin_artifact::artifact::Arch::Amd64)
+            })
+    }
+
+    /// A runner with the helm binary, the chart and the values in
+    /// place on the anchor node.
+    async fn prepared_runner<'a>(&self, session: &'a dyn Session) -> Result<HelmRunner<'a>> {
+        let arch = self.anchor_arch();
+        let helm = HelmPayload::resolve(&self.run.sources, arch)
+            .await
+            .map_err(|e| miette::miette!("{e}"))?;
+        let (chart_file, chart_bytes) =
+            chart::chart_payload(&self.run.sources, "cilium-chart", arch).await?;
+        let mut runner = HelmRunner::new(session, self.flavor, RELEASE, NAMESPACE);
+        runner
+            .install_helm(&helm.bytes, &helm.file_name, &helm.member)
+            .await?;
+        runner.upload_chart(&chart_file, &chart_bytes).await?;
+        runner.write_values(&self.values()).await?;
+        Ok(runner)
     }
 }
 
@@ -98,47 +141,103 @@ impl Task for Cilium {
         &self.node_name
     }
     fn describe(&self) -> String {
-        format!("cilium CLI install ({CILIUM_VERSION})")
+        format!("helm chart install cilium ({CILIUM_VERSION})")
     }
 
     async fn check(&self, session: &dyn Session) -> Result<Drift> {
-        // Same verdict as the old jsonpath comparison
-        // (numberReady == desiredNumberScheduled != 0), now shared with
-        // the tracker's DaemonSet rule (WP-18).
         let api = SessionKubectl::new(session, self.flavor);
-        let r = Self::daemon_set();
-        let ready = api
-            .get_json(&r)
-            .await?
-            .is_some_and(|obj| evaluate(&r, &obj).ready);
-        if ready {
-            Ok(Drift::InSync)
-        } else {
-            Ok(Drift::Drifted("cilium daemonset not fully ready".into()))
+        let runner = self.prepared_runner(session).await?;
+        match runner.status().await {
+            Ok(status) => {
+                if !status.deployed() {
+                    return Ok(Drift::Drifted(format!(
+                        "the helm release {RELEASE} is {}",
+                        if status.info.status.is_empty() {
+                            "not deployed"
+                        } else {
+                            &status.info.status
+                        }
+                    )));
+                }
+                if !status.chart_is(CILIUM_VERSION) {
+                    return Ok(Drift::Drifted(format!(
+                        "the helm release {RELEASE} pins chart {}, {} is requested",
+                        status.chart_version.as_deref().unwrap_or("unknown"),
+                        CILIUM_VERSION
+                    )));
+                }
+                if !status.values_match(&self.values()) {
+                    return Ok(Drift::Drifted(
+                        "the cilium release values changed since the recorded install".into(),
+                    ));
+                }
+            }
+            // No release (or an unreachable one): either a fresh install
+            // or a legacy install waiting for the takeover.
+            Err(_) => {
+                return Ok(Drift::Drifted(
+                    "cilium is not installed as a helm release".into(),
+                ))
+            }
         }
+        // Release matches; readiness is the same verdict the old probe
+        // reported, now through the tracker's DaemonSet rule (WP-18).
+        for r in Self::readiness_refs() {
+            let ready = api
+                .get_json(&r)
+                .await?
+                .is_some_and(|obj| evaluate(&r, &obj).ready);
+            if !ready {
+                return Ok(Drift::Drifted(format!(
+                    "cilium {} is not fully ready",
+                    r.kind.to_lowercase()
+                )));
+            }
+        }
+        Ok(Drift::InSync)
     }
 
     async fn apply(&self, session: &dyn Session) -> Result<Outcome> {
-        // The CLI is installed by ArtifactsInstall pinned in the manifest;
-        // fail fast with the transport error if it is missing.
-        let v = session.exec("cilium version --client").await?;
-        if !v.ok() {
-            return Err(miette::miette!(
-                "cilium CLI missing on {}: {}",
-                self.node_name,
-                v.stderr.lines().next_back().unwrap_or("")
-            ));
+        let api = SessionKubectl::new(session, self.flavor);
+        let runner = self.prepared_runner(session).await?;
+
+        // Render first: the image gate must reject an undeclared image
+        // before the release touches the cluster.
+        let objects = runner.template().await?;
+        let images = chart::rendered_images(&objects);
+        chart::check_rendered_images(
+            &self.run.sources,
+            self.anchor_arch(),
+            &PINNED_IMAGES,
+            &images,
+            "cilium",
+        )?;
+
+        // Takeover (WP-48): adopt legacy resources no release owns.
+        let release = chart::release_exists(&api, RELEASE).await?;
+        let legacy = chart::legacy_object_exists(&api, &Self::readiness_refs()[0]).await?;
+        let adopt = chart::take_ownership(release, legacy);
+
+        // A failed upgrade errors here; helm leaves the old resources
+        // in place — nothing is deleted on the takeover path.
+        runner.install(adopt).await?;
+
+        // Readiness through the tracker: Resource events, stuck
+        // diagnostics, and a cause-naming error on timeout.
+        let refs = Self::readiness_refs();
+        track(
+            &api,
+            &refs,
+            &TrackOpts::new(TRACK_TIMEOUT),
+            &self.run.events,
+        )
+        .await
+        .map_err(|e| miette::miette!("cilium did not become ready: {e}"))?;
+
+        if let Err(err) = runner.cleanup().await {
+            tracing::warn!(workdir = runner.workdir(), %err, "helm work dir cleanup failed");
         }
-        let zone_cn = self.run.sources.zone == Zone::Cn;
-        let out = session.exec(&self.install_command(zone_cn)).await?;
-        if out.ok() {
-            Ok(Outcome::Verified)
-        } else {
-            Err(miette::miette!(
-                "cilium install failed: {}",
-                out.stderr.lines().next_back().unwrap_or("")
-            ))
-        }
+        Ok(Outcome::Verified)
     }
 }
 
@@ -153,8 +252,6 @@ mod tests {
     use std::collections::BTreeMap;
 
     use kurin_config::{CniConfig, Node, NodeRole, ResolvedSsh, SshAuth};
-
-    use kurin_core::engine::ExecOutput;
 
     fn cluster(pod_cidr: &str) -> Cluster {
         let node = Node {
@@ -207,169 +304,44 @@ mod tests {
         }
     }
 
-    /// Scripted session: each exec consumes the next canned output and
-    /// remembers every command it ran.
-    struct ScriptSession {
-        outputs: std::sync::Mutex<std::collections::VecDeque<ExecOutput>>,
-        commands: std::sync::Mutex<Vec<String>>,
-    }
-
-    impl ScriptSession {
-        fn new(outputs: Vec<ExecOutput>) -> Self {
-            Self {
-                outputs: std::sync::Mutex::new(outputs.into()),
-                commands: std::sync::Mutex::new(Vec::new()),
-            }
-        }
-    }
-
-    fn output(code: i32, stdout: &str, stderr: &str) -> ExecOutput {
-        ExecOutput {
-            exit_code: code,
-            stdout: stdout.into(),
-            stderr: stderr.into(),
-        }
-    }
-
-    #[async_trait::async_trait]
-    impl Session for ScriptSession {
-        async fn exec(&self, command: &str) -> Result<ExecOutput> {
-            self.commands.lock().unwrap().push(command.into());
-            Ok(self.outputs.lock().unwrap().pop_front().unwrap())
-        }
-        async fn write_file(&self, _path: &str, _contents: &[u8]) -> Result<()> {
-            Ok(())
-        }
-        async fn file_sha256(&self, _path: &str) -> Result<Option<String>> {
-            Ok(None)
-        }
-        async fn service_active(&self, _name: &str) -> Result<bool> {
-            Ok(false)
-        }
-    }
-
     #[test]
     fn plugin_contract_returns_cilium_task_on_first_cp() {
         let task = plugin(&cluster("10.244.0.0/16"), &crate::test_util::run()).unwrap();
         assert_eq!(task.id(), "cni/cilium@m1");
         assert_eq!(task.stage(), Stage::Cni);
         assert_eq!(task.node(), "m1");
+        assert_eq!(
+            task.describe(),
+            format!("helm chart install cilium ({CILIUM_VERSION})")
+        );
     }
 
     #[test]
-    fn install_command_carries_cidr_version_and_service_host() {
-        let cmd =
-            Cilium::new(&cluster("10.244.0.0/16"), &crate::test_util::run()).install_command(false);
-        assert!(cmd.contains("cilium install --version 1.20.4"), "{cmd}");
-        assert!(
-            cmd.contains("--kubeconfig /etc/kubernetes/admin.conf"),
-            "{cmd}"
-        );
-        assert!(
-            cmd.contains("--set nativeRoutingCIDR=10.244.0.0/16"),
-            "{cmd}"
-        );
-        assert!(cmd.contains("--set k8sServiceHost=192.168.10.11"), "{cmd}");
-        assert!(cmd.contains("--set k8sServicePort=6443"), "{cmd}");
-        assert!(!cmd.contains("useDigest"), "{cmd}");
+    fn values_carry_service_endpoint_and_single_operator() {
+        let values = Cilium::new(&cluster("10.244.0.0/16"), &crate::test_util::run()).values();
+        assert!(values.contains("k8sServiceHost: 192.168.10.11"), "{values}");
+        assert!(values.contains("k8sServicePort: 6443"), "{values}");
+        assert!(values.contains("mode: kubernetes"), "{values}");
+        assert!(values.contains("replicas: 1"), "{values}");
+        // Global zone keeps the chart's digest-pinned upstream images.
+        assert!(!values.contains("daocloud"), "{values}");
     }
 
     #[test]
-    fn install_command_cn_zone_overrides_image_repos() {
-        let cmd =
-            Cilium::new(&cluster("10.244.0.0/16"), &crate::test_util::run()).install_command(true);
+    fn values_cn_zone_swap_repos_and_drop_digests() {
+        let _run = crate::test_util::run();
+        let sources =
+            kurin_core::run::ArtifactSources::embedded().with_zone(kurin_core::zone::Zone::Cn);
+        let run = Arc::new(kurin_core::run::RunContext::new("op", "test", sources));
+        let values = Cilium::new(&cluster("10.244.0.0/16"), &run).values();
         assert!(
-            cmd.contains("--set image.repository=quay.m.daocloud.io/cilium/cilium"),
-            "{cmd}"
+            values.contains(&format!("repository: {CN_CILIUM_REPO}")),
+            "{values}"
         );
         assert!(
-            cmd.contains("--set operator.image.repository=quay.m.daocloud.io/cilium/operator"),
-            "{cmd}"
+            values.contains(&format!("repository: {CN_OPERATOR_REPO}")),
+            "{values}"
         );
-        assert!(cmd.contains("--set image.useDigest=false"), "{cmd}");
-        assert!(
-            cmd.contains("--set operator.image.useDigest=false"),
-            "{cmd}"
-        );
-        // Zone branch keeps the Kubernetes-side settings.
-        assert!(cmd.contains("nativeRoutingCIDR=10.244.0.0/16"), "{cmd}");
-    }
-
-    /// A DaemonSet JSON body with the given desired/ready counts.
-    fn ds(desired: u32, ready: u32) -> String {
-        format!(r#"{{"status":{{"desiredNumberScheduled":{desired},"numberReady":{ready}}}}}"#)
-    }
-
-    #[tokio::test]
-    async fn check_in_sync_when_desired_equals_ready_and_positive() {
-        let session = ScriptSession::new(vec![output(0, &ds(1, 1), "")]);
-        let seen = Cilium::new(&cluster("10.244.0.0/16"), &crate::test_util::run())
-            .check(&session)
-            .await
-            .unwrap();
-        assert!(matches!(seen, Drift::InSync));
-        let commands = session.commands.lock().unwrap();
-        assert!(
-            commands[0].contains("get daemonsets cilium"),
-            "{}",
-            commands[0]
-        );
-    }
-
-    #[tokio::test]
-    async fn check_drifted_when_ready_lags_desired() {
-        let session = ScriptSession::new(vec![output(0, &ds(2, 1), "")]);
-        let seen = Cilium::new(&cluster("10.244.0.0/16"), &crate::test_util::run())
-            .check(&session)
-            .await
-            .unwrap();
-        assert!(matches!(seen, Drift::Drifted(_)));
-    }
-
-    #[tokio::test]
-    async fn check_drifted_on_zero_desired_or_missing_ds() {
-        let session = ScriptSession::new(vec![output(0, &ds(0, 0), "")]);
-        let seen = Cilium::new(&cluster("10.244.0.0/16"), &crate::test_util::run())
-            .check(&session)
-            .await
-            .unwrap();
-        assert!(matches!(seen, Drift::Drifted(_)));
-
-        // kubectl --ignore-not-found prints nothing for a missing object.
-        let session = ScriptSession::new(vec![output(0, "", "")]);
-        let seen = Cilium::new(&cluster("10.244.0.0/16"), &crate::test_util::run())
-            .check(&session)
-            .await
-            .unwrap();
-        assert!(matches!(seen, Drift::Drifted(_)));
-    }
-
-    #[tokio::test]
-    async fn apply_runs_cli_version_probe_then_install() {
-        let session = ScriptSession::new(vec![
-            output(0, "Client: 0.20.1", ""),
-            output(1, "", "some helm error\nTimed out waiting for cilium"),
-        ]);
-        let result = Cilium::new(&cluster("10.244.0.0/16"), &crate::test_util::run())
-            .apply(&session)
-            .await;
-        let err = result.unwrap_err().to_string();
-        assert!(err.contains("Timed out waiting for cilium"), "{err}");
-        let commands = session.commands.lock().unwrap();
-        assert_eq!(commands.len(), 2);
-        assert_eq!(commands[0], "cilium version --client");
-        assert!(commands[1].starts_with("cilium install"));
-    }
-
-    #[tokio::test]
-    async fn apply_fails_fast_when_cli_is_missing() {
-        let session = ScriptSession::new(vec![output(127, "", "cilium: command not found")]);
-        let result = Cilium::new(&cluster("10.244.0.0/16"), &crate::test_util::run())
-            .apply(&session)
-            .await;
-        let err = result.unwrap_err().to_string();
-        assert!(err.contains("cilium CLI missing"), "{err}");
-        assert!(err.contains("command not found"), "{err}");
-        assert_eq!(session.commands.lock().unwrap().len(), 1);
+        assert!(values.contains("useDigest: false"), "{values}");
     }
 }

@@ -145,6 +145,11 @@ tier3-quick-ha:
 tier1-cilium:
     e2e/tier1/cilium.sh target/tier1/debug/kurin
 
+
+# WP-48 takeover: an old-way install is re-run by the chart-based kurin.
+tier1-cni-takeover cni="cilium":
+    CARGO_TARGET_DIR=target/tier1 cargo build -q -p kurin
+    e2e/tier1/cni-takeover.sh "{{cni}}"
 tier1-k3s:
     e2e/tier1/k3s.sh target/tier1/debug/kurin
 

@@ -18,7 +18,8 @@
 
 use std::collections::BTreeSet;
 
-use kurin_artifact::artifact::{install_manifest, Arch, ArtifactManifest, ArtifactStore};
+use kurin_artifact::artifact::{install_manifest, Arch};
+use kurin_artifact::preload::PayloadSet;
 use kurin_core::engine::Session;
 use kurin_core::events::Redactor;
 use kurin_core::run::ArtifactSources;
@@ -42,43 +43,55 @@ pub struct HelmPayload {
 }
 
 impl HelmPayload {
-    /// Resolve the pinned `helm` artifact from the run's sources: the
-    /// offline bundle directory when the run is air-gapped, else the
-    /// artifact cache (downloading and verifying the pinned sha256).
+    /// Resolve the pinned `helm` artifact from the run's sources through
+    /// the shared payload set (04 §5.1): the offline bundle directory or
+    /// base package when the run is air-gapped, else the artifact cache
+    /// (downloading and verifying the pinned sha256). Package-based
+    /// offline runs resolve the blob from the package instead of the
+    /// network — the same three sources the install tasks use.
     pub async fn resolve(sources: &ArtifactSources, arch: Arch) -> Result<Self, AddonError> {
-        let manifest =
-            install_manifest(sources).map_err(|e| AddonError::io("artifact manifest", e))?;
-        let spec = manifest
-            .spec("helm", arch)
-            .map_err(|e| AddonError::io("artifact manifest", e))?;
-        let path = match &sources.offline_dir {
-            Some(dir) => {
-                let dir_manifest = ArtifactManifest::from_dir_with(dir, &manifest)
-                    .map_err(|e| AddonError::io(dir.display().to_string(), e))?;
-                dir_manifest
-                    .find("helm", arch)
-                    .map(|a| a.file.clone())
-                    .ok_or_else(|| {
-                        AddonError::io(
-                            dir.display().to_string(),
-                            format!("offline bundle lacks helm ({arch})"),
-                        )
-                    })?
-            }
-            None => ArtifactStore::open_default()
-                .map_err(|e| AddonError::io("artifact cache", e))?
-                .fetch(&spec, sources.zone)
-                .await
-                .map_err(|e| AddonError::io("artifact cache", e))?,
-        };
-        let bytes =
-            std::fs::read(&path).map_err(|e| AddonError::io(path.display().to_string(), e))?;
+        let file = resolve_file_payload(sources, "helm", arch).await?;
         Ok(Self {
-            file_name: spec.file_name(),
+            file_name: file.file_name,
             member: format!("linux-{}/helm", arch.as_str()),
-            bytes,
+            bytes: file.bytes,
         })
     }
+}
+
+/// One file artifact resolved from the run's payload set: its rendered
+/// file name plus the payload bytes, verified against the pinned sha256
+/// on every source (download checksum, bundle verification, package
+/// digest — the property [`kurin_artifact::preload::PayloadSet`] carries).
+pub(crate) struct ResolvedFile {
+    pub file_name: String,
+    pub bytes: Vec<u8>,
+}
+
+pub(crate) async fn resolve_file_payload(
+    sources: &ArtifactSources,
+    name: &str,
+    arch: Arch,
+) -> Result<ResolvedFile, AddonError> {
+    let manifest = install_manifest(sources).map_err(|e| AddonError::io("artifact manifest", e))?;
+    let spec = manifest
+        .spec(name, arch)
+        .map_err(|e| AddonError::io("artifact manifest", e))?;
+    let payloads = PayloadSet::open(sources)
+        .await
+        .map_err(|e| AddonError::io("artifact payloads", e))?;
+    let blob = payloads.file(&spec).await.map_err(|e| {
+        AddonError::io(
+            "artifact payloads",
+            format!("resolving {name} ({arch}): {e}"),
+        )
+    })?;
+    let bytes = std::fs::read(&blob.path)
+        .map_err(|e| AddonError::io(blob.path.display().to_string(), e))?;
+    Ok(ResolvedFile {
+        file_name: spec.file_name(),
+        bytes,
+    })
 }
 
 /// Everything one apply needs.
@@ -258,7 +271,7 @@ async fn apply_helm(request: &ApplyRequest<'_>) -> Result<AddonApply, AddonError
     )?;
 
     runner
-        .install()
+        .install(false)
         .await
         .map_err(|e| apply_error(&release, e, request.redactor))?;
     cleanup(&runner).await;

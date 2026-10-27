@@ -42,8 +42,12 @@ const INSTALLABLE: &[&str] = &[
     "cni-plugins",
     "k3s",
     "crio",
-    "cilium-cli",
 ];
+
+/// Chart archives the manifest pins but `ArtifactsInstall` does not
+/// install on a node: the CNI chart path (WP-48) streams them to the
+/// anchor at apply time, not through the per-node artifact sweep.
+const CONTROLLER_SIDE: &[&str] = &["cilium-chart", "kube-ovn-chart"];
 
 fn cluster() -> kurin_config::Cluster {
     kurin_config::parse_str(
@@ -139,7 +143,7 @@ fn build_package(dir: &Path) -> String {
     let mut builder = PackageBuilder::new(PackageKind::Base, "base", "1.33.1", "kubeadm")
         .with_created("2026-10-28T00:00:00Z");
     for arch in [Arch::Amd64, Arch::Arm64] {
-        for name in INSTALLABLE {
+        for name in INSTALLABLE.iter().chain(CONTROLLER_SIDE) {
             let payload = file_payload(name, arch);
             let digest = cache.blob_store().put_bytes(&payload).unwrap();
             builder.add_file(PackageFile {

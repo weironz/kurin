@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # tier-1 (cilium): single-node kubeadm cluster with the cilium CNI,
-# installed via the cilium-cli that ArtifactsInstall drops into
-# /usr/local/bin. Config override happens on a TEMP copy; the checked-out
-# config.toml is never modified.
+# installed through the pinned Helm chart (WP-48): kurin uploads the
+# helm binary, the cilium chart and the rendered values to the anchor,
+# runs helm upgrade --install and tracks the DaemonSet readiness.
+# Config override happens on a TEMP copy; the checked-out
 set -euo pipefail
 
 BIN=${1:-target/tier1/debug/kurin}

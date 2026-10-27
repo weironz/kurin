@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# tier-1 (kube-ovn): single-node kubeadm cluster with network.cni = "kube-ovn".
+# tier-1 (kube-ovn): single-node kubeadm cluster with network.cni = "kube-ovn",
+# installed through the official pinned Helm chart (WP-48).
 # Asserts: cluster-ready, kube-ovn-controller available, ovs-ovn ready==desired,
 # node Ready, pods healthy, second run fully skipped (idempotency).
 set -euo pipefail

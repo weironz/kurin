@@ -162,8 +162,14 @@ impl<'a> HelmRunner<'a> {
         parse_objects(&out.stdout)
     }
 
-    /// `helm upgrade --install … --wait=false`.
-    pub async fn install(&self) -> Result<()> {
+    /// `helm upgrade --install … --wait=false`. `adopt` appends
+    /// `--take-ownership` (helm ≥ 3.17): existing resources without
+    /// helm's ownership metadata are patched into the release instead
+    /// of failing the upgrade — how kurin takes over clusters the
+    /// pre-chart installs left behind (WP-48). The pinned helm
+    /// (3.19.0) carries the flag; `helm upgrade --help` of 3.17+ lists
+    /// it for both `upgrade` and the `--install` delegation.
+    pub async fn install(&self, adopt: bool) -> Result<()> {
         let chart = self.chart_ref()?;
         let cmd = upgrade_command(
             &self.helm,
@@ -172,6 +178,7 @@ impl<'a> HelmRunner<'a> {
             &self.namespace,
             self.values.as_deref(),
             self.kubeconfig(),
+            adopt,
         );
         self.run(&cmd).await?;
         Ok(())
@@ -261,6 +268,9 @@ pub fn template_command(
 }
 
 /// `helm upgrade --install` with `--wait=false`: kurin tracks readiness.
+/// `take_ownership` appends `--take-ownership` (helm ≥ 3.17) so the
+/// upgrade adopts resources that exist without helm's ownership
+/// metadata instead of failing on them.
 pub fn upgrade_command(
     helm: &str,
     release: &str,
@@ -268,6 +278,7 @@ pub fn upgrade_command(
     namespace: &str,
     values: Option<&str>,
     kubeconfig: &str,
+    take_ownership: bool,
 ) -> String {
     let mut cmd = format!(
         "{} upgrade --install {} {} --namespace {} --create-namespace --wait=false --kubeconfig {}",
@@ -279,6 +290,9 @@ pub fn upgrade_command(
     );
     if let Some(values) = values {
         cmd.push_str(&format!(" -f {}", sh_quote(values)));
+    }
+    if take_ownership {
+        cmd.push_str(" --take-ownership");
     }
     cmd
 }
@@ -341,7 +355,7 @@ pub fn parse_objects(text: &str) -> Result<Vec<DynamicObject>> {
 }
 
 /// The release state from `helm status -o json`.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
 pub struct HelmStatus {
     /// Release name.
     #[serde(default)]
@@ -352,6 +366,16 @@ pub struct HelmStatus {
     /// Revision number.
     #[serde(default)]
     pub version: u32,
+    /// Chart version of the release (`chart.metadata.version`), e.g.
+    /// `1.20.4` (cilium) or `v1.16.15` (kube-ovn). `None` when the
+    /// status output omits it. Extracted from the nested `chart`
+    /// object by [`HelmStatus::parse`].
+    #[serde(skip)]
+    pub chart_version: Option<String>,
+    /// The release's user-supplied values (`.config`) — what `-f`/`--set`
+    /// installed, not the chart's coalesced defaults. `None` when absent.
+    #[serde(default)]
+    pub config: Option<serde_json::Value>,
     /// Status details (`info.status`).
     #[serde(default)]
     pub info: HelmInfo,
@@ -369,14 +393,49 @@ pub struct HelmInfo {
 }
 
 impl HelmStatus {
-    /// Parse `helm status -o json` output.
+    /// Parse `helm status -o json` output, lifting the chart version
+    /// out of the nested `chart.metadata.version` object.
     pub fn parse(json: &str) -> Result<Self> {
-        serde_json::from_str(json).map_err(|e| miette!("parse helm status: {e}"))
+        let mut status: Self =
+            serde_json::from_str(json).map_err(|e| miette!("parse helm status: {e}"))?;
+        status.chart_version = serde_json::from_str::<serde_json::Value>(json)
+            .ok()
+            .and_then(|doc| {
+                doc.pointer("/chart/metadata/version")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string)
+            });
+        Ok(status)
     }
 
     /// Whether the release is in the `deployed` state.
     pub fn deployed(&self) -> bool {
         self.info.status == "deployed"
+    }
+
+    /// Whether the release's chart matches the pinned chart version,
+    /// ignoring a leading `v` (cilium charts version `1.20.4`, kube-ovn
+    /// charts `v1.16.15`, and the artifact manifest pins either form).
+    pub fn chart_is(&self, pinned: &str) -> bool {
+        self.chart_version
+            .as_deref()
+            .is_some_and(|chart| chart.trim_start_matches('v') == pinned.trim_start_matches('v'))
+    }
+
+    /// Whether the release's user-supplied values equal `desired_yaml`
+    /// (the values kurin would install). Both sides are parsed and
+    /// compared as canonical JSON, so key order and YAML/JSON spelling
+    /// differences do not matter; a release without values metadata
+    /// never matches.
+    pub fn values_match(&self, desired_yaml: &str) -> bool {
+        let Some(config) = &self.config else {
+            return false;
+        };
+        let desired: serde_json::Value = match serde_yml::from_str(desired_yaml) {
+            Ok(value) => value,
+            Err(_) => return false,
+        };
+        *config == desired
     }
 }
 
@@ -447,6 +506,7 @@ mod tests {
             "kube-system",
             Some("/w/values.yaml"),
             "/etc/kubernetes/admin.conf",
+            false,
         );
         assert_eq!(
             cmd,
@@ -456,6 +516,24 @@ mod tests {
         );
         assert!(cmd.contains("--wait=false"));
         assert!(!cmd.contains("--wait "));
+        assert!(!cmd.contains("--take-ownership"));
+    }
+
+    #[test]
+    fn upgrade_command_appends_take_ownership_for_takeovers() {
+        // helm >= 3.17 (the pinned 3.19.0 carries it): the flag makes
+        // the upgrade adopt resources without helm ownership metadata.
+        let cmd = upgrade_command(
+            "/w/helm",
+            "kube-ovn",
+            "/w/chart.tgz",
+            "kube-system",
+            None,
+            "/etc/kubernetes/admin.conf",
+            true,
+        );
+        assert!(cmd.ends_with("--take-ownership"), "{cmd}");
+        assert_eq!(cmd.matches("--take-ownership").count(), 1);
     }
 
     #[test]
@@ -523,5 +601,35 @@ mod tests {
             Some("kube-system")
         );
         assert_eq!(objects[1].types.as_ref().unwrap().kind, "Deployment");
+    }
+
+    #[test]
+    fn status_carries_the_chart_version_and_user_values() {
+        // The release document helm 3 emits: chart.metadata.version plus
+        // the config the install was given (WP-48's convergence probe).
+        let status = HelmStatus::parse(
+            r#"{"name":"kube-ovn","namespace":"kube-system","version":3,
+                "chart":{"metadata":{"name":"kube-ovn","version":"v1.16.15"}},
+                "config":{"ipv4":{"POD_CIDR":"10.233.64.0/18"},"k8sServicePort":6443},
+                "info":{"status":"deployed"}}"#,
+        )
+        .unwrap();
+        assert_eq!(status.chart_version.as_deref(), Some("v1.16.15"));
+        assert!(status.chart_is("1.16.15"));
+        assert!(!status.chart_is("1.16.14"));
+        assert!(status.values_match("k8sServicePort: 6443\nipv4:\n  POD_CIDR: 10.233.64.0/18\n"));
+        assert!(!status.values_match("k8sServicePort: 6444\n"));
+        // A release without chart/config metadata never matches.
+        let bare = HelmStatus::parse(r#"{"info":{"status":"deployed"}}"#).unwrap();
+        assert!(!bare.chart_is("1.16.15"));
+        assert!(!bare.values_match("anything: true\n"));
+        // The v-prefix on either side is irrelevant (cilium pins 1.20.4,
+        // kube-ovn's chart versions itself as v1.16.15).
+        let cilium = HelmStatus::parse(
+            r#"{"chart":{"metadata":{"version":"1.20.4"}},
+                "config":{"ipam":{"mode":"kubernetes"}},"info":{"status":"deployed"}}"#,
+        )
+        .unwrap();
+        assert!(cilium.chart_is("1.20.4"));
     }
 }

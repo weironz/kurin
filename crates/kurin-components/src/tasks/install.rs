@@ -83,11 +83,8 @@ fn install_for(name: &str) -> Option<Install> {
             dir: "/usr/local",
             strip: 0,
         },
-        // cilium-cli archive contains the `cilium` binary at the root.
-        "cilium-cli" => Install::Tar {
-            dir: "/usr/local/bin",
-            strip: 0,
-        },
+        // cilium ships as a Helm chart (WP-48): the chart archive is a
+        // controller-side payload, not a node-level install.
         _ => return None, // images / manifests are not node-level installs
     })
 }

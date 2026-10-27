@@ -289,14 +289,14 @@
       "optional": true
     },
     {
-      "name": "cilium-cli",
+      "name": "cilium-chart",
       "kind": "binary",
-      "version": "0.20.1",
-      "file": "cilium-linux-{arch}.tar.gz",
-      "url_template": "https://github.com/cilium/cilium-cli/releases/download/v{version}/cilium-linux-{arch}.tar.gz",
+      "version": "1.20.4",
+      "file": "cilium-{version}.tgz",
+      "url_template": "https://helm.cilium.io/cilium-v{version}.tgz",
       "sha256": {
-        "linux-amd64": "24e817dcfcc8a12e325ce7547617bcbcf171c5b0b335bb24d2bb1207ba047f61",
-        "linux-arm64": "d237550b882af6f2e01e8985e1e024d57c0774611c0a527c7a20dcee7dc4fd07"
+        "linux-amd64": "505abff8385811df1a949776fc42e9f10697989a332acc86d6e8933efcb855ed",
+        "linux-arm64": "505abff8385811df1a949776fc42e9f10697989a332acc86d6e8933efcb855ed"
       }
     },
     {
@@ -385,6 +385,17 @@
       "sha256": {
         "linux-amd64": "7222788317af999f46167be45264eca8b41e80438a21af776bfccf9b68856034",
         "linux-arm64": "2a7976411c8cb2ac62fdd34a20ec97492202fb7919d6da9ec496cb5356adb714"
+      }
+    },
+    {
+      "name": "kube-ovn-chart",
+      "kind": "binary",
+      "version": "1.16.15",
+      "file": "kube-ovn-v{version}.tgz",
+      "url_template": "https://kubeovn.github.io/kube-ovn/kube-ovn-v{version}.tgz",
+      "sha256": {
+        "linux-amd64": "1fb626d5ddc334a22cfe093fe8ccaf5a1243c7f25f2ad0e3dd3a2f3e17de954e",
+        "linux-arm64": "1fb626d5ddc334a22cfe093fe8ccaf5a1243c7f25f2ad0e3dd3a2f3e17de954e"
       }
     },
     {

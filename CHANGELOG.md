@@ -20,6 +20,35 @@ All notable changes to kurin. Format follows Keep a Changelog; semver.
   the cluster-agnostic offline bundle and base package keep carrying
   `local-path-provisioner`, `busybox` and `nfs-subdir-provisioner`.
 
+### Changed (WP-48)
+- cilium and kube-ovn install through their pinned Helm charts instead
+  of the node-side `cilium` CLI and the pre-rendered
+  `templates/cni/kube-ovn.yaml`: the chart archives (`cilium-chart`
+  1.20.4 from helm.cilium.io, `kube-ovn-chart` v1.16.15 from
+  kubeovn.github.io) are pinned in the artifact manifest with real
+  upstream sha256, so they enter the offline bundle and base package
+  like any other payload, and `cilium-cli` is gone from the node-level
+  artifact set. The apply path reuses the addon engine's `HelmRunner`:
+  upload helm + chart + values to the anchor, `helm template` for the
+  image-integrity gate, `helm upgrade --install --wait=false`, then the
+  readiness tracker (WP-18) watches the cilium DaemonSet + operator
+  (kube-ovn: controller + ovn-central + ovs-ovn) with stuck diagnostics.
+  kube-ovn's CIDRs and gateway now ride as chart values (`MASTER_NODES`
+  pins the control planes), keeping the `kube-ovn/role=master` label
+  pass upstream `install.sh` requires.
+- existing-cluster takeover: when the legacy install left the resources
+  without a matching helm release (raw `kubectl apply` for kube-ovn, a
+  manual cilium install), the upgrade runs with `--take-ownership`
+  (helm ≥ 3.17; the pinned 3.19.0 carries it — verified against
+  `pkg/action/install.go`, which patches the unowned resources into
+  the release). A failed takeover errors out with the old resources
+  untouched; nothing is deleted. cilium keeps the CLI-era release name
+  `cilium`, so a CLI-era cluster upgrades in place instead of leaving
+  an orphaned release.
+- `check` converges on the release itself: `helm status` must report
+  `deployed`, the pinned chart version and values matching the rendered
+  template (compared as parsed YAML→JSON, so key order does not matter)
+
 ### Added (WP-45)
 - `kurin package create addon -f addons/<name>/addon.yaml` builds an
   offline-installable addon package (04 §3.4): every addon file becomes a

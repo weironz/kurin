@@ -143,8 +143,8 @@ impl Component for Flannel {
     }
 }
 
-/// `cni/cilium`: the pinned cilium-cli renders and installs the config,
-/// then tracks readiness.
+/// `cni/cilium`: the pinned Helm chart, applied through `HelmRunner`
+/// with the readiness tracker watching the fleet (WP-48).
 pub struct Cilium;
 
 impl Component for Cilium {
@@ -173,8 +173,11 @@ impl Component for Cilium {
     }
 
     fn artifacts(&self, _spec: &Cluster, arch: Arch) -> Vec<ArtifactRef> {
+        // The chart archive joins the images it renders: both travel the
+        // payload paths (online cache, offline bundle, base package)
+        // so the apply path never needs the network in air-gapped runs.
         vec![
-            ArtifactRef::of("cilium-cli", arch),
+            ArtifactRef::of("cilium-chart", arch),
             ArtifactRef::of("cilium-image", arch),
             ArtifactRef::of("cilium-operator-generic", arch),
             ArtifactRef::of("cilium-envoy", arch),
@@ -192,8 +195,8 @@ impl Component for Cilium {
     }
 }
 
-/// `cni/kube-ovn`: the pinned chart-rendered manifest, CIDR-rewritten
-/// and applied through the first control plane.
+/// `cni/kube-ovn`: the official pinned Helm chart; the cluster's CIDRs
+/// ride as chart values (WP-48).
 pub struct KubeOvn;
 
 impl Component for KubeOvn {
@@ -222,10 +225,11 @@ impl Component for KubeOvn {
     }
 
     fn artifacts(&self, _spec: &Cluster, arch: Arch) -> Vec<ArtifactRef> {
-        // The two images the rendered chart output references; both are
-        // pinned in the artifact manifest, so the offline bundle and the
-        // base package carry them.
+        // The official chart archive plus the two images its rendered
+        // output references; all pinned in the artifact manifest, so
+        // the offline bundle and the base package carry them.
         vec![
+            ArtifactRef::of("kube-ovn-chart", arch),
             ArtifactRef::of("kube-ovn-image", arch),
             ArtifactRef::of("kube-ovn-vpc-nat-gateway", arch),
         ]

@@ -2,6 +2,7 @@
 //! `crate::component` each construct their plugin's task.
 
 pub mod calico;
+pub mod chart;
 pub mod cilium;
 pub mod flannel;
 pub mod kube_ovn;

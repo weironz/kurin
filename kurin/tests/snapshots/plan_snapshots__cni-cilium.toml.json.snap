@@ -192,7 +192,7 @@ expression: plan_matrix(&plan)
       "stage": "cni",
       "tasks": [
         {
-          "describe": "cilium CLI install (1.20.4)",
+          "describe": "helm chart install cilium (1.20.4)",
           "id": "cni/cilium@master01"
         }
       ]

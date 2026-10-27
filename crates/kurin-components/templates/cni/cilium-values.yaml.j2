@@ -1,0 +1,28 @@
+{#-
+  Values for the pinned cilium chart (WP-48). The cilium CLI kurin used
+  to drive installed the same chart with exactly these settings; the
+  chart ignores `nativeRoutingCIDR` (removed upstream), so the new
+  values drop it: tunnel mode stays the chart default, exactly what the
+  CLI-era clusters ran.
+
+  k8sServiceHost/Port must stay explicit: on a single-node kubeadm CP
+  the `kubernetes.default.svc` endpoint is not routable yet while cilium
+  itself is the CNI being installed.
+
+  The CN zone swaps the image registries to the DaoCloud mirrors and
+  drops the digest pins (the mirrors do not serve upstream digests).
+-#}
+ipam:
+  mode: kubernetes
+k8sServiceHost: {{ k8s_service_host }}
+k8sServicePort: {{ k8s_service_port }}
+operator:
+  replicas: 1
+{%- if mirror %}
+  image:
+    repository: {{ mirror_operator }}
+    useDigest: false
+image:
+  repository: {{ mirror_cilium }}
+  useDigest: false
+{%- endif %}
