@@ -29,10 +29,25 @@ fn every_event_variant_has_the_frozen_field_set_plus_ts() {
                 id: "preflight/n1".into(),
                 node: "n1".into(),
                 stage: "preflight",
+                reason: None,
                 ts: TS,
             },
             "task-skipped",
             vec!["type", "id", "node", "stage", "ts"],
+        ),
+        // WP-11: the only addition is the optional `reason` on
+        // `task-skipped` (why a task did not run). Present only when the
+        // task was blocked, so the in-sync shape above is unchanged.
+        (
+            Event::TaskSkipped {
+                id: "join/kubeadm@w1".into(),
+                node: "w1".into(),
+                stage: "join",
+                reason: Some("blocked by bootstrap/kubeadm-init@cp1".into()),
+                ts: TS,
+            },
+            "task-skipped",
+            vec!["type", "id", "node", "stage", "reason", "ts"],
         ),
         (
             Event::TaskDone {

@@ -19,6 +19,14 @@ done  prepare/containerd-unit@worker01 (Nms)
 done  prepare/kubelet-unit@master01 (Nms)
 done  prepare/kubelet-unit@worker01 (Nms)
 done  prepare/sysctl@worker01 (Nms)
+skip  bootstrap/api-ready@master01 (blocked by prepare/sysctl@master01)
+skip  bootstrap/kubeadm-init@master01 (blocked by prepare/sysctl@master01)
+skip  cni/calico-operator@master01 (blocked by prepare/sysctl@master01)
+skip  images/import@master01 (blocked by prepare/sysctl@master01)
+skip  images/import@worker01 (blocked by prepare/sysctl@master01)
+skip  join/kubeadm@worker01 (blocked by prepare/sysctl@master01)
+skip  post/kubeconfig@master01 (blocked by prepare/sysctl@master01)
+skip  post/summary@master01 (blocked by prepare/sysctl@master01)
 skip  prepare/kernel-deps@master01
 skip  prepare/kernel-deps@worker01
 skip  prepare/os-baseline@master01

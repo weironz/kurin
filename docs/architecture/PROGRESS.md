@@ -18,7 +18,7 @@
 | WP-08 SSH 安全与端口转发 | todo | | | `just tier0 tier0-test` | |
 | WP-09 集群锁与 RunState v2 | done | 见提交 | 无 | 双终端 `add nodes` 抢锁 | 标准库 `File::try_lock`；RunState v2 兼容 v1；`--resume` 校验计划指纹 |
 | WP-10 PlanBuilder / NodeSel | done | 见提交 | 无（快照零变化） | 无 | Phase/PlanBuilder/NodeSel/OpKind；移除 petgraph；保留既有阶段标签错位待 WP-11/12 修正 |
-| WP-11 DAG 执行器 | todo | | | tier1/tier2/tier3 全量 | |
+| WP-11 DAG 执行器 | done | 见提交 | CLI sysctl-failure 快照新增 blocked skip 行 | tier1/tier2/tier3 全量 | 入度表 + 就绪队列；全局 32/节点 4；Strict/BestEffort；rolling；取消；计划指纹 |
 | WP-12 删除改为计划 | todo | | | `just tier1-k3s`、tier2 删 worker、tier3 删集群 | |
 | WP-13 升级改为计划 | todo | | | `just tier2-upgrade-minor`、`e2e/tier2/upgrade-offline.sh` | |
 | WP-14 kurin-ops | todo | | | `just tier2-certs`、`just tier2-status`、`just tier1-k3s-ops` | |
@@ -80,6 +80,7 @@
 ## 偏离记录
 
 - WP-00：`ScriptedSession` 在 `(exit, stdout, stderr)` 之外增加了「命令已执行但传输中断」的应答与副作用文件，用于覆盖 `Outcome::Unknown → 重新探测` 路径；`cli_output` 快照对任务耗时与阶段内行序做归一化（并发完成顺序不在 v1 契约内）。
+- WP-11：取消由 `OpSession::finish` 发布唯一 `OpFinished{Cancelled}`；BestEffort 仍发 v1 `TaskFailed` 并额外发 v2 `TaskWarn`；多失败错误文本不再带 stage 名。
 - WP-10：为保持快照逐字节一致，`plan_os`/`plan_runtime`/`plan_images` 接收 `&Node` 并按节点交错；k3s 分支集中在 `plan_k3s`；现有阶段标签错位（kubeadm-init 在 vip 等）保留并加注释。
 - WP-09：Blackboard 的权威持久化仍是 `<cluster>.bb.json`，RunState v2 的 `blackboard` 字段是写穿镜像；锁使用标准库 `File::try_lock`（MSRV 1.89+）。
 - WP-18：`track` 实现为 `kurin-kube` 自由函数而非 `ClusterApi` trait 方法（两个后端共用轮询逻辑）。
@@ -99,6 +100,7 @@
 
 （随 WP 完成追加）
 
+- WP-11：`just tier1 && just tier1-test && just tier1-down`、`just tier2 ...`、`just tier3 ...`（执行器最高风险，必须全量回归）。
 - WP-10：结构性重构，快照零变化；回归 `just tier1`/`tier2` 即可。
 - WP-09：两个终端同时对 tier1 执行 `add nodes`，第二个立即失败并显示第一个的 pid 与命令。
 - WP-18：tier1 故意配错镜像，确认日志出现 Pod 事件与容器日志尾部及原因提示。

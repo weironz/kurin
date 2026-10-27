@@ -59,8 +59,11 @@ impl ArtifactSources {
 /// `become` default. Defaults keep today's behaviour.
 #[derive(Debug, Clone, Default)]
 pub struct RunSettings {
-    /// Global task concurrency cap; `None` uses the executor default.
+    /// Global task concurrency cap; `None` uses the executor default (32).
     pub max_parallel: Option<usize>,
+    /// Per-node task concurrency cap, i.e. the number of SSH channels one
+    /// node serves at once; `None` uses the executor default (4).
+    pub per_node: Option<usize>,
     /// Per-command timeout; `None` uses each task's own bound.
     pub command_timeout: Option<Duration>,
     /// Wrap privileged commands in `sudo` even when the login user is not

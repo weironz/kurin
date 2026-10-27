@@ -151,7 +151,10 @@ fn render_like_main(events: &[Event]) -> String {
     let mut stage_lines: Vec<String> = Vec::new();
     for event in events {
         match event {
-            Event::TaskSkipped { id, .. } => stage_lines.push(format!("skip  {id}")),
+            Event::TaskSkipped { id, reason, .. } => match reason {
+                Some(reason) => stage_lines.push(format!("skip  {id} ({reason})")),
+                None => stage_lines.push(format!("skip  {id}")),
+            },
             Event::TaskDone { id, ms, .. } => {
                 stage_lines.push(normalize_ms(&format!("done  {id} ({ms}ms)")));
             }
@@ -294,6 +297,7 @@ async fn create_cluster_output_and_event_lines() {
             id: "preflight/n1".into(),
             node: "n1".into(),
             stage: "preflight",
+            reason: None,
             ts: TS,
         },
         Event::TaskDone {

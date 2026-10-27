@@ -243,6 +243,10 @@ pub enum Body {
         key: String,
         node: String,
         phase: String,
+        /// Why the task did not run (`blocked by <key>`); absent when the
+        /// task was simply already in sync.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
     },
     TaskDone {
         key: String,
@@ -340,6 +344,10 @@ impl Body {
     pub fn redact(&mut self, redactor: &Redactor) {
         match self {
             Body::TaskFailed { reason, .. } => *reason = redactor.redact(reason),
+            Body::TaskSkipped {
+                reason: Some(reason),
+                ..
+            } => *reason = redactor.redact(reason),
             Body::TaskWarn { message, .. } => *message = redactor.redact(message),
             Body::Log { line, .. } => *line = redactor.redact(line),
             Body::Resource { status, .. } => *status = redactor.redact(status),

@@ -129,6 +129,19 @@ All notable changes to kurin. Format follows Keep a Changelog; semver.
   and registered with the event redactor. `--resume` restores them, so a
   resumed run can still join nodes; secrets are never written to the old
   cache path. The stale directory is removed once by `delete cluster`.
+- The executor now schedules over the plan's dependency graph instead of
+  running phase by phase (WP-11): a task starts as soon as its edges are
+  satisfied, at most 32 tasks run at once and at most 4 per node (the SSH
+  channel count), and rolling groups run one batch at a time. Phase
+  barriers are ordinary edges, so the CLI output and the plan snapshots are
+  unchanged for a converging run. Tasks that never run because a dependency
+  failed are now reported instead of disappearing: `task-skipped` gained
+  one **optional** `reason` field (`blocked by <key>`), absent for an
+  already-in-sync task, so the frozen v1 shape is unchanged; the terminal
+  prints `skip  <id> (blocked by <key>)`. A task that declares
+  `FailurePolicy::BestEffort` publishes `task-warn` (v2) / `warn:` on the
+  terminal and its successors still run. Cancellation stops new tasks,
+  lets in-flight ones finish and reports `OpFinished { result: cancelled }`.
 
 ### Fixed
 - `kurin upgrade`: a failed `kubectl drain` now aborts that node's upgrade

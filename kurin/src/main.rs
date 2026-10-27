@@ -306,10 +306,13 @@ impl OpSession {
         });
     }
 
-    /// Publish `OpFinished` and report the operation's outcome.
+    /// Publish `OpFinished` and report the operation's outcome. A cancelled
+    /// run (the executor returns [`kurin::executor::Cancelled`]) is
+    /// reported as `cancelled`, not as a failure.
     fn finish(&self, result: &Result<()>) {
         let (result, error) = match result {
             Ok(()) => (OpResult::Succeeded, None),
+            Err(e) if kurin::executor::is_cancelled(e) => (OpResult::Cancelled, None),
             Err(e) => (OpResult::Failed, Some(format!("{e:?}"))),
         };
         self.bus.publish(Body::OpFinished {
@@ -677,7 +680,10 @@ async fn run(cli: Cli) -> Result<()> {
                         } else {
                             use kurin::Event::*;
                             match &event {
-                                TaskSkipped { id, .. } => eprintln!("skip  {id}"),
+                                TaskSkipped { id, reason, .. } => match reason {
+                                    Some(reason) => eprintln!("skip  {id} ({reason})"),
+                                    None => eprintln!("skip  {id}"),
+                                },
                                 TaskDone { id, ms, .. } => eprintln!("done  {id} ({ms}ms)"),
                                 TaskReconciled { id, .. } => {
                                     eprintln!("ok    {id} (reconciled)")
@@ -948,7 +954,10 @@ async fn add_nodes(file: PathBuf, out: OutputOpts, offline: Option<PathBuf>) -> 
             } else {
                 use kurin::Event::*;
                 match &event {
-                    TaskSkipped { id, .. } => eprintln!("skip  {id}"),
+                    TaskSkipped { id, reason, .. } => match reason {
+                        Some(reason) => eprintln!("skip  {id} ({reason})"),
+                        None => eprintln!("skip  {id}"),
+                    },
                     TaskDone { id, ms, .. } => eprintln!("done  {id} ({ms}ms)"),
                     TaskReconciled { id, .. } => eprintln!("ok    {id} (reconciled)"),
                     TaskFailed { id, reason, .. } => eprintln!("FAIL  {id}: {reason}"),
@@ -1024,3 +1033,31 @@ async fn delete_cluster_cmd(file: PathBuf, out: OutputOpts) -> Result<()> {
 }
 
 const EXAMPLE_CONFIG: &str = include_str!("../examples/cluster.example.toml");
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A cancelled run is reported as `OpFinished { result: cancelled }`
+    /// with no error text, not as a failure.
+    #[test]
+    fn cancelled_run_finishes_as_cancelled() {
+        let bus = Arc::new(EventBus::new("op-test"));
+        let mut rx = bus.subscribe();
+        let session = OpSession {
+            bus: Arc::clone(&bus),
+            started: Instant::now(),
+        };
+        let result: Result<()> = Err(miette::Report::new(kurin::executor::Cancelled));
+        session.finish(&result);
+
+        let envelope = rx.try_recv().expect("op-finished was published");
+        match envelope.body {
+            Body::OpFinished { result, error, .. } => {
+                assert_eq!(result, OpResult::Cancelled);
+                assert!(error.is_none());
+            }
+            other => panic!("expected op-finished, got {other:?}"),
+        }
+    }
+}

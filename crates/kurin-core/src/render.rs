@@ -88,7 +88,10 @@ pub fn format_envelope(envelope: &Envelope) -> String {
         Body::PhaseStarted { phase } => format!("{ts} INFO  -- phase {phase}"),
         Body::PhaseDone { phase, ms } => format!("{ts} INFO  -- phase {phase} complete ({ms}ms)"),
         Body::TaskStart { key, .. } => format!("{ts} INFO  start {key}"),
-        Body::TaskSkipped { key, .. } => format!("{ts} INFO  skip  {key}"),
+        Body::TaskSkipped { key, reason, .. } => match reason {
+            Some(reason) => format!("{ts} INFO  skip  {key} ({reason})"),
+            None => format!("{ts} INFO  skip  {key}"),
+        },
         Body::TaskDone { key, ms, .. } => format!("{ts} INFO  done  {key} ({ms}ms)"),
         Body::TaskReconciled { key, .. } => format!("{ts} INFO  ok    {key} (reconciled)"),
         Body::TaskFailed { key, reason, .. } => format!("{ts} ERROR FAIL  {key}: {reason}"),
@@ -289,6 +292,7 @@ mod tests {
                 id: "a".into(),
                 node: "n".into(),
                 stage: "prepare",
+                reason: None,
                 ts: 1,
             },
             Event::TaskFailed {
@@ -337,6 +341,7 @@ mod tests {
                     id: "a".into(),
                     node: "n".into(),
                     stage: "prepare",
+                    reason: None,
                     ts: 1,
                 },
                 vec!["type", "id", "node", "stage", "ts"],
@@ -465,6 +470,7 @@ mod tests {
                 key: "prepare/sysctl@n1".into(),
                 node: "n1".into(),
                 phase: "prepare".into(),
+                reason: None,
             },
             Body::TaskDone {
                 key: "prepare/sysctl@n1".into(),

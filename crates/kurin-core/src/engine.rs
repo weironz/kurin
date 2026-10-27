@@ -236,6 +236,18 @@ impl Stage {
     }
 }
 
+/// What a task failure does to the rest of the plan (ADR-02).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum FailurePolicy {
+    /// The default: the operation fails, transitive successors are blocked
+    /// and never scheduled.
+    #[default]
+    Strict,
+    /// The failure is reported as `TaskWarn` and successors still run
+    /// (teardown steps that used to end in `; true`).
+    BestEffort,
+}
+
 /// A unit of work on one node. check_state -> apply -> verify, always.
 #[async_trait::async_trait]
 pub trait Task: Send + Sync {
@@ -245,6 +257,11 @@ pub trait Task: Send + Sync {
     fn node(&self) -> &str;
     /// One-line human summary for plan rendering.
     fn describe(&self) -> String;
+    /// What a failure means for the rest of the plan. Defaults to
+    /// [`FailurePolicy::Strict`].
+    fn failure_policy(&self) -> FailurePolicy {
+        FailurePolicy::Strict
+    }
     async fn check(&self, session: &dyn Session) -> Result<Drift>;
     /// Execute the change. Returning `Unknown` on transport errors is
     /// mandatory; the engine re-probes before any retry.
@@ -422,6 +439,10 @@ pub enum Event {
         id: String,
         node: String,
         stage: &'static str,
+        /// Why the task did not run (`blocked by <key>`); absent for a task
+        /// that was already in sync.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
         ts: u64,
     },
     TaskDone {
