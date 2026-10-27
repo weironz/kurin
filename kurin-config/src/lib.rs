@@ -13,6 +13,7 @@
 pub mod config;
 pub mod error;
 pub mod model;
+pub mod quick;
 
 use std::path::Path;
 
