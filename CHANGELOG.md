@@ -2,6 +2,18 @@
 
 All notable changes to kurin. Format follows Keep a Changelog; semver.
 
+## Unreleased
+
+### Added
+- Rich terminal progress for `create cluster` / `add nodes`
+  (`--log-format auto|plain|rich`; `auto` is rich on a TTY, plain when
+  piped so scripts and e2e output stay stable). The rich renderer prints
+  numbered phase headers, aligned node/task columns, `CHECK`/`VERIFY`
+  levels with colors (`NO_COLOR` respected), per-task durations, skip
+  reasons and indented remote stdout/stderr. `kurin status` now renders
+  `NODE / ROLE / INTERNAL-IP / STATUS / RUNTIME / KERNEL` with colored
+  readiness; `--json` carries the new fields unchanged in shape.
+
 ## 0.5.0 - 2026-10-28
 
 首个包含 Web UI、OCI 包、addon、私有 registry/seed 与 OS 矩阵扩展的发布。
