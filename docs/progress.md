@@ -1,3 +1,11 @@
+## 补齐真实 e2e（2026-10-28，第二轮）
+
+- **WP-72**：tier1 k3s 1.33.1 → 1.34.1 离线升级 **PASS**。手工构造 `k3s-1.34.1+k3s1-amd64` bundle（真实 GitHub release + sha256），`kurin upgrade --offline` 完成 version-check → stop → install-bins → start → ready-gate；升级后 `k3s --version` 为 v1.34.1+k3s1、node Ready、`/readyz ok`，旧二进制保留。
+- **WP-74**：`just tier1-alma` **PASS**（AlmaLinux 9.8，selinux Permissive/swap off/firewalld inactive）；`just tier1-openeuler` **PASS**（openEuler 24.03，SELinux Disabled/swap off）；`just tier1-ubuntu2204` **PASS**（22.04.5）。修复：镜像 URL、40G 磁盘、multipass 注入 key、私钥 0600、TOFU 缓存清理、openEuler 断言走 root SSH；sysctl 任务移到 kernel-deps 之后并在 kubeadm init 前重设 `ip_forward`（openEuler 包脚本会重置）。
+- **WP-76**：hydrophone v0.8.0 在 tier1 k3s 单节点跑完 **424 个 conformance 用例：421 PASS / 3 FAIL**（2 节点用例不适用、API chunking、DaemonSet rollback）；报告归档 `docs/conformance/20261028T074500Z/`。
+- **WP-77**：无 registry 节点、`file://` base + ubuntu-24.04 os 包、`delivery = "seed"` 创建 **PASS**。修复：seed 保持 PayloadSet 生命周期、按包内镜像建 store、按 arch 选 platform manifest、artifact install/fetch 按发行版过滤。
+- **未执行**：Kylin V10（无公共镜像，需厂商 qcow2）；WP-74 各 OS 的离线变体；tier3 多节点 conformance。
+
 ## WP-66/73/74 真实 tier1 验证（2026-10-28）
 
 - **WP-66**：tier1 上服务重启后活动 create 变为 `interrupted`（error「服务重启，操作被中断」），`POST /operations/{id}/retry` 生成新操作（`retry_of` 指向原操作、`resume: true`）并成功；CLI 在服务端 create 持锁时被拒绝（`cluster "tier1" is busy: held by pid …`）；密码认证集群创建后，`KurinE2ePass123` 未出现在服务端 DB、JSONL 日志、`/config`、操作详情与日志 API 中，`/config` 只返回 `{ env = "KURIN_E2E_SSH_PASSWORD" }` 引用。
