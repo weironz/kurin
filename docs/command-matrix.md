@@ -39,8 +39,7 @@
 | `--addon` / `--addon-set` | ✅ | 内置 addon 目录；外部 addon 需 `source`（见 `[addons]`） |
 | `--package` / `--offline` | ✅ | `/os/` 路径归入 `packages.os`，其余为 `packages.base` |
 | 摘要 + 确认 | ✅ | discover 后打印；非 TTY 且无 `--yes` 报错 |
-| `--save` / `--no-save` / `--force-save` | ✅ | 默认 `./<name>.kurin.toml`；内容不同默认拒绝覆盖 |
-| `--setup-ssh-key` | ✅ | 密码会话幂等推送公钥（已存在跳过、重放不重复）；验证私钥登录；落盘改私钥认证；`e2e/tier1/ssh-key.sh` |
+| `[kubernetes] profile` | ✅（仅 v1alpha2） | `"default"`（缺省，行为与历史逐字节一致）或 `"cis"`（WP-75：apiserver/kubelet 参数、审计策略、PSA `restricted`、0600 权限）；v1alpha1 报错提示先 `kurin config migrate`；验收用 `just cis-check`（kube-bench，人工） |
 
 ## registry（私有镜像仓库）
 
@@ -91,18 +90,32 @@ KURIN_REGISTRY_EXTERNAL=1 just tier3-registry external
 
 | | k8s（kubeadm） | k3s |
 |---|---|---|
-| 常规升级 | ✅ | ❌ 拒绝（换二进制或按目标版本重装）|
-| 跨 minor +1 | ✅ | ❌ 拒绝 |
-| `upgrade --offline <dir>` | ✅（旧 bundle 目录） | ❌ 拒绝（包来源等 WP-35） |
+| 常规升级 | ✅ | ✅（WP-72：二进制替换 + 滚动重启）|
+| 跨 minor +1 | ✅ | ✅（k3s 按发布支持；目标 release 需制品清单 pin 或离线 bundle）|
+| `upgrade --offline <dir>` | ✅（旧 bundle 目录） | ✅（bundle 携带目标 k3s 二进制）|
 
-`upgrade` 走计划与执行器：每个节点一条任务链（`version-check` → `cordon`
-→ `drain` → `install-bins` → `kubeadm-upgrade` → `restart-kubelet` →
-`ready-gate` → `uncordon`），首个控制面单独执行，其余控制面逐个滚动，
-worker 按 `--batch` 分批。`--dry-run` 输出计划树（保留“当前 → 目标”版本
-表头）；`--offline` 复用同一计划，只替换制品来源（接受旧 bundle 目录；
- 包 URI 报“等 WP-35”）；已在目标版本的节点为
-`InSync`，不会 cordon/drain/安装/重启。drain 失败会中止该节点并阻塞后续
-节点与批次，且不会 uncordon。
+`upgrade` 走计划与执行器，按发行版分支：
+
+- kubeadm：每个节点一条任务链（`version-check` → `cordon` → `drain`
+  → `install-bins` → `kubeadm-upgrade` → `restart-kubelet` →
+  `ready-gate` → `uncordon`），首个控制面单独执行，其余控制面逐个滚动，
+  worker 按 `--batch` 分批。`--offline` 复用同一计划，只替换制品来源
+  （接受旧 bundle 目录；包 URI 报"等 WP-35"）。
+- k3s（WP-72）：`--with-kubernetes vX.Y.Z` 映射到 k3s release
+  `vX.Y.Z+k3s1`（显式 `+k3sN` 后缀原样保留）。每个节点一条任务链
+  （`version-check` → `stop-service` → `install-bins`（上传 →
+  `cp -a` 保留旧二进制为 `/usr/local/bin/k3s.pre-upgrade-<ts>`（永不删除）
+  → 原子 rename）→ `start-service` → `ready-gate`）；server 逐台滚动且
+  `ready-gate` 同时等 `/readyz`，agent 按 `--batch` 分批、只等节点 Ready
+  （agent 单元探测 `k3s-agent`（上游装法），kurin 自装则是 `k3s`）。
+  不 cordon/drain：k3s 官方升级路径就是停机换二进制，排空 server 反而
+  清空其内嵌控制面。
+
+  制品来源：在线仅当清单 pin 的正是目标 release（清单不匹配时报错并
+  指引 `--offline`，绝不静默下载未校验二进制）；`--offline` 要求 bundle
+  按集群每个 arch 携带目标 k3s 二进制（checksum 已由 bundle 校验）。
+  已在目标版本的节点为 `InSync`，不停服务/不换二进制。任一步失败中止该
+  节点并阻塞后续节点与批次。
 
 ## 互斥与续跑
 

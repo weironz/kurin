@@ -69,10 +69,10 @@
 | WP-66 前端端到端验收 | done | 见提交 | 无 | tier1 实跑：lifecycle（创建→加/删 worker→销毁）PASS；关浏览器 PASS；重启/CLI/密码扫描待人工 | `web/e2e/` 5 个场景 + 加节点 UI；tier1 两次实跑通过 |
 | WP-70 etcd 备份/恢复 | done | 见提交 | 无 | `just tier1-etcd` PASS（tier1 单节点：备份 → 建 ns → 恢复 → ns 消失、`/readyz`+`/healthz/etcd` ok）| kubeadm：etcdctl 经 `crictl exec`（回退 `kubectl exec`）快照到 `/var/lib/etcd` 后移至 `/var/lib/kurin/etcd-backups`；恢复在节点 stage 上游 etcdctl 3.5.21 tarball（distroless etcd 镜像无 shell，不能从容器取）；多成员恢复用 etcd DR flags（`--name/--initial-cluster/--initial-advertise-peer-urls/--initial-cluster-token`）重建 quorum；k3s：`k3s etcd-snapshot save` + `k3s server --cluster-reset`（新 k3s 已移除 `etcd-snapshot restore` 子命令）；跨机传输分块 `dd|base64 -w 4096`（6 MiB/块）绕过 exec 捕获上限；旧数据一律 `…-pre-restore-<ts>` 保留不删 |
 | WP-71 证书自动续期 | done | 见提交 | 无 | tier2 手动模拟：`kurin certs schedule --every 1h --warn-days 3650` 后观察 timer 触发（步骤见 command-matrix「certs check / renew / schedule」）| 每控制面装 `kurin-cert-renew.{service,timer}` + `/usr/local/bin/kurin-cert-renew.sh`（幂等重装、`--every` 复用 WP-70 解析器、`WARN_DAYS` 固化进脚本）；kubeadm：`check-expiration` 最小剩余 < warn-days 才 `renew all` + 静态 pod 轮转 + `/readyz` 门控（CA 表不计入：renew all 无法续 CA）；k3s：`certificate check --output table` 门控 + `rotate` + `systemctl restart k3s`；`status`/`certs check` 显示下次续期（`NextElapseUSecRealtime`，`Monotonic` 回退）|
-| WP-72 k3s 升级 | todo | | | | |
+| WP-72 k3s 升级 | done | 见提交 | `kurin/tests/upgrade_k3s.rs` 新增 2 个计划快照（`k3s_upgrade_plan_1cp_1w`、`k3s_upgrade_plan_3cp_3w_batch2`）；`kurin-core` `Stage` 枚举新增 `stop-service`/`start-service`（纯新增，无既有快照变化）| 待人工：`just tier1-k3s-upgrade`（需先 `just tier1-k3s`；目标 release 需制品清单 pin 或离线 bundle）| 计划按发行版分支：kubeadm 链不变；k3s 链 = `version-check` → `stop-service` → `install-bins`（上传暂存 + `cp -a` 保留旧二进制 `k3s.pre-upgrade-<ts>` 永不删除 + 原子 rename）→ `start-service` → `ready-gate`；server 逐台且 gate 含 `/readyz`，agent 按 `--batch`；agent 单元探测 `k3s-agent`（上游装法）回退 kurin 的 `k3s`；在线仅当清单 pin 目标 release，否则明确报错指引 `--offline`（绝不静默下载未校验二进制）；已在目标的节点全链 InSync |
 | WP-73 kurin import | done | 见提交 | 无 | 在另一台控制机 `kurin import --from-cluster … -o tier2.toml` 后 `kurin add nodes -f tier2.toml` | 只读直连（无计划/锁/操作日志）；v1alpha1 记录先迁移为 v1alpha2；kubectl 形态按节点上的 kubeconfig 探测（kubeadm/k3s）；`--password-env` 把每个 `******` 都写成同一 env 引用并列出清单告警，`--key` 只重写 `[ssh.auth]`，密码形态缺口明确报错列出字段；`-o` 0600 落盘、缺省 stdout；`--json` 报告 `{cluster, distribution, kubernetes_version, nodes, output}`（需配 `-o`） |
 | WP-74 OS 扩展 | todo | | | | |
-| WP-75 CIS 加固 | todo | | | | |
+| WP-75 CIS 加固 | done | 见提交 | `kurin/tests/plan_snapshots.rs` 的 cis 计划快照；default 档位全部既有快照不变 | 人工：`just cis-check`（需 kube-bench + tier1），报告存 `docs/cis/<ts>/` | `[kubernetes] profile = "cis"`（v1alpha2）：apiserver/kubelet CIS 参数、审计策略、PSA restricted（仅 default ns）、kubeconfig/kubelet 0600；default 渲染逐字节不变 |
 | WP-76 conformance 门禁 | done | 见提交 | 无 | 维护者：`just conformance`（需 hydrophone + tier3），报告存 `docs/conformance/<ts>/` | `scripts/conformance.sh`（复制 kubeconfig、改 server 地址、hydrophone run、归档）；本机未装 hydrophone 未执行 |
 | WP-77 种子仓库 | todo | | | | |
 | WP-78 英文文案与文档站 | done | 见提交 | 无 | `mdbook build`（docs/site，需安装 mdbook）| 593 键 en 字典（类型强制键集一致）、运行时语言切换（antd/dayjs 跟随、localStorage 持久化）、189 Vitest + 8 Playwright；mdBook 脚手架 + 同步脚本 |
@@ -82,6 +82,8 @@
 - WP-70：三处偏离——(1) `etcd backup/restore` 不走计划/执行器（WP-70 行文隐含计划化，但恢复的步骤互相不幂等、失败后需要人工判断，故与 `certs check`/`status` 同构直接执行；`OpKind::EtcdBackup/EtcdRestore` 保留为事件 kind 与阶段模板）。(2) k3s 恢复用 `k3s server --cluster-reset --cluster-reset-restore-path=…`（k3s 官方现行程序），而非计划中的 `k3s etcd-snapshot restore` 子命令——新版 k3s 已移除该子命令。(3) kubeadm 恢复所需的 etcdctl 不能从 etcd 静态 pod 容器内取（`registry.k8s.io/etcd` 是 distroless，无 shell/coreutils），改为在控制机经既有 artifact 缓存抓取上游 etcd-io/etcd v3.5.21 release tarball（sha256 实抓自官方 SHA256SUMS，与镜像清单 pin 的 etcd 3.5.21-0 同源），上传到节点 `/var/lib/kurin/etcdctl`。
 
 - WP-73：三处偏离——(1) `import` 不走计划/执行器，与 `status`/`certs check` 同构直接执行（读取一次 ConfigMap + 本地文件写，无可收敛漂移）；但比它们更进一步**不建 RunContext/JSONL 操作日志**：`import` 的输入不是配置文件（配置正是它的输出），集群名在读到记录前未知，事件总线的锚点不存在。集群锁也不取（只读）。(2) 记录里 `spec.toml` 可能是 v1alpha1（WP-19 存储的是源文件原文的重排）：按 WP 标题「reconstruct a v1alpha2 TOML」，先经 `kurin config migrate` 的 toml_edit 结构化迁移再补凭据（注释/键序保留）。(3) 凭据回填语义：`--password-env NAME` 把**每个** `******`（含 `[registry]`/`[addons]`/become 密码/节点覆盖）都写成 `{ env = "NAME" }` 并在 stderr 列出清单告警（SSH 密码 ≠ registry 密码，操作者按需改 env 名）；`--key PATH` 只能重写 `[ssh.auth]`（导入已用该私钥连通过 ⇒ 无 passphrase），密码形态字段明确报错列出字段清单（建议改用 `--password-env` 重跑），绝不输出带 `******` 的残缺配置。另：`--json` 必须配 `-o`（stdout 归 JSON 报告），`--key`/`--password-env` 互斥且必须给其一。
+
+- WP-72：三处偏离——(1) **不 cordon/drain k3s 节点**：WP 行文只说"二进制替换 + 滚动重启"，未规定 cordon/drain；k3s 官方升级程序就是停机换二进制，且排空 k3s server 会驱逐其内嵌控制面（无独立 apiserver pod 可留），故链里没有 cordon/drain/uncordon 步骤（`--force-drain-failure` 对 k3s 无意义，保留参数不报错）。(2) **在线目标解析按清单 pin，不动态重 pin**：kubeadm 路径用 dl.k8s.io 的签名 `.sha256` 端点动态重 pin 到任意目标；k3s 无对应信任端点，kurin 不静默下载未校验二进制——清单 pin 的是目标 release 时在线可用，否则报错指引 `--offline <dir>`（bundle 按集群 arch 校验携带目标二进制）。(3) **`k3s --version` 作版本探测与目标映射**：`--with-kubernetes vX.Y.Z` 映射 `vX.Y.Z+k3s1`（显式 `+k3sN` 后缀原样保留以 pin 特定 k3s 补丁）；节点版本用节点本地 `k3s --version`（kubeadm 路径的 kubeletVersion 对 k3s 报的是 `vX.Y.Z+k3s1` 全串，node-local 探测同样可靠且不依赖锚点 API 可用）。
 
 - WP-50：Host 拒绝使用 403 `forbidden-host`（UI §7 状态码清单之外，语义上 400=语法不合适）；错误信封为顶层 `{code, message, diagnostics?}` 且 DTO 字段 `camelCase`（`expiresAt`/`componentVersions`），对齐已交付的 WP-60 前端契约而非 §7 的「snake_case」总则，WP-55 ts-rs 生成时以此为基准；默认 Host 白名单额外含 `[::1]:<port>`；`GET /api/v1/session`（会话自省）与 `GET /api/v1/healthz`（与 `/healthz` 等价）按 WP-60 mock 契约补齐；host 检查同时读 HTTP/2 `:authority`（TLS 下 curl/浏览器走 h2，无 Host 头）；会话 TTL 定为 24h（文档未规定）。新依赖：axum/axum-server/rand 纯 Rust，rustls(ring) 已在树内（russh/kube），musl/zig 交叉编译不受影响。
 - WP-00：`ScriptedSession` 在 `(exit, stdout, stderr)` 之外增加了「命令已执行但传输中断」的应答与副作用文件，用于覆盖 `Outcome::Unknown → 重新探测` 路径；`cli_output` 快照对任务耗时与阶段内行序做归一化（并发完成顺序不在 v1 契约内）。
@@ -143,6 +145,7 @@
 - WP-39：签名包校验、篡改 blob 拒绝、未签名包在 signature 模式拒绝（`cargo test -p kurin-artifact --test transfer`）；CI 工作流需在 tag 上人工验证。
 - WP-49：`just tier3-registry zot`、`docker-registry`、`external`（external 指向 zot）。
 - WP-63：tier1 真实 create 过程中刷新页面，确认日志从断点继续；`pnpm --dir web test:e2e`。
+- WP-75：`just cis-check`（需安装 kube-bench 与 tier1），报告归档到 `docs/cis/`；阈值按 kube-bench 报告人工判定。
 - WP-76：`just conformance`（需安装 hydrophone 与 tier3 集群），报告归档到 `docs/conformance/`。
 - WP-66：tier1 已实跑 `lifecycle.spec.ts`（3.9m PASS）与「创建中关闭浏览器」（2.4m PASS）；`resilience.spec.ts` 的重启 retry、CLI 抢锁、密码扫描需 `KURIN_E2E_RESTART_CMD` / `KURIN_E2E_CLI` / `KURIN_E2E_SECRET`，待维护者执行。
 - WP-65：Playwright `packages.spec.ts` 覆盖包导入/校验/推送/制作 base、升级预览+执行、证书续期、TOML 编辑保存；tier2 页面升级一个小版本。
@@ -171,6 +174,7 @@
 - WP-39：签名包校验、篡改 blob 拒绝、未签名包在 signature 模式拒绝（`cargo test -p kurin-artifact --test transfer`）；CI 工作流需在 tag 上人工验证。
 - WP-49：`just tier3-registry zot`、`docker-registry`、`external`（external 指向 zot）。
 - WP-63：tier1 真实 create 过程中刷新页面，确认日志从断点继续；`pnpm --dir web test:e2e`。
+- WP-75：`just cis-check`（需安装 kube-bench 与 tier1），报告归档到 `docs/cis/`；阈值按 kube-bench 报告人工判定。
 - WP-76：`just conformance`（需安装 hydrophone 与 tier3 集群），报告归档到 `docs/conformance/`。
 - WP-66：tier1 已实跑 `lifecycle.spec.ts`（3.9m PASS）与「创建中关闭浏览器」（2.4m PASS）；`resilience.spec.ts` 的重启 retry、CLI 抢锁、密码扫描需 `KURIN_E2E_RESTART_CMD` / `KURIN_E2E_CLI` / `KURIN_E2E_SECRET`，待维护者执行。
 - WP-65：Playwright `packages.spec.ts` 覆盖包导入/校验/推送/制作 base、升级预览+执行、证书续期、TOML 编辑保存；tier2 页面升级一个小版本。

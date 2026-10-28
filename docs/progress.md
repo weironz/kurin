@@ -1,3 +1,16 @@
+## WP-75：CIS 加固档位（2026-10-28）
+
+- **`[kubernetes] profile = "cis"`**（v1alpha2）：kubeadm init 渲染 apiserver CIS 参数（审计日志/策略、`--profiling=false`、NodeRestriction+PodSecurity、CIS cipher suites、Node,RBAC）与 kubelet 加固（`protectKernelDefaults`、匿名关闭、Webhook 授权、`readOnlyPort=0`、`streamingConnectionIdleTimeout=5m`、`eventRecordQPS=0`、CIS cipher suites、证书轮换）；写入 `/etc/kubernetes/audit-policy.yaml`（0600）与 `/var/log/kubernetes`；kubeconfig/kubelet config 统一 0600；`post/psa-labels` 给 `default` 命名空间打 restricted 三件套（不含 kube-system）。
+- **default 档位不变**：模板渲染逐字节一致，既有计划快照零变化；新增 cis 计划快照。
+- **测试**：kurin-config 55 lib + schema 测试；kurin-components 的 CIS 渲染/审计策略/权限/PSA 单测；`just check` 通过。
+- **人工门禁**：`scripts/cis-check.sh` + `just cis-check` 在 tier1 跑 kube-bench JSON 报告并归档到 `docs/cis/<ts>/`；本机未装 kube-bench，未执行。
+
+## WP-72：k3s 升级（2026-10-28）
+
+- **`kurin upgrade -f <k3s cfg> --with-kubernetes vX.Y.Z`**：`vX.Y.Z` 映射 k3s release `vX.Y.Z+k3s1`（显式 `+k3sN` 原样保留）。计划按发行版分支，kubeadm 链不变；k3s 每节点 `version-check` → `stop-service` → `install-bins` → `start-service` → `ready-gate`：上传新二进制到暂存路径 → `cp -a` 保留旧二进制为 `/usr/local/bin/k3s.pre-upgrade-<ts>`（永不删除）→ 原子 rename → 起服务。server 逐台滚动且 gate 同时等 `/readyz` 与节点 Ready；agent 按 `--batch` 分批、用 kubelet kubeconfig 等自身 Ready（agent 单元探测 `k3s-agent`（上游装法）回退 kurin 的 `k3s`）。不 cordon/drain（k3s 官方升级路径即停机换二进制）。已在目标版本的节点全链 InSync；旧二进制与 kubeadm 路径一样走制品模型（在线仅当清单 pin 目标 release，否则报错指引 `--offline`；bundle 按集群 arch 校验）。
+- **测试**：`kurin-components` upgrade 单测 15 个（映射、解析、pin/bundle 校验、链顺序、server/agent 分批、kubeadm 形状不变、幂等跳过、全链命令顺序、agent 单元）；`kurin/tests/upgrade_k3s.rs` 6 个集成测试（2 计划快照 + server/agent 命令序列与顺序、InSync、swap 失败阻塞）。
+- **e2e（tier1，待人工）**：`just tier1-k3s-upgrade`（`e2e/tier1/k3s-upgrade.sh`：先 `just tier1-k3s` 建集群，升级后断言 `k3s --version`、旧二进制保留、node Ready、pod 健康）。未在本环境执行（无 multipass）。
+
 ## WP-76：conformance 门禁（2026-10-28）
 
 - **`scripts/conformance.sh` + `just conformance [name]`**：从 tier3 的首个控制面复制 kubeconfig（kubeadm `admin.conf` / k3s `k3s.yaml`），把 `127.0.0.1` 改写为 VM 地址，调用 hydrophone `run --kubeconfig … --output-dir docs/conformance/<UTC ts>` 归档报告；`HYDROPHONE` / `HYDROPHONE_ARGS` 可覆盖二进制与额外参数。

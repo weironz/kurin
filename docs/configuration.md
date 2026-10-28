@@ -153,7 +153,7 @@ cargo test -p kurin-config --test json_schema   # 校验入库文件未漂移
 | 包来源 | `[artifacts] offline-dir/zone` | `[packages] base/os/delivery/verify/trusted-keys`；`[artifacts]` 继续接受 |
 | 私有仓库 | `[registry] kind = docker-registry \| zot \| harbor`（有 registry 节点时必填） | 同上，另加 `kind = "external"`（`address`、`ca-file`、`namespace`）；`role = "registry"` 节点未写 kind 时默认 `zot` |
 | SSH 提权/主机密钥 | `[ssh] become/become-password/known-hosts` | 相同 |
-| network / ha / nodes / ssh.auth | — | 相同 |
+| 加固档位 | ❌ 拒绝（报错提示先 `kurin config migrate`） | `[kubernetes] profile = "default" \| "cis"`（WP-75） |
 
 v1alpha2 示例（`kurin create config` 的输出）：
 
@@ -377,6 +377,24 @@ key-path = "/root/.ssh/master01_key"
 |---|---|
 | `k8s`（默认） | kubeadm 轨道：binary-first 分发 kubeadm/kubelet/kubectl/containerd，`kubeadm init/join` 引导 |
 | `k3s` | 单二进制 k3s；HA 走内嵌 etcd（`cluster-init`）。**限制**：cni 仅 `flannel`/`none`；HA 仅 kube-vip 模式；离线暂不支持（校验直接拒绝） |
+
+### `kubernetes.profile`（加固档位，v1alpha2，WP-75）
+
+| 值 | 行为 |
+|---|---|
+| `default`（缺省） | 历史行为，渲染输出与加入该字段前**逐字节一致**（快照测试锁定） |
+| `cis` | CIS Benchmark 加固（仅 kubeadm 轨道生效） |
+
+`profile = "cis"` 渲染并收敛：
+
+- **apiserver**（kubeadm ClusterConfiguration extraArgs）：`--audit-log-path=/var/log/kubernetes/audit.log`、`--audit-policy-file=/etc/kubernetes/audit-policy.yaml`、`--profiling=false`、`--enable-admission-plugins=NodeRestriction,PodSecurity`、`--authorization-mode=Node,RBAC`、CIS TLS 套件集；审计策略经 extraVolume 从 `/etc/kubernetes/audit-policy.yaml` 只读挂载，日志目录 `/var/log/kubernetes`。
+- **审计策略**：模板 `kubeadm/audit-policy.yaml.j2` 渲染的 CIS 最小策略（omitStages `RequestReceived`、secrets/serviceaccounts 记 Metadata、exec/attach 记 RequestResponse），由 init/join 任务以 0600 写入。
+- **kubelet**（KubeletConfiguration）：`protectKernelDefaults: true`、`anonymous.enabled: false`、`authorization.mode: Webhook`、`readOnlyPort: 0`、`streamingConnectionIdleTimeout: 5m`、`eventRecordQPS: 0`、CIS `tlsCipherSuites`、`rotateCertificates: true`。加入节点从 kubeadm-config ConfigMap 继承同一份。
+- **PSA**：`post` 阶段把 `default` 命名空间标记 `pod-security.kubernetes.io/enforce|audit|warn=restricted`（`kube-system` 不标记）。
+- **文件权限**：`admin.conf`、`kubelet.conf`、`controller-manager.conf`、`scheduler.conf`、`/var/lib/kubelet/config.yaml` 及审计策略统一 0600。
+
+验收：`just cis-check`（`scripts/cis-check.sh`）在 tier1 上运行 kube-bench 并把 JSON 报告归档到
+`docs/cis/<UTC 时间戳>/`。kube-bench 不随 kurin 分发，属**人工**门禁（WP-75）。
 
 ### `network.cni`（互斥）
 
