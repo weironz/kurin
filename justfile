@@ -179,6 +179,11 @@ tier1-k3s-ops:
     CARGO_TARGET_DIR=target/tier1 cargo build -q -p kurin
     e2e/tier1/k3s-ops.sh target/tier1/debug/kurin
 
+# WP-72: k3s binary-replacement upgrade on a running tier-1 k3s cluster.
+# MANUAL: needs `just tier1-k3s` first and k3s release artifacts online.
+tier1-k3s-upgrade:
+    e2e/tier1/k3s-upgrade.sh target/tier1/debug/kurin
+
 tier3-k3s-ha:
     e2e/tier3/k3s-ha.sh target/tier3/debug/kurin
 
@@ -205,9 +210,11 @@ tier2-status:
 tier1-etcd:
     e2e/tier1/etcd.sh target/tier1/debug/kurin
 
-# WP-76: Kubernetes conformance gate (release only; needs hydrophone + tier3)
-conformance name="kurin-tier3":
-    scripts/conformance.sh {{name}}
+
+# WP-75: CIS benchmark gate — kube-bench against a tier1 cluster installed
+# with [kubernetes] profile = "cis" (manual; kube-bench not bundled).
+cis-check name="kurin-tier1":
+    scripts/cis-check.sh {{name}}
 
 # full local gate before pushing anything that touches behavior
 ci-gate: check tier0

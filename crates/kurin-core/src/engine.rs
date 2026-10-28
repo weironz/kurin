@@ -223,6 +223,10 @@ pub enum Stage {
     ReadyGate,
     /// Upgrade: mark the node schedulable again.
     Uncordon,
+    /// Upgrade (k3s): stop the node's k3s unit before the binary swap.
+    StopService,
+    /// Upgrade (k3s): start the node's k3s unit after the binary swap.
+    StartService,
     /// Certs renew: `kubeadm certs renew all` / `k3s certificate rotate`.
     CertsRenew,
     /// Certs renew: cycle the static control-plane pods (or restart k3s).
@@ -258,6 +262,8 @@ impl Stage {
             Stage::RestartKubelet => "restart-kubelet",
             Stage::ReadyGate => "ready-gate",
             Stage::Uncordon => "uncordon",
+            Stage::StopService => "stop-service",
+            Stage::StartService => "start-service",
             Stage::CertsRenew => "renew",
             Stage::RestartStaticPods => "restart-static-pods",
             Stage::ApiReadyGate => "apiready-gate",
@@ -291,6 +297,8 @@ impl Stage {
             "restart-kubelet" => Stage::RestartKubelet,
             "ready-gate" => Stage::ReadyGate,
             "uncordon" => Stage::Uncordon,
+            "stop-service" => Stage::StopService,
+            "start-service" => Stage::StartService,
             "renew" => Stage::CertsRenew,
             "restart-static-pods" => Stage::RestartStaticPods,
             "apiready-gate" => Stage::ApiReadyGate,

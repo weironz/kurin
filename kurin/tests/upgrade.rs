@@ -190,6 +190,7 @@ fn cluster(name: &str, cps: usize, workers: usize) -> Cluster {
         distribution: kurin_config::Distribution::K8s,
         ha_mode: kurin_config::HaMode::KubeVip,
         runtime: kurin_config::RuntimeKind::Containerd,
+        hardening: kurin_config::HardeningProfile::Default,
         kubernetes_version: Version::parse("1.33.2").unwrap(),
         pod_cidr: "10.244.0.0/16".parse().unwrap(),
         service_cidr: "10.96.0.0/12".parse().unwrap(),

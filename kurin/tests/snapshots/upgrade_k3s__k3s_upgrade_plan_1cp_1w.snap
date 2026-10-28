@@ -1,0 +1,28 @@
+---
+source: kurin/tests/upgrade_k3s.rs
+expression: render_plan(&plan)
+---
+├── stage: discover (2 tasks)
+│   ├── discover/facts@cp1 :: arch=amd64 os=? cpu=0 mem=0MiB
+│   └── discover/facts@w1 :: arch=amd64 os=? cpu=0 mem=0MiB
+├── stage: preflight (0 tasks)
+├── stage: artifacts (0 tasks)
+├── stage: first-cp (5 tasks)
+│   ├── version-check/version-check@cp1 :: check cp1 k3s version (target v1.33.2+k3s1)
+│   ├── stop-service/stop-service@cp1 :: stop the k3s service on cp1
+│   ├── install-bins/install-bins@cp1 :: replace /usr/local/bin/k3s with v1.33.2+k3s1 on cp1 (old binary preserved)
+│   ├── start-service/start-service@cp1 :: start the k3s service on cp1
+│   └── ready-gate/ready-gate@cp1 :: wait for cp1 to be Ready and /readyz
+├── stage: control-plane (0 tasks)
+├── stage: workers (5 tasks)
+│   ├── version-check/version-check@w1 :: check w1 k3s version (target v1.33.2+k3s1)
+│   ├── stop-service/stop-service@w1 :: stop the k3s service on w1
+│   ├── install-bins/install-bins@w1 :: replace /usr/local/bin/k3s with v1.33.2+k3s1 on w1 (old binary preserved)
+│   ├── start-service/start-service@w1 :: start the k3s service on w1
+│   └── ready-gate/ready-gate@w1 :: wait for w1 to be Ready
+├── stage: addons (0 tasks)
+└── stage: post (1 tasks)
+    └── post/summary@cp1 :: print the post-upgrade node table
+
+rolling groups:
+- max_parallel=1 [version-check/version-check@w1, stop-service/stop-service@w1, install-bins/install-bins@w1, start-service/start-service@w1, ready-gate/ready-gate@w1]
