@@ -3,6 +3,23 @@
 不写配置文件，直接用参数创建集群。`create cluster` 会把参数合并成一份
 v1alpha2 配置，走与 `-f` 完全相同的校验、计划和执行路径。
 
+## 完全不留配置文件
+
+默认会写一份 `./<name>.kurin.toml` 作为等价配置。如果连这份文件也不想要，
+加 `--no-save`：
+
+```bash
+kurin create cluster --name demo \
+  --control-plane 192.168.10.11 \
+  --ssh-user root \
+  --ssh-key ~/.ssh/id_ed25519 \
+  --no-save --yes
+```
+
+整个过程不读、不写任何 TOML/YAML 文件；配置只在进程内存中构建。代价是
+后续 `status` / `add nodes` / `delete cluster` 没有配置文件可用——需要时用
+`kurin create config ... --save demo.toml` 再生成一份，或重新带参数执行。
+
 ## 最小单节点
 
 ```bash
