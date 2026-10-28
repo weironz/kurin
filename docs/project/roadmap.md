@@ -1,7 +1,7 @@
 # 路线图（M1 交付后）
 
 M1 已完成并验收（见 `progress.md`）：安装 / HA / 多节点 / 增删节点 / 离线 / 升级，
-tier-0~3 + offline 五层 e2e 全绿，CI 为 check + tier0（push/PR）+ release（tag）。
+tier-0~3 + offline 五层 e2e 全绿，CI 为手动 check、本地 tier0，release 由 tag 触发。
 
 本文件是 M2 的全部剩余任务清单。每项含验收标准、依赖与建议批次。
 "人工 e2e"：按当前约定，multipass e2e 只在本地手工跑，不进定时任务。
