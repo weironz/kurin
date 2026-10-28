@@ -158,6 +158,14 @@ kurin create cluster --name prod --control-plane 192.168.10.11 \
 `create config` 也支持 `--save <PATH>`；`--print-versions` 打印当前构建
 pin 的组件版本。
 
+`precheck` 只接受配置文件（`-f`）。想先预检再安装时：
+
+```bash
+kurin create config --name prod --control-plane 192.168.10.11 \
+  --ssh-key ~/.ssh/id_ed25519 --save prod.toml
+kurin precheck -f prod.toml
+```
+
 ## 覆盖任意字段
 
 ```bash
