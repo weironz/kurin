@@ -79,6 +79,24 @@ kurin serve --listen 0.0.0.0:7080 \
 （Nginx/Traefik）转发时，把外部域名写进 `--public-host`，并保持
 `X-Forwarded-*` 头；TLS 可以在代理层终止，kurin 侧继续监听回环。
 
+### `forbidden-host`
+
+浏览器访问 `http://192.168.73.11:7080` 却返回：
+
+```json
+{"code":"forbidden-host","message":"Host 头不在允许列表：192.168.73.11:7080"}
+```
+
+说明服务启动时没有把这个地址加入白名单。加 `--public-host` 重启即可：
+
+```bash
+kurin serve --listen 0.0.0.0:7080 --allow-insecure-http \
+  --public-host 192.168.73.11:7080
+```
+
+Docker 同理，把 `--public-host 192.168.73.11:7080` 加到 `serve` 参数里。
+用 SSH 隧道访问时不需要它（Host 是 `127.0.0.1`/`localhost`）。
+
 ### Docker
 
 ```bash

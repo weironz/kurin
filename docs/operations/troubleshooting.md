@@ -53,6 +53,15 @@ kurin logs --last --level debug
 | 证书快过期 | `kurin certs check`；`kurin certs renew`；长期用 `certs schedule` |
 | etcd 恢复后 Pod 异常 | 等控制面重新选主；检查 `/healthz/etcd` 与 `/readyz`；旧数据在 `…-pre-restore-<ts>` |
 
+## Web UI
+
+| 现象 | 原因 | 处理 |
+|---|---|---|
+| `{"code":"forbidden-host","message":"Host 头不在允许列表：…"}` | 访问地址不在 `Host` 白名单 | 启动时加 `--public-host <host:port>`，例如 `--public-host 192.168.73.11:7080` |
+| 登录链接指向 `0.0.0.0` | 非回环监听且没给 `--public-host` | 加 `--public-host <实际访问地址:端口>`；或改用 SSH 隧道 |
+| 非回环监听启动失败 | 明文 HTTP 需要显式允许 | 加 `--allow-insecure-http`，或配置 `--tls-cert/--tls-key` |
+| 令牌丢失 | 只打印一次 | `kurin serve --rotate-token` 重新生成 |
+
 ## 日志与状态
 
 ```bash
