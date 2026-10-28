@@ -241,7 +241,7 @@ crio unit 与安装/配置并行启动竞态。
 ## 文档补齐（2026-10-26）
 ## M2 步骤 1 — upgrade ✅（2026-10-26）
 
-（M2 后续全部任务清单见 `docs/roadmap.md`：批次 1 证书轮转/CP 追加/status；批次 2 国内镜像、CNI 矩阵、K3s、外部 LB；批次 3 跨 minor 升级、离线增强、夜间 e2e 备选方案。约定：e2e 全手工，主线功能开发。）
+（M2 后续全部任务清单见 `docs/project/roadmap.md`：批次 1 证书轮转/CP 追加/status；批次 2 国内镜像、CNI 矩阵、K3s、外部 LB；批次 3 跨 minor 升级、离线增强、夜间 e2e 备选方案。约定：e2e 全手工，主线功能开发。）
 
 `kurin upgrade -f cluster.toml --with-kubernetes vX.Y.Z [--dry-run] [--batch N]`
 

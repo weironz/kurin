@@ -78,7 +78,7 @@
 | F10 | 运行状态文件已支持 `--resume`（跳过已完成任务） | `executor.rs:44-60`、`state.rs` | 直接作为“重新执行”的实现 |
 | F11 | `ConfigError` 实现了 miette `Diagnostic`，带源码 span | `kurin-config/src/error.rs`、`tests/snapshots/*error*` | 校验错误可以精确映射到编辑器的行列 |
 | F12 | `ClusterConfig` 可序列化回 TOML（有 roundtrip 快照测试） | `kurin-config/tests/snapshots.rs` | 向导表单可由服务端渲染出规范 TOML |
-| F13 | `--json` 事件类型在 v1.0 门禁中计划冻结 | `docs/v1.0-gates.md` §2 | 新增的 Web 事件不能改动现有 `Event`，只能外包一层信封 |
+| F13 | `--json` 事件类型在 v1.0 门禁中计划冻结 | `docs/project/v1.0-gates.md` §2 | 新增的 Web 事件不能改动现有 `Event`，只能外包一层信封 |
 | F14 | CI `check.yml` 仅手动触发、跑在自托管 runner；发布由 `just release-musl`（x86_64 musl-gcc + aarch64 zig）完成 | `.github/workflows/`、`justfile` | 发布机需加 Node/pnpm；需验证 SQLite C 源码在 musl/zig 下的交叉编译 |
 
 **顺带发现的、与 UI 无关但应修的问题**（单独提 issue，不阻塞 UI）：

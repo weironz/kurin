@@ -49,4 +49,4 @@
 
 - `docs/development/plugins.md`：P1/P4 完成后改写为“如何写一个 Component / 如何写一个 addon”。在那之前，它仍然描述现有代码。
 - `docs/ui/ui-architecture-final.md`：已更新到 v1.1，与本组文档一致；两份 UI 调研稿保留作为历史输入。
-- `docs/roadmap.md`、`docs/v1.0-gates.md`：本计划在 v1.0 门禁之前完成；门禁中的配置兼容和 `--json` 冻结规则，已体现在 06 §0.2 的 R4 中。
+- `docs/project/roadmap.md`、`docs/project/v1.0-gates.md`：本计划在 v1.0 门禁之前完成；门禁中的配置兼容和 `--json` 冻结规则，已体现在 06 §0.2 的 R4 中。

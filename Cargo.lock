@@ -2396,7 +2396,7 @@ dependencies = [
 
 [[package]]
 name = "kurin"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "async-trait",
  "clap",
@@ -2428,7 +2428,7 @@ dependencies = [
 
 [[package]]
 name = "kurin-artifact"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "base64 0.22.1",
  "bcrypt",
@@ -2455,7 +2455,7 @@ dependencies = [
 
 [[package]]
 name = "kurin-components"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -2489,7 +2489,7 @@ dependencies = [
 
 [[package]]
 name = "kurin-config"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "insta",
  "ipnet",
@@ -2509,7 +2509,7 @@ dependencies = [
 
 [[package]]
 name = "kurin-core"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "async-trait",
  "kurin-config",
@@ -2529,7 +2529,7 @@ dependencies = [
 
 [[package]]
 name = "kurin-kube"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "async-trait",
  "futures",
@@ -2549,7 +2549,7 @@ dependencies = [
 
 [[package]]
 name = "kurin-ops"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "kurin-artifact",
  "kurin-components",
@@ -2569,7 +2569,7 @@ dependencies = [
 
 [[package]]
 name = "kurin-server"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "async-trait",
  "axum",
@@ -2605,7 +2605,7 @@ dependencies = [
 
 [[package]]
 name = "kurin-ssh"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "async-trait",
  "backon",

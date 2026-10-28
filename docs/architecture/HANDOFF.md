@@ -17,7 +17,7 @@ P7（WP-70～78）只在 P0～P6 全部完成后才开始。
 2. docs/architecture/06-dev-plan.md：全文。第 0 节是硬性规则，必须遵守
 3. docs/architecture/02-core-architecture.md：目标架构与接口签名
 4. 每个 WP 开工前，再读它“设计”一栏引用的章节（03 addons / 04 OCI 包 / 05 CLI 快速创建 / docs/ui/ui-architecture-final.md v1.1）
-5. README.md、docs/development/plugins.md、docs/reference/command-matrix.md、docs/v1.0-gates.md
+5. README.md、docs/development/plugins.md、docs/reference/command-matrix.md、docs/project/v1.0-gates.md
 
 设计文档是决策依据，不要重新论证已定的方案。实现时发现设计有错或有遗漏：选最保守、能自洽的做法，
 同步修改对应的设计文档，并在台账的“偏离记录”里写明原因。

@@ -4,7 +4,7 @@ Declarative Kubernetes cluster installer written in Rust — a ground-up rewrite
 [kubekey](https://github.com/kubesphere/kubekey)'s install path, minus KubeSphere.
 
 Status: **M1 + wave2 complete** — every roadmap batch landed and is verified by
-real end-to-end tests ([`docs/progress.md`](docs/progress.md)).
+real end-to-end tests ([`docs/project/progress.md`](docs/project/progress.md)).
 
 ## Documentation
 

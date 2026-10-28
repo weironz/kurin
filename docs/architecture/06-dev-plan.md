@@ -10,7 +10,7 @@
 
 ### 0.1 开工前必读
 
-1. 仓库根目录 `README.md`、`docs/development/plugins.md`、`docs/reference/command-matrix.md`、`docs/v1.0-gates.md`。
+1. 仓库根目录 `README.md`、`docs/development/plugins.md`、`docs/reference/command-matrix.md`、`docs/project/v1.0-gates.md`。
 2. 本 WP 引用的设计文档章节（WP 内“设计”一行给出）。
 3. 本 WP 改动范围内的现有源码与测试（`kurin/tests/*.rs` 里已有 MockSession 写法，照着写）。
 
@@ -23,7 +23,7 @@
 | R3 | **WP-00 的快照是行为基线。** 快照有变化时，PR 描述里要逐条说明原因；不允许整批 `cargo insta accept` 后不解释。 |
 | R4 | 公开接口只增不删：CLI 参数、`--json` v1 事件字段、`v1alpha1` 配置、退出码。确有必要的行为变更写进 `CHANGELOG.md` 的 `Changed` 段。 |
 | R5 | 保持既有原则：不用 `format!` 拼 YAML（用 MiniJinja 模板）；sha256/digest 必须真实来自上游；不支持的组合在**校验期**拒绝；新依赖要能在 x86_64 musl 与 aarch64 zig 下交叉编译（写进 PR 描述）。 |
-| R6 | 涉及远端执行语义的 WP 要提供或更新 e2e 脚本（`e2e/tierN/*.sh`）。e2e 需要 multipass 真机环境，AI 通常无法运行：在 PR 描述里写明“需人工 e2e：`just tierX …`”，由维护者执行并在 `docs/progress.md` 记录结果。**没有 e2e 结果的执行语义改动不能发版。** |
+| R6 | 涉及远端执行语义的 WP 要提供或更新 e2e 脚本（`e2e/tierN/*.sh`）。e2e 需要 multipass 真机环境，AI 通常无法运行：在 PR 描述里写明“需人工 e2e：`just tierX …`”，由维护者执行并在 `docs/project/progress.md` 记录结果。**没有 e2e 结果的执行语义改动不能发版。** |
 | R7 | 新增或修改的公共函数、trait 要有 doc 注释；注释密度和风格与周边代码一致。 |
 | R8 | 秘密（密码、口令、token、join 命令）不得出现在日志、事件、错误文本、快照和测试输出里；测试中使用明显的假值并断言它们被脱敏。 |
 | R9 | 提交信息使用 Conventional Commits（`feat(scope): …` / `refactor(core): …`），不写模型名。 |
@@ -115,7 +115,7 @@ flowchart LR
   2. `plan_snapshots.rs`：对每个样例调用 `Plan::build`，用 `kurin::render::render_tree` 输出文本快照；同时输出一个 JSON 快照：每个 stage 的任务 `id` 列表，以及每个任务的 `describe()`。
   3. `support/mod.rs` 实现 `ScriptedSession`：按“命令正则 → (exit, stdout, stderr)”的规则表应答，未匹配的命令记录下来并返回可配置的默认值；支持在第 N 次调用时注入断连错误；支持记录 `write_file` 的路径与 sha256。再实现 `ScriptedPool`。
   4. `cli_output.rs`：对 `single.toml` 用 ScriptedPool 跑 `executor::run_with`，收集 `emit` 的事件，以当前 `main.rs` 的格式渲染成文本快照（`skip/done/ok/FAIL/-- stage`）；同时对 `event_json_line` 的输出做快照。
-  5. `event_contract.rs`：对 `Event` 的每个变体断言 JSON 字段集合，作为 `docs/v1.0-gates.md` §2 的契约测试。
+  5. `event_contract.rs`：对 `Event` 的每个变体断言 JSON 字段集合，作为 `docs/project/v1.0-gates.md` §2 的契约测试。
   6. 在 `justfile` 增加 `snapshots-review`：`cargo insta review`。
 - **测试**：本身就是测试。
 - **验收**：`just check` 通过；快照文件入库（`kurin/tests/snapshots/`）；故意改动 `plan.rs` 中某个任务的阶段时，快照测试会失败（在 PR 描述里说明你做过这个验证）。
@@ -776,7 +776,7 @@ flowchart LR
 
 - **依赖**：WP-65。
 - **步骤**：`web/e2e/` Playwright 套件对接真实 `kurin serve`（使用 tier1/tier2 环境，通过环境变量提供地址），覆盖 UI 文档原 M2 验收的全部场景：创建 → 状态 → 加 worker → 删 worker → 销毁；创建中关闭浏览器；kill 服务后 interrupted → 重试；Web 创建中 CLI 抢锁被拒；在数据库、事件、API 响应中搜索不到密码明文。
-- **验收**：维护者人工执行并在 `docs/progress.md` 记录结果。
+- **验收**：维护者人工执行并在 `docs/project/progress.md` 记录结果。
 
 ---
 
@@ -804,7 +804,7 @@ flowchart LR
 | 新依赖破坏 musl/zig 交叉编译 | 无法发版 | WP-30 spike 先行；每个引入新依赖的 PR 都要说明交叉编译情况 | WP-30 起 |
 | kube-rs 体积与编译时间 | 二进制变大、CI 变慢 | 只开一个 k8s-openapi 版本特性；记录体积；必要时让 TunnelApi 成为可选 feature | WP-17 |
 | 仓库对部分多架构 index 的兼容性 | registry 分发失败 | spike 验证，`--full-multiarch` 兜底 | WP-30、WP-36 |
-| e2e 只能人工执行 | 回归发现得晚 | 每个阶段结束时集中跑一次 tier0～3 全量（维护者），结果写入 `docs/progress.md` | 每个阶段 |
+| e2e 只能人工执行 | 回归发现得晚 | 每个阶段结束时集中跑一次 tier0～3 全量（维护者），结果写入 `docs/project/progress.md` | 每个阶段 |
 | v1alpha2 迁移让用户困惑 | 支持成本 | v1alpha1 长期可读；`config migrate` 保留注释；文档给出对照表 | WP-21 |
 | helm 接管旧方式安装的 CNI | 升级后网络中断 | WP-48 单独验证接管场景；失败时保留旧资源并报错，不做删除 | WP-48 |
 

@@ -12,7 +12,7 @@
 #   - delete cluster works the same way.
 #
 # Usage: e2e/tier1/nonroot.sh
-# (manual e2e — needs multipass; see docs/progress.md for recorded runs)
+# (manual e2e — needs multipass; see docs/project/progress.md for recorded runs)
 set -euo pipefail
 
 NAME=kurin-nonroot

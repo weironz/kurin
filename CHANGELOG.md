@@ -2,6 +2,10 @@
 
 All notable changes to kurin. Format follows Keep a Changelog; semver.
 
+## 0.5.0 - 2026-10-28
+
+首个包含 Web UI、OCI 包、addon、私有 registry/seed 与 OS 矩阵扩展的发布。
+
 ### Added (WP-77)
 - Opt-in seed registry (`[packages] delivery = "seed"`, v1alpha2 only): the
   control machine runs a read-only OCI distribution server against its local
@@ -673,7 +677,7 @@ All notable changes to kurin. Format follows Keep a Changelog; semver.
   change: plan snapshots, CLI output and `--json` events are byte-identical.
 - `--json` v1 events gain exactly one field, `ts` (UTC milliseconds from
   the v2 envelope). The frozen v1 field sets are otherwise unchanged
-  (docs/v1.0-gates.md §2 allows additive fields). The default terminal
+  (docs/project/v1.0-gates.md §2 allows additive fields). The default terminal
   output is byte-identical to the WP-00 snapshots: remote stdout/stderr is
   hidden unless `-vv`, and `--timestamps` is opt-in.
 - Mutating SSH commands are no longer transparently retried after a

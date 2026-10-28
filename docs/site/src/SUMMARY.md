@@ -72,9 +72,11 @@
 
 # 项目
 
-- [路线图](roadmap.md)
-- [v1.0 门槛](v1.0-gates.md)
-- [M1 规格](m1-spec.md)
-- [Wave 1 契约](wave1-contracts.md)
-- [Wave 2 契约](wave2-contracts.md)
-- [Tails 契约](tails-contracts.md)
+- [项目文档索引](project/README.md)
+- [路线图](project/roadmap.md)
+- [v1.0 门槛](project/v1.0-gates.md)
+- [M1 规格](project/m1-spec.md)
+- [W1 轨道](project/w1-tracks.md)
+- [Wave 1 契约](project/wave1-contracts.md)
+- [Wave 2 契约](project/wave2-contracts.md)
+- [Tails 契约](project/tails-contracts.md)

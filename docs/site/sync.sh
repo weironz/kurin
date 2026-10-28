@@ -18,9 +18,12 @@ for f in ../*.md; do
 done
 
 # 分类目录
-for d in getting-started guides reference operations docker development; do
+for d in getting-started guides reference operations docker development project; do
   mkdir -p "src/$d"
   for f in ../"$d"/*.md; do
+    case "$f" in
+      ../project/progress.md) continue ;;
+    esac
     cp "$f" "src/$d/"
   done
 done

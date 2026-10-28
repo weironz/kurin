@@ -100,4 +100,4 @@ ls bundle | sed 's/-[^-]*$//' | sort -u   # 应看到同名的 amd64 与 arm64 �
 - `create cluster` 全绿，`kubectl get nodes -o wide` 两个节点 Ready；
 - upgrade 路径不回归（`just tier2` 常规回归单架构即可）。
 
-记录结果到 `docs/progress.md`（R6）。
+记录结果到 `docs/project/progress.md`（R6）。

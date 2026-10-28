@@ -45,7 +45,7 @@ kurin package inspect file:///srv/kurin-base.tar.zst --manifest   # 完整 kurin
 kurin package inspect file:///srv/kurin-base.tar.zst --sbom       # SPDX SBOM
 
 kurin package verify file:///srv/kurin-base.tar.zst
-kurin package verify oci://ghcr.io/weironz/kurin/base:v0.4.0 \
+kurin package verify oci://ghcr.io/weironz/kurin/base:v0.5.0 \
   --key cosign.pub
 ```
 

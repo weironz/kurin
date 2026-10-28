@@ -46,4 +46,4 @@ pnpm test:e2e:real        # 未设置 KURIN_E2E_URL 时全部 skip
 
 ## 手工记录
 
-维护者执行后把结果写入 `docs/progress.md`（日期、tier、通过/失败项）。
+维护者执行后把结果写入 `docs/project/progress.md`（日期、tier、通过/失败项）。
