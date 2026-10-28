@@ -228,7 +228,7 @@ provisioner）。常用参数（受各 addon 的 values schema 校验）见
 | 字段 | 含义 |
 |---|---|
 | `base` | base 包 URI（`oci-layout://DIR` / `file://X.tar[.zst]`）；不写用内置清单。`oci://` 需先 `kurin package pull`（WP-33） |
-| `os` | 按 OS 的包 URI 列表（04 §3.4 `os` 包，`kurin package create os` 制作）；不写时从 base 包的 os 行按节点 facts（OS id + 版本前缀、架构）自动匹配。**离线运行必须能匹配**：任何一个节点匹配不到都在校验期报错（WP-38），错误信息列出每个候选行被拒绝的原因 |
+| `os` | 按 OS 的包 URI 列表（04 §3.4 `os` 包，`kurin package create os` 制作，目标见 `docs/command-matrix.md` 的 OS 支持矩阵：ubuntu-24.04 / ubuntu-22.04 / debian-12 / rocky-9 / rhel-9 / almalinux-9 / openeuler-24.03 / kylin-10）；不写时从 base 包的 os 行按节点 facts（OS id + 版本前缀、架构）自动匹配。**离线运行必须能匹配**：任何一个节点匹配不到都在校验期报错（WP-38），错误信息列出每个候选行被拒绝的原因 |
 | `delivery` | `auto`（默认；配置了 `[registry]` 时用 `registry`，否则 `preload`）\| `preload` \| `registry` |
 | `verify` | `none`（默认）\| `digest` \| `signature` |
 | `trusted-keys` | cosign 公钥路径列表；`verify = "signature"` 时必填且文件必须存在（加载期校验） |

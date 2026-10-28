@@ -1,3 +1,10 @@
+## WP-74：OS 扩展（2026-10-28）
+
+- **facts**：`OsFamily` 新增 `Euler`/`Kylin` 变体 + 新 `OsRelease` 支持矩阵枚举（Ubuntu 22.04/24.04、RHEL/Alma/Rocky 9、openEuler 24.03、Kylin V10），`ID_LIKE` 兜底；Kylin `VERSION_ID="V10"` 经 `normalize_version_id` 归一。
+- **os-baseline/kernel-deps**：kernel-deps 改为按探测到的族决定包名与包管理器（apt vs dnf），未分类 OS 明确报错；ubuntu/rocky 命令逐字节不变（单测钉死）。openEuler/麒麟保留独立 `ebtables` 包（RHEL 9 并入 `iptables-nft`）。
+- **OS 包**：`package create os` 新增 ubuntu-22.04、rhel-9（ubi9）、almalinux-9、openeuler-24.03、kylin-10 目标（镜像引用已在线核实）。麒麟无公共容器镜像：占位符 + `UnverifiedTargetImage` 校验期拒绝，不从未验证上游发货。
+- `just check` 全绿（1068 单测，含 22 个新增）。**待人工 e2e**：`just tier1-ubuntu2204` / `tier1-ubuntu2204-offline` / `tier1-alma` / `tier1-alma-offline` / `tier1-openeuler` / `tier1-openeuler-offline` / `tier1-kylin <qcow2>` / `tier1-kylin-offline <qcow2> <os-pkg>`（麒麟需本地准备镜像与 os 包，见脚本头）。
+
 ## WP-75：CIS 加固档位（2026-10-28）
 
 - **`[kubernetes] profile = "cis"`**（v1alpha2）：kubeadm init 渲染 apiserver CIS 参数（审计日志/策略、`--profiling=false`、NodeRestriction+PodSecurity、CIS cipher suites、Node,RBAC）与 kubelet 加固（`protectKernelDefaults`、匿名关闭、Webhook 授权、`readOnlyPort=0`、`streamingConnectionIdleTimeout=5m`、`eventRecordQPS=0`、CIS cipher suites、证书轮换）；写入 `/etc/kubernetes/audit-policy.yaml`（0600）与 `/var/log/kubernetes`；kubeconfig/kubelet config 统一 0600；`post/psa-labels` 给 `default` 命名空间打 restricted 三件套（不含 kube-system）。

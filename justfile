@@ -267,6 +267,52 @@ tier1-rocky-offline os="oci-layout:///tmp/kurin-os-rocky9":
         --target rocky-9 --arch amd64 -o "oci-layout:///tmp/kurin-os-rocky9"
     e2e/tier1/rocky-offline.sh "{{os}}"
 
+# ── WP-74 OS expansion (manual e2e; each needs multipass + network) ────
+
+# tier-1 ubuntu 22.04 (jammy)
+tier1-ubuntu2204:
+    e2e/tier1/ubuntu-22.04.sh
+
+# tier-1 ubuntu 22.04 offline: base + ubuntu-22.04 os package
+tier1-ubuntu2204-offline os="oci-layout:///tmp/kurin-os-ubuntu2204":
+    CARGO_TARGET_DIR=target/os cargo build -p kurin
+    test -d /tmp/kurin-os-ubuntu2204 || target/os/debug/kurin package create os \
+        --target ubuntu-22.04 --arch amd64 -o "oci-layout:///tmp/kurin-os-ubuntu2204"
+    e2e/tier1/ubuntu-22.04-offline.sh "{{os}}"
+
+# tier-1 almalinux 9
+tier1-alma:
+    e2e/tier1/alma.sh
+
+# tier-1 almalinux 9 offline: base + almalinux-9 os package
+tier1-alma-offline os="oci-layout:///tmp/kurin-os-alma9":
+    CARGO_TARGET_DIR=target/os cargo build -p kurin
+    test -d /tmp/kurin-os-alma9 || target/os/debug/kurin package create os \
+        --target almalinux-9 --arch amd64 -o "oci-layout:///tmp/kurin-os-alma9"
+    e2e/tier1/alma-offline.sh "{{os}}"
+
+# tier-1 openEuler 24.03
+tier1-openeuler:
+    e2e/tier1/openeuler.sh
+
+# tier-1 openEuler 24.03 offline: base + openeuler-24.03 os package
+tier1-openeuler-offline os="oci-layout:///tmp/kurin-os-openeuler":
+    CARGO_TARGET_DIR=target/os cargo build -p kurin
+    test -d /tmp/kurin-os-openeuler || target/os/debug/kurin package create os \
+        --target openeuler-24.03 --arch amd64 -o "oci-layout:///tmp/kurin-os-openeuler"
+    e2e/tier1/openeuler-offline.sh "{{os}}"
+
+# tier-1 Kylin V10 — MANUAL: needs a locally prepared qcow2 (see the
+# script header); no public Kylin image exists to download.
+tier1-kylin img:
+    e2e/tier1/kylin.sh "{{img}}"
+
+# tier-1 Kylin V10 offline — MANUAL: needs the locally built kylin-10
+# os package (the target refuses to build until a real container image
+# is pinned; see the script header).
+tier1-kylin-offline img os="oci-layout:///tmp/kurin-os-kylin":
+    e2e/tier1/kylin-offline.sh "{{img}}" "{{os}}"
+
 # tier-3 k3s × external-endpoint (3 servers behind a script-managed haproxy)
 tier3-k3s-external-endpoint:
     e2e/tier3/k3s-external-endpoint.sh

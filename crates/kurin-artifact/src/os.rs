@@ -1,7 +1,7 @@
-//! OS dependency packages (WP-38, 04 §3.4 `os` kind): the distro
-//! packages node tasks install when they cannot ship portable static
-//! binaries — conntrack, socat, ebtables, ipset, ipvsadm, haproxy,
-//! keepalived and the nfs utilities.
+//! OS dependency packages (WP-38, 04 §3.4 `os` kind; targets widened in
+//! WP-74): the distro packages node tasks install when they cannot ship
+//! portable static binaries — conntrack, socat, ebtables, ipset,
+//! ipvsadm, haproxy, keepalived and the nfs utilities.
 //!
 //! Two halves:
 //!
@@ -9,16 +9,19 @@
 //!   for one target OS/arch inside a container of that distribution
 //!   (docker or podman from the build host; arm64 runs under qemu),
 //!   generates the repository metadata (`dpkg-scanpackages` for deb,
-//!   `createrepo_c` for rpm) and packs the whole repository into a
-//!   kurin OCI package whose `kurin-package.json` carries one
-//!   [`PackageOs`] row per arch.
+//!   `createrepo_c` for the rpm families) and packs the whole
+//!   repository into a kurin OCI package whose `kurin-package.json`
+//!   carries one [`PackageOs`] row per arch. Targets cover the WP-74
+//!   matrix — ubuntu 22.04/24.04, debian 12, rocky/rhel/alma 9,
+//!   openEuler 24.03, Kylin V10 — with the caveat that kylin-10 has no
+//!   verifiable public container image and is refused until one is
+//!   pinned.
 //! * **Node side** — [`resolve`] picks the repository matching a node's
 //!   facts (OS id + version prefix, arch) from the configured `os`
 //!   packages (and any os rows the base package carries) and hands the
 //!   repo tar to the install tasks; the upload/install commands live in
 //!   `kurin-components::tasks::os_repo` (apt `[trusted=yes] file:`,
 //!   dnf `--repofrompath`).
-
 use std::io::Seek;
 use std::path::{Path, PathBuf};
 
@@ -37,9 +40,26 @@ use crate::preload::open_package;
 /// label and the container image the closure is downloaded in.
 const TARGETS: &[(&str, &str, OsFamily)] = &[
     ("ubuntu-24.04", "ubuntu:24.04", OsFamily::Deb),
+    ("ubuntu-22.04", "ubuntu:22.04", OsFamily::Deb),
     ("debian-12", "debian:12", OsFamily::Deb),
     ("rocky-9", "rockylinux:9", OsFamily::Rpm),
+    ("rhel-9", "redhat/ubi9", OsFamily::Rpm),
+    ("almalinux-9", "almalinux:9", OsFamily::Rpm),
+    (
+        "openeuler-24.03",
+        "openeuler/openeuler:24.03",
+        OsFamily::Euler,
+    ),
+    // Kylin V10 ships its images through the vendor portal, with no
+    // public registry to verify against: the empty string is the clearly
+    // marked placeholder, and create_os refuses to build it rather
+    // than pinning an unverifiable upstream.
+    ("kylin-10", KYLIN_IMAGE_PLACEHOLDER, OsFamily::Kylin),
 ];
+
+/// The kylin-10 target's placeholder image reference: no public Kylin
+/// V10 container image exists to pin, so nothing honest can go here.
+const KYLIN_IMAGE_PLACEHOLDER: &str = "";
 
 // ---------------------------------------------------------------------------
 // targets and package names
@@ -54,7 +74,8 @@ pub struct OsTarget {
     pub version: String,
     /// Packaging family of the target.
     pub family: OsFamily,
-    /// The container image the closure is downloaded in.
+    /// The container image the closure is downloaded in; empty for the
+    /// kylin-10 placeholder (see [`KYLIN_IMAGE_PLACEHOLDER`]).
     image: &'static str,
 }
 
@@ -112,16 +133,34 @@ pub const LB_TOOLS: &[&str] = &["haproxy", "keepalived"];
 /// The distro package name of one node tool. `nfs` is the storage
 /// helper (deb `nfs-common`, rpm `nfs-utils`); unknown tools pass
 /// through unchanged so an unrecognized family stays usable.
+///
+/// The rpm families differ in one place (WP-74): RHEL 9 and its
+/// rocky/alma rebuilds folded the `ebtables` binary into
+/// `iptables-nft`, while openEuler and Kylin still ship the standalone
+/// `ebtables` package.
 pub fn package_name(family: OsFamily, tool: &str) -> String {
-    match (family, tool) {
-        (OsFamily::Rpm, "conntrack") => "conntrack-tools".into(),
-        // RHEL9 has no separate ebtables package: the binary ships with
-        // iptables-nft (nf_tables compat).
-        (OsFamily::Rpm, "ebtables") => "iptables-nft".into(),
-        (OsFamily::Rpm, "nfs") => "nfs-utils".into(),
-        (OsFamily::Deb, "nfs") => "nfs-common".into(),
-        (_, other) => other.to_string(),
-    }
+    let mapped = match family {
+        OsFamily::Deb => match tool {
+            "nfs" => "nfs-common",
+            other => other,
+        },
+        OsFamily::Rpm => match tool {
+            "conntrack" => "conntrack-tools",
+            // RHEL9 has no separate ebtables package: the binary ships
+            // with iptables-nft (nf_tables compat).
+            "ebtables" => "iptables-nft",
+            "nfs" => "nfs-utils",
+            other => other,
+        },
+        OsFamily::Euler | OsFamily::Kylin => match tool {
+            "conntrack" => "conntrack-tools",
+            "ebtables" => "ebtables",
+            "nfs" => "nfs-utils",
+            other => other,
+        },
+        OsFamily::Other => tool,
+    };
+    mapped.to_string()
 }
 
 /// The full dependency closure an `os` package downloads (04 §3.4):
@@ -142,7 +181,9 @@ pub fn closure(family: OsFamily) -> Vec<String> {
 /// Does one `kurin-package.json` os row (`rocky-9`) describe the node's
 /// probed OS? The id must match and the row's version must equal the
 /// node's `VERSION_ID` or be a major-prefix of it (`rocky-9` matches a
-/// `9.4` node, because rpm point releases share a repository).
+/// `9.4` node, because rpm point releases share a repository). Kylin's
+/// `V10` matches a `kylin-10` row through the same normalization the
+/// release matrix uses.
 pub fn os_row_matches(row: &str, os: &OsInfo) -> bool {
     if os.id.is_empty() {
         return false; // OS not probed (synthetic facts)
@@ -153,7 +194,10 @@ pub fn os_row_matches(row: &str, os: &OsInfo) -> bool {
     if !id.eq_ignore_ascii_case(&os.id) {
         return false;
     }
-    version_matches(version, &os.version_id)
+    version_matches(
+        kurin_core::facts::normalize_version_id(version),
+        kurin_core::facts::normalize_version_id(&os.version_id),
+    )
 }
 
 /// `row` equals `node`, or is a dot-boundary prefix of it (`9` matches
@@ -373,7 +417,9 @@ pub fn container_script(target: &OsTarget) -> String {
              cd /work/repo\n\
              dpkg-scanpackages -m . > Packages\n"
         ),
-        OsFamily::Rpm => format!(
+        // openEuler and Kylin drive the same dnf toolchain as the RHEL
+        // lineage; only the package names differ (via `packages`).
+        OsFamily::Rpm | OsFamily::Euler | OsFamily::Kylin => format!(
             "set -eu\n\
              dnf install -y -q dnf-plugins-core createrepo_c\n\
              dnf --setopt=install_weak_deps=False download --resolve --alldeps \\\n\
@@ -469,8 +515,9 @@ async fn run_container(
 ///
 /// # Errors
 ///
-/// [`OsError`] when no container engine exists, the container run
-/// fails, or the package cannot be assembled.
+/// [`OsError`] when the target has no verified container image, no
+/// container engine exists, the container run fails, or the package
+/// cannot be assembled.
 pub async fn create_os(
     store: &ArtifactStore,
     opts: &OsPackage,
@@ -478,6 +525,14 @@ pub async fn create_os(
 ) -> Result<PackageReport, OsError> {
     if opts.arches.is_empty() {
         return Err(OsError::Package(PackageError::NoArch));
+    }
+    if opts.target.container_image().is_empty() {
+        return Err(OsError::UnverifiedTargetImage {
+            target: opts.target.label(),
+            detail: "no public Kylin V10 container image exists to pin (ISOs ship through the \
+                      vendor portal); import one locally and point TARGETS at it before building"
+                .to_string(),
+        });
     }
     let engine = detect_container_engine().await?;
     let work = tempfile::tempdir()?;
@@ -513,7 +568,9 @@ fn assemble_builder(opts: &OsPackage) -> PackageBuilder {
 fn validate_repo_dir(target: &OsTarget, repo: &Path) -> Result<usize, OsError> {
     let (extension, metadata) = match target.family {
         OsFamily::Deb => ("deb", repo.join("Packages")),
-        OsFamily::Rpm => ("rpm", repo.join("repodata")),
+        // openEuler and Kylin repositories are dnf/createrepo_c ones,
+        // byte-for-byte the same layout as the RHEL lineage.
+        OsFamily::Rpm | OsFamily::Euler | OsFamily::Kylin => ("rpm", repo.join("repodata")),
         OsFamily::Other => {
             return Err(OsError::UnsupportedTarget {
                 value: target.label(),
@@ -627,6 +684,10 @@ pub enum OsError {
     /// The target is not one of [`SUPPORTED_TARGETS`].
     #[error("unsupported os target {value:?} (supported: {supported})")]
     UnsupportedTarget { value: String, supported: String },
+    /// The target's container image is the placeholder with no
+    /// verifiable upstream (Kylin V10: no public registry image).
+    #[error("target {target} has no verified container image: {detail}")]
+    UnverifiedTargetImage { target: String, detail: String },
     /// Neither docker nor podman is installed on the build host.
     #[error("no container engine found: install docker or podman on the build host")]
     NoContainerEngine,
@@ -675,13 +736,56 @@ mod tests {
         let rocky = OsTarget::parse("rocky-9").unwrap();
         assert_eq!(rocky.container_image(), "rockylinux:9");
         assert_eq!(rocky.family, OsFamily::Rpm);
-        assert_eq!(supported_targets().len(), 3);
+        assert_eq!(supported_targets().len(), 8);
+
+        // The WP-74 additions: container image + family each.
+        let ubuntu22 = OsTarget::parse("ubuntu-22.04").unwrap();
+        assert_eq!(ubuntu22.container_image(), "ubuntu:22.04");
+        assert_eq!(ubuntu22.family, OsFamily::Deb);
+        let rhel = OsTarget::parse("rhel-9").unwrap();
+        assert_eq!(rhel.container_image(), "redhat/ubi9");
+        assert_eq!(rhel.family, OsFamily::Rpm);
+        let alma = OsTarget::parse("almalinux-9").unwrap();
+        assert_eq!(alma.container_image(), "almalinux:9");
+        assert_eq!(alma.family, OsFamily::Rpm);
+        let euler = OsTarget::parse("openeuler-24.03").unwrap();
+        assert_eq!(euler.container_image(), "openeuler/openeuler:24.03");
+        assert_eq!(euler.family, OsFamily::Euler);
+        // Kylin's image is the clearly marked placeholder.
+        let kylin = OsTarget::parse("kylin-10").unwrap();
+        assert_eq!(kylin.container_image(), "");
+        assert_eq!(kylin.family, OsFamily::Kylin);
     }
 
     #[test]
     fn unknown_targets_list_the_supported_ones() {
         let err = OsTarget::parse("alpine-3.20").unwrap_err();
-        assert!(err.to_string().contains("ubuntu-24.04, debian-12, rocky-9"));
+        assert!(
+            err.to_string().contains(
+                "ubuntu-24.04, ubuntu-22.04, debian-12, rocky-9, rhel-9, almalinux-9, \
+                 openeuler-24.03, kylin-10"
+            ),
+            "{err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn kylin_target_is_refused_before_any_container_runs() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = tempfile::tempdir().unwrap();
+        let store = ArtifactStore::new(cache.path());
+        let opts = OsPackage {
+            target: OsTarget::parse("kylin-10").unwrap(),
+            arches: vec![Arch::Amd64],
+            version: "2026.10".into(),
+        };
+        let out = PackageOutput::Layout(dir.path().join("x"));
+        let err = create_os(&store, &opts, &out).await.unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("kylin-10 has no verified container image"),
+            "{err}"
+        );
     }
 
     #[test]
@@ -712,6 +816,26 @@ mod tests {
                 "nfs-utils"
             ]
         );
+        // openEuler and Kylin keep the standalone ebtables package.
+        for family in [OsFamily::Euler, OsFamily::Kylin] {
+            assert_eq!(
+                closure(family),
+                [
+                    "conntrack-tools",
+                    "socat",
+                    "ebtables",
+                    "ipset",
+                    "ipvsadm",
+                    "haproxy",
+                    "keepalived",
+                    "nfs-utils"
+                ],
+                "{family:?}"
+            );
+        }
+        // Unknown families pass tool names through unchanged.
+        assert_eq!(closure(OsFamily::Other)[0], "conntrack");
+        assert_eq!(closure(OsFamily::Other).last().unwrap(), "nfs");
     }
 
     #[test]
@@ -724,6 +848,28 @@ mod tests {
         assert!(!os_row_matches("ubuntu-24.04", &info("ubuntu", "24.10")));
         // no probe, no match (synthetic facts)
         assert!(!os_row_matches("rocky-9", &info("", "")));
+    }
+
+    #[test]
+    fn rows_match_the_wp74_targets() {
+        assert!(os_row_matches("ubuntu-22.04", &info("ubuntu", "22.04")));
+        assert!(os_row_matches("rhel-9", &info("rhel", "9.6")));
+        assert!(os_row_matches("almalinux-9", &info("almalinux", "9.5")));
+        // Kylin's VERSION_ID is `V10`; the row normalizes to `10`.
+        assert!(os_row_matches("kylin-10", &info("kylin", "V10")));
+        assert!(!os_row_matches("kylin-10", &info("kylin", "V11")));
+        // openEuler's row matches the probed id case-insensitively.
+        assert!(os_row_matches(
+            "openeuler-24.03",
+            &info("openEuler", "24.03")
+        ));
+        assert!(!os_row_matches(
+            "openeuler-24.03",
+            &info("openEuler", "22.03")
+        ));
+        // An alma-9 row never serves a rocky node (same rpm lineage,
+        // different repository).
+        assert!(!os_row_matches("almalinux-9", &info("rocky", "9.4")));
     }
 
     #[test]
@@ -743,6 +889,23 @@ mod tests {
     fn rpm_container_script_is_deterministic() {
         let script = container_script(&OsTarget::parse("rocky-9").unwrap());
         insta::assert_snapshot!(script);
+    }
+
+    #[test]
+    fn euler_container_script_is_deterministic() {
+        // Same dnf toolchain as rocky, but ebtables (not iptables-nft)
+        // in the closure.
+        let script = container_script(&OsTarget::parse("openeuler-24.03").unwrap());
+        insta::assert_snapshot!(script);
+    }
+
+    #[test]
+    fn kylin_container_script_matches_the_rpm_one() {
+        // Kylin shares the dnf script shape; only the placeholder
+        // image keeps it from building.
+        let kylin = container_script(&OsTarget::parse("kylin-10").unwrap());
+        let euler = container_script(&OsTarget::parse("openeuler-24.03").unwrap());
+        assert_eq!(kylin, euler);
     }
 
     #[test]

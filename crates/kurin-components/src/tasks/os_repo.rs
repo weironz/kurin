@@ -137,7 +137,9 @@ impl NodeOsRepo {
                     packages = packages.join(" "),
                 ));
             }
-            OsFamily::Rpm => {
+            // openEuler and Kylin drive the same dnf repositories the
+            // RHEL lineage does (WP-74).
+            OsFamily::Rpm | OsFamily::Euler | OsFamily::Kylin => {
                 script.push_str(&format!(
                     "dnf --disablerepo='*' --enablerepo={DNF_REPO_ID} \
                      --repofrompath={DNF_REPO_ID},file://{dir}/repo \
@@ -224,6 +226,7 @@ mod tests {
     fn rpm_install_script_uses_repofrompath() {
         let script = repo(OsFamily::Rpm, "aabbccddeeff00112233")
             .install_script(&["haproxy".into(), "keepalived".into()]);
+        // the repo lands in the content-addressed directory
         assert!(
             script.contains("--repofrompath=kurin-os,file:///opt/kurin/repo/aabbccddeeff0011/repo"),
             "{script}"
@@ -241,6 +244,31 @@ mod tests {
         // so none is removed
         assert!(!script.contains("rm -f"), "{script}");
         insta::assert_snapshot!(script);
+    }
+
+    #[test]
+    fn euler_and_kylin_install_like_the_rpm_family() {
+        // WP-74: openEuler and Kylin nodes install from the same dnf
+        // repository layout (their os packages only differ in the
+        // package names the closure downloaded).
+        for family in [OsFamily::Euler, OsFamily::Kylin] {
+            let script = repo(family, "aabbccddeeff00112233")
+                .install_script(&["conntrack-tools".into(), "ebtables".into()]);
+            assert!(
+                script.contains("dnf --disablerepo='*' --enablerepo=kurin-os"),
+                "{family:?}: {script}"
+            );
+            assert!(
+                script.contains("install -y -q conntrack-tools ebtables"),
+                "{family:?}: {script}"
+            );
+            assert!(
+                script.contains(
+                    "--repofrompath=kurin-os,file:///opt/kurin/repo/aabbccddeeff0011/repo"
+                ),
+                "{family:?}: {script}"
+            );
+        }
     }
 
     #[test]

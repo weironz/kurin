@@ -1,12 +1,13 @@
 //! prepare/kernel-deps: kernel-space tools kubeadm requires that cannot be
 //! shipped as portable static binaries (conntrack, socat, ebtables, ipset,
-//! ipvsadm). Online: apt/dnf fallback (spec'd escape hatch for kernel deps);
-//! offline runs install from the matched os package's repository tar
-//! uploaded to `/opt/kurin/repo/<id>` (WP-38, 04 §3.4).
+//! ipvsadm). Online: apt/dnf by OS family (WP-74; spec'd escape hatch for
+//! kernel deps); offline runs install from the matched os package's
+//! repository tar uploaded to `/opt/kurin/repo/<id>` (WP-38, 04 §3.4).
 
 use std::sync::Arc;
 
 use kurin_config::Node;
+use kurin_core::facts::OsFamily;
 use miette::Result;
 
 use kurin_core::engine::{Drift, Outcome, Session, Stage, Task};
@@ -80,15 +81,18 @@ impl Task for KernelDeps {
             }
         }
 
+        // The probed OS drives both paths: package names per family, and
+        // (online) the package manager itself.
+        let os = self
+            .run
+            .facts_snapshot()
+            .get(&self.node.name)
+            .map(|f| f.os.clone())
+            .unwrap_or_default();
+
         // Offline runs install from the os package's repository (WP-38):
         // resolve the node's match, upload the repo tar, install from it.
         if self.run.sources.is_offline() {
-            let os = self
-                .run
-                .facts_snapshot()
-                .get(&self.node.name)
-                .map(|f| f.os.clone())
-                .unwrap_or_default();
             let repo = NodeOsRepo::resolve(&self.run, &self.node, &os).await?;
             let names: Vec<String> = pkgs
                 .iter()
@@ -97,39 +101,32 @@ impl Task for KernelDeps {
             return repo.install(session, &names).await;
         }
 
-        // Binary-name -> package-name per family: rpm distros ship
-        // conntrack as conntrack-tools and ebtables via iptables-ebtables.
-        let deb: Vec<String> = pkgs.iter().map(|t| (*t).to_string()).collect();
-        let rpm: Vec<String> = pkgs
+        // Online (WP-74): the family decides the package names and the
+        // manager — deb names via apt for the debian lineage, the
+        // family's rpm names via dnf otherwise. A node whose OS did not
+        // classify fails with a clear error instead of guessing.
+        let names: Vec<String> = pkgs
             .iter()
-            .map(|t| match *t {
-                "conntrack" => "conntrack-tools".to_string(),
-                // RHEL9+ has no separate ebtables package: the binary is
-                // shipped by iptables-nft (nf_tables compat).
-                "ebtables" => "iptables-nft".to_string(),
-                other => other.to_string(),
-            })
+            .map(|t| kurin_artifact::os::package_name(os.family, t))
             .collect();
-        let mut script = String::from("set -e\n");
-        if session.exec("command -v apt-get").await?.ok() {
-            script.push_str(&format!(
-                "DEBIAN_FRONTEND=noninteractive apt-get update -qq && \
-                 DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends {}\n",
-                deb.join(" ")
-            ));
-        } else if session.exec("command -v dnf || command -v yum").await?.ok() {
-            script.push_str(&format!("dnf install -y -q {}\n", rpm.join(" ")));
-        } else {
-            let missing_required = pkgs.iter().any(|p| REQUIRED.contains(p));
-            if missing_required {
-                return Err(miette::miette!(
-                    "no apt-get/dnf on {} and required kernel tools missing ({})",
-                    self.node.name,
-                    pkgs.join(" ")
-                ));
+        let Some(script) = online_install_script(os.family, &names) else {
+            if !pkgs.iter().any(|p| REQUIRED.contains(p)) {
+                // Only recommended tools are missing and nothing can
+                // install them: converge on what the node already has.
+                return Ok(Outcome::Verified);
             }
-            return Ok(Outcome::Verified);
-        }
+            let os_label = if os.id.is_empty() {
+                "operating system not probed".to_string()
+            } else {
+                format!("unsupported distribution {}", os.label())
+            };
+            return Err(miette::miette!(
+                "cannot install kernel tools on {} ({}): no apt/dnf family; \
+                 supported: ubuntu/debian, rocky/rhel/alma 9, openEuler 24.03, Kylin V10",
+                self.node.name,
+                os_label
+            ));
+        };
         let out = session.exec(&script).await?;
         if out.ok() {
             Ok(Outcome::Verified)
@@ -141,5 +138,121 @@ impl Task for KernelDeps {
                 out.stderr.lines().last().unwrap_or("")
             ))
         }
+    }
+}
+
+/// The online install script for one family's package names: apt-get for
+/// the debian lineage, dnf for every rpm-family distro (openEuler and
+/// Kylin included). `None` for [`OsFamily::Other`] — no package manager
+/// kurin knows how to drive.
+///
+/// The ubuntu/rocky scripts are byte-identical to the pre-WP-74 ones:
+/// same flags, same ordering — only the name mapping became
+/// family-driven ([`kurin_artifact::os::package_name`]).
+fn online_install_script(family: OsFamily, names: &[String]) -> Option<String> {
+    match family {
+        OsFamily::Deb => Some(format!(
+            "set -e\n\
+             DEBIAN_FRONTEND=noninteractive apt-get update -qq && \
+             DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends {}\n",
+            names.join(" ")
+        )),
+        // openEuler and Kylin drive the same dnf as the RHEL lineage.
+        OsFamily::Rpm | OsFamily::Euler | OsFamily::Kylin => {
+            Some(format!("set -e\ndnf install -y -q {}\n", names.join(" ")))
+        }
+        OsFamily::Other => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn names(tools: &[&str]) -> Vec<String> {
+        tools.iter().map(|t| (*t).to_string()).collect()
+    }
+
+    #[test]
+    fn deb_script_matches_the_legacy_ubuntu_one() {
+        // Byte-for-byte the script the runtime probe used to build for
+        // apt nodes (the WP-00 behavior baseline).
+        let script = online_install_script(
+            OsFamily::Deb,
+            &names(&["conntrack", "socat", "ebtables", "ipset", "ipvsadm"]),
+        )
+        .unwrap();
+        assert_eq!(
+            script,
+            "set -e\n\
+             DEBIAN_FRONTEND=noninteractive apt-get update -qq && \
+             DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
+             conntrack socat ebtables ipset ipvsadm\n"
+        );
+    }
+
+    #[test]
+    fn rpm_script_matches_the_legacy_rocky_one() {
+        let script = online_install_script(
+            OsFamily::Rpm,
+            &names(&[
+                "conntrack-tools",
+                "socat",
+                "iptables-nft",
+                "ipset",
+                "ipvsadm",
+            ]),
+        )
+        .unwrap();
+        assert_eq!(
+            script,
+            "set -e\ndnf install -y -q conntrack-tools socat iptables-nft ipset ipvsadm\n"
+        );
+    }
+
+    #[test]
+    fn euler_and_kylin_use_dnf_with_their_own_names() {
+        for family in [OsFamily::Euler, OsFamily::Kylin] {
+            let script =
+                online_install_script(family, &names(&["conntrack-tools", "socat", "ebtables"]))
+                    .unwrap();
+            assert_eq!(
+                script, "set -e\ndnf install -y -q conntrack-tools socat ebtables\n",
+                "{family:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn unknown_family_has_no_install_script() {
+        assert!(online_install_script(OsFamily::Other, &names(&["conntrack"])).is_none());
+    }
+
+    #[test]
+    fn family_names_flow_through_the_package_mapping() {
+        // The names the script carries come from the same mapping the
+        // offline path uses, so online and offline converge on the same
+        // packages per family.
+        let tools = ["conntrack", "socat", "ebtables", "nfs"];
+        let mapped = |family: OsFamily| {
+            tools
+                .iter()
+                .map(|t| kurin_artifact::os::package_name(family, t))
+                .collect::<Vec<_>>()
+                .join(" ")
+        };
+        assert_eq!(mapped(OsFamily::Deb), "conntrack socat ebtables nfs-common");
+        assert_eq!(
+            mapped(OsFamily::Rpm),
+            "conntrack-tools socat iptables-nft nfs-utils"
+        );
+        assert_eq!(
+            mapped(OsFamily::Euler),
+            "conntrack-tools socat ebtables nfs-utils"
+        );
+        assert_eq!(
+            mapped(OsFamily::Kylin),
+            "conntrack-tools socat ebtables nfs-utils"
+        );
     }
 }

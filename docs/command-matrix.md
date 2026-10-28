@@ -2,6 +2,36 @@
 
 每一列是一个配置维度。`✅` = 真机 e2e 验证过；`❌ 拒绝` = 配置/命令校验时明确报错（诚实失败，不静默腐蚀）。「create cluster」表由 `just docs-matrix` 从 `kurin capabilities --json`（组件注册表聚合）生成：支持/拒绝列为生成器所有，e2e 验证列手工维护。
 
+## 操作系统 × 包家族（WP-74）
+
+`discover` 读 `/etc/os-release`（`ID` + `VERSION_ID`，`ID_LIKE` 兜底）分类出
+`OsFamily`（决定 os-baseline / kernel-deps / OS 包的包名与包管理器）和
+`OsRelease`（支持矩阵条目）。未知发行版族为 `Other`：需要包管理器的任务
+在校验期/执行期明确报错，不会静默猜测。
+
+| OS | `ID` / `VERSION_ID` | 家族 | 包管理器 | os 包目标 | tier1 e2e |
+|---|---|---|---|---|---|
+| Ubuntu 24.04 LTS | `ubuntu` / `24.04` | deb | apt-get | `ubuntu-24.04` | ✅ `just tier1` |
+| Ubuntu 22.04 LTS | `ubuntu` / `22.04` | deb | apt-get | `ubuntu-22.04` | 人工：`just tier1-ubuntu2204` |
+| Debian 12 | `debian` / `12` | deb | apt-get | `debian-12` | ✅（含离线） |
+| Rocky Linux 9 | `rocky` / `9.x` | rpm | dnf | `rocky-9` | ✅ `just tier1-rocky*` |
+| RHEL 9 | `rhel` / `9.x` | rpm | dnf | `rhel-9`（`redhat/ubi9` 构建） | 人工 |
+| AlmaLinux 9 | `almalinux` / `9.x` | rpm | dnf | `almalinux-9` | 人工：`just tier1-alma*` |
+| openEuler 24.03 LTS | `openEuler` / `24.03` | euler | dnf | `openeuler-24.03` | 人工：`just tier1-openeuler*` |
+| 麒麟 V10（高级服务器） | `kylin` / `V10` | kylin | dnf | `kylin-10`（见下） | 人工：`just tier1-kylin*` |
+
+- 家族差异只有一处包名：RHEL 9（含 rocky/alma 重建版）把 `ebtables` 并进了
+  `iptables-nft`，openEuler 与麒麟仍提供独立的 `ebtables` 包（`conntrack` →
+  `conntrack-tools`、`nfs` → deb `nfs-common` / rpm `nfs-utils` 不变）。
+- `kylin-10` 目标没有可验证的公共容器镜像（麒麟 ISO 走厂商门户）：
+  `KYLIN_IMAGE_PLACEHOLDER` 是明确标注的占位，`package create os` 在本地
+  导入镜像并 pin 之前直接拒绝构建（`UnverifiedTargetImage`），不会带一个
+  无法核实的上游摘要发版。离线 e2e（`kylin-offline.sh`）同为手动。
+- Kylin 的 `VERSION_ID="V10"` 带前缀 `V`：匹配与识别先经
+  `normalize_version_id` 归一（`V10` → `10`），行标签是 `kylin-10`。
+- precheck 的 `os` 检查按小写后的 `ID` 匹配（openEuler 写
+  `ID="openEuler"`，POSIX `case` 区分大小写），未列出的发行报告 `warn`。
+
 ## create cluster
 <!-- docs-matrix:begin -->
 <!-- 由 `just docs-matrix` 生成：支持/拒绝列来自 kurin capabilities --json

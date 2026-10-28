@@ -20,24 +20,33 @@ use crate::arch::Arch;
 pub struct OsInfo {
     /// `ID` (e.g. `ubuntu`, `openEuler`); empty when unknown.
     pub id: String,
-    /// `VERSION_ID` (e.g. `24.04`, `9.4`); empty when unknown.
+    /// `VERSION_ID` as reported (e.g. `24.04`, `9.4`, Kylin's `V10`);
+    /// empty when unknown.
     pub version_id: String,
     /// Packaging family, classified from `ID` + `ID_LIKE`.
     pub family: OsFamily,
+    /// The recognized release from the support matrix (WP-74): a known
+    /// id+version pair, or `Other` when only the family classifies.
+    pub release: OsRelease,
     /// `PRETTY_NAME`; empty when unknown.
     pub pretty: String,
 }
 
 impl OsInfo {
     /// Assemble from the probed fields (`ID`, `VERSION_ID`, `ID_LIKE`,
-    /// `PRETTY_NAME`), classifying the packaging family. Values arrive
-    /// unquoted (the discover script sources the file first); stray
-    /// quotes are tolerated so hand-written fixtures work too.
+    /// `PRETTY_NAME`), classifying the packaging family and the
+    /// recognized release. Values arrive unquoted (the discover script
+    /// sources the file first); stray quotes are tolerated so
+    /// hand-written fixtures work too.
     pub fn from_release(id: &str, version_id: &str, id_like: &str, pretty: &str) -> OsInfo {
+        let id = unquote(id).to_string();
+        let version_id = unquote(version_id).to_string();
+        let id_like = unquote(id_like).to_string();
         OsInfo {
-            id: unquote(id).to_string(),
-            version_id: unquote(version_id).to_string(),
-            family: OsFamily::classify(id, id_like),
+            family: OsFamily::classify(&id, &id_like),
+            release: OsRelease::classify(&id, &version_id, &id_like),
+            id,
+            version_id,
             pretty: unquote(pretty).to_string(),
         }
     }
@@ -56,18 +65,27 @@ impl OsInfo {
 }
 
 /// `/etc/os-release` packaging family, deciding deb vs rpm package
-/// names for the kernel deps and os-baseline tasks.
+/// names for the kernel deps and os-baseline tasks. openEuler and
+/// Kylin are rpm distros with dnf, but their package sets differ from
+/// the RHEL 9 lineage (both still ship the standalone `ebtables`
+/// package RHEL 9 folded into iptables-nft), so they carry dedicated
+/// variants instead of riding [`OsFamily::Rpm`] (WP-74).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum OsFamily {
     #[default]
     Other,
     Deb,
     Rpm,
+    /// openEuler (`ID=openEuler`), 24.03 LTS.
+    Euler,
+    /// Kylin (`ID=kylin`, `VERSION_ID=V10`) — the Advanced Server.
+    Kylin,
 }
 
 impl OsFamily {
     /// The family declared by `ID` (or, failing an exact hit, by any
-    /// `ID_LIKE` token). Mirrors the distribution list precheck accepts.
+    /// `ID_LIKE` token). Mirrors the distribution list precheck
+    /// accepts.
     fn classify(id: &str, id_like: &str) -> OsFamily {
         // openEuler writes `ID="openEuler"` (capital E); compare
         // case-insensitively so real os-release values classify.
@@ -78,13 +96,92 @@ impl OsFamily {
         for token in tokens {
             match token.as_str() {
                 "ubuntu" | "debian" => return OsFamily::Deb,
-                "rocky" | "centos" | "rhel" | "fedora" | "almalinux" | "openeuler" | "opensuse"
-                | "sles" => return OsFamily::Rpm,
+                "rocky" | "centos" | "rhel" | "fedora" | "almalinux" | "opensuse" | "sles" => {
+                    return OsFamily::Rpm
+                }
+                "openeuler" => return OsFamily::Euler,
+                "kylin" => return OsFamily::Kylin,
                 _ => {}
             }
         }
         OsFamily::Other
     }
+}
+
+/// A release from the OS support matrix (WP-74): the id + version
+/// pairs kurin's tier-1 tracks cover. Everything else — including a
+/// known id at an untested version, like ubuntu 24.10 — is `Other`:
+/// the packaging family still classifies, so installs keep working;
+/// only the "recognized release" surface reports `Other`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum OsRelease {
+    #[default]
+    Other,
+    /// Ubuntu 22.04 LTS (jammy).
+    Ubuntu22,
+    /// Ubuntu 24.04 LTS (noble).
+    Ubuntu24,
+    /// RHEL 9 (the EUS lineage; `redhat/ubi9` builds its os package).
+    Rhel9,
+    /// AlmaLinux 9.
+    Alma9,
+    /// Rocky Linux 9.
+    Rocky9,
+    /// openEuler 24.03 LTS.
+    OpenEuler2403,
+    /// Kylin Linux Advanced Server V10 (`VERSION_ID=V10`).
+    KylinV10,
+}
+
+impl OsRelease {
+    /// Recognize `id` + `version_id`, falling back to the `ID_LIKE`
+    /// tokens for an unknown id (a rhel-9-like derivative still
+    /// recognizes as [`OsRelease::Rhel9`]). Ids compare
+    /// case-insensitively (`openEuler`); a leading `v` is stripped
+    /// from the version (Kylin writes `V10`); the version must match
+    /// the matrix entry on a component boundary (`9` matches `9.4`).
+    fn classify(id: &str, version_id: &str, id_like: &str) -> OsRelease {
+        let tokens = id
+            .split_whitespace()
+            .chain(id_like.split_whitespace())
+            .map(|t| unquote(t).to_ascii_lowercase());
+        for token in tokens {
+            if let Some(release) = release_for(&token, version_id) {
+                return release;
+            }
+        }
+        OsRelease::Other
+    }
+}
+
+/// The matrix entry one distro id recognizes at `version_id`, if any.
+fn release_for(id: &str, version_id: &str) -> Option<OsRelease> {
+    let version = normalize_version_id(version_id);
+    let major = || version.split('.').next().unwrap_or_default();
+    match id {
+        "ubuntu" => match version {
+            "22.04" => Some(OsRelease::Ubuntu22),
+            "24.04" => Some(OsRelease::Ubuntu24),
+            _ => None,
+        },
+        "rhel" => (major() == "9").then_some(OsRelease::Rhel9),
+        "almalinux" => (major() == "9").then_some(OsRelease::Alma9),
+        "rocky" => (major() == "9").then_some(OsRelease::Rocky9),
+        "openeuler" => (version == "24.03").then_some(OsRelease::OpenEuler2403),
+        "kylin" => (version == "10").then_some(OsRelease::KylinV10),
+        _ => None,
+    }
+}
+
+/// `VERSION_ID` in comparable form: unquoted, with a leading `v`/`V`
+/// stripped — Kylin writes `V10` while package rows and the release
+/// matrix use `10`. Anything after the prefix is untouched.
+pub fn normalize_version_id(version_id: &str) -> &str {
+    let trimmed = unquote(version_id);
+    trimmed
+        .strip_prefix(['v', 'V'])
+        .filter(|stripped| stripped.as_bytes().first().is_some_and(u8::is_ascii_digit))
+        .map_or(trimmed, |stripped| stripped)
 }
 
 /// What the login user can do with sudo on the node.
@@ -250,6 +347,8 @@ mod tests {
 
     /// ubuntu 24.04 os-release fields (ID_LIKE=debian).
     const UBUNTU: (&str, &str, &str, &str) = ("ubuntu", "24.04", "debian", "Ubuntu 24.04.1 LTS");
+    /// ubuntu 22.04 (jammy).
+    const UBUNTU22: (&str, &str, &str, &str) = ("ubuntu", "22.04", "debian", "Ubuntu 22.04.5 LTS");
     /// debian 12 (bookworm), no ID_LIKE.
     const DEBIAN: (&str, &str, &str, &str) = ("debian", "12", "", "Debian GNU/Linux 12 (bookworm)");
     /// rocky 9 carries the whole rhel lineage in ID_LIKE.
@@ -259,8 +358,29 @@ mod tests {
         "rhel centos fedora",
         "Rocky Linux 9.4 (Blue Onyx)",
     );
+    /// rhel 9 (ubi).
+    const RHEL: (&str, &str, &str, &str) = (
+        "rhel",
+        "9.4",
+        "fedora",
+        "Red Hat Enterprise Linux 9.4 (Plow)",
+    );
+    /// almalinux 9.
+    const ALMA: (&str, &str, &str, &str) = (
+        "almalinux",
+        "9.4",
+        "rhel centos fedora",
+        "AlmaLinux 9.4 (Seafoam)",
+    );
     /// openEuler 24.03 LTS.
     const OPENEULER: (&str, &str, &str, &str) = ("openEuler", "24.03", "", "openEuler 24.03 LTS");
+    /// Kylin Linux Advanced Server V10: `VERSION_ID` carries the `V`.
+    const KYLIN: (&str, &str, &str, &str) = (
+        "kylin",
+        "V10",
+        "rhel fedora centos",
+        "Kylin Linux Advanced Server V10 (Sword)",
+    );
 
     #[test]
     fn os_release_samples_classify_family() {
@@ -282,11 +402,20 @@ mod tests {
         assert_eq!(rocky.family, OsFamily::Rpm);
         assert_eq!(rocky.pretty, "Rocky Linux 9.4 (Blue Onyx)");
 
+        // openEuler left the plain rpm family for its own (WP-74): its
+        // package set keeps the standalone ebtables package.
         let euler = OsInfo::from_release(OPENEULER.0, OPENEULER.1, OPENEULER.2, OPENEULER.3);
         assert_eq!(euler.id, "openEuler");
         assert_eq!(euler.version_id, "24.03");
-        assert_eq!(euler.family, OsFamily::Rpm);
+        assert_eq!(euler.family, OsFamily::Euler);
         assert_eq!(euler.pretty, "openEuler 24.03 LTS");
+
+        // Kylin's id wins over its rhel-flavoured ID_LIKE.
+        let kylin = OsInfo::from_release(KYLIN.0, KYLIN.1, KYLIN.2, KYLIN.3);
+        assert_eq!(kylin.id, "kylin");
+        assert_eq!(kylin.version_id, "V10");
+        assert_eq!(kylin.family, OsFamily::Kylin);
+        assert_eq!(kylin.pretty, "Kylin Linux Advanced Server V10 (Sword)");
     }
 
     #[test]
@@ -296,8 +425,65 @@ mod tests {
             OsFamily::Rpm
         );
         assert_eq!(OsFamily::classify("whatever", "debian"), OsFamily::Deb);
+        assert_eq!(
+            OsFamily::classify("something", "openEuler"),
+            OsFamily::Euler
+        );
+        assert_eq!(OsFamily::classify("whatever", "kylin"), OsFamily::Kylin);
         assert_eq!(OsFamily::classify("arch", ""), OsFamily::Other);
         assert_eq!(OsFamily::classify("", ""), OsFamily::Other);
+    }
+
+    #[test]
+    fn support_matrix_releases_are_recognized() {
+        let cases = [
+            (UBUNTU, OsRelease::Ubuntu24),
+            (UBUNTU22, OsRelease::Ubuntu22),
+            (ROCKY, OsRelease::Rocky9),
+            (RHEL, OsRelease::Rhel9),
+            (ALMA, OsRelease::Alma9),
+            (OPENEULER, OsRelease::OpenEuler2403),
+            (KYLIN, OsRelease::KylinV10),
+        ];
+        for (fields, release) in cases {
+            let os = OsInfo::from_release(fields.0, fields.1, fields.2, fields.3);
+            assert_eq!(os.release, release, "{}", fields.0);
+        }
+    }
+
+    #[test]
+    fn release_recognition_falls_back_to_id_like() {
+        // An unknown rhel-9 derivative still recognizes as rhel 9.
+        let os = OsInfo::from_release("something", "9.2", "rhel fedora", "Something 9.2");
+        assert_eq!(os.release, OsRelease::Rhel9);
+        assert_eq!(os.family, OsFamily::Rpm);
+    }
+
+    #[test]
+    fn untested_versions_keep_their_family_but_not_a_release() {
+        // ubuntu 24.10 is still debian-packaged, just not in the matrix.
+        let os = OsInfo::from_release("ubuntu", "24.10", "debian", "Ubuntu 24.10");
+        assert_eq!(os.family, OsFamily::Deb);
+        assert_eq!(os.release, OsRelease::Other);
+        let os = OsInfo::from_release("rocky", "8.9", "rhel", "Rocky 8.9");
+        assert_eq!(os.family, OsFamily::Rpm);
+        assert_eq!(os.release, OsRelease::Other);
+        let os = OsInfo::from_release("openEuler", "22.03", "", "openEuler 22.03 LTS");
+        assert_eq!(os.family, OsFamily::Euler);
+        assert_eq!(os.release, OsRelease::Other);
+    }
+
+    #[test]
+    fn version_ids_normalize_for_kylin_only_prefixes() {
+        assert_eq!(normalize_version_id("V10"), "10");
+        assert_eq!(normalize_version_id("v10"), "10");
+        assert_eq!(normalize_version_id("\"V10\""), "10");
+        // A `v` that is not a version prefix stays: version strings are
+        // passed through untouched otherwise.
+        assert_eq!(normalize_version_id("24.04"), "24.04");
+        assert_eq!(normalize_version_id("9.4"), "9.4");
+        assert_eq!(normalize_version_id(""), "");
+        assert_eq!(normalize_version_id("viridian"), "viridian");
     }
 
     #[test]

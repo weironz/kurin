@@ -182,11 +182,14 @@ else emit sudo fail "ssh user is not root and sudo needs a password: grant passw
         }
     }
     // -- OS ---------------------------------------------------------------
+    // The id is lowercased before the case list: openEuler writes
+    // `ID="openEuler"` and a POSIX `case` is case-sensitive.
     s.push_str(
         r#"if [ -r /etc/os-release ]; then
   . /etc/os-release
-  case "${ID:-}" in
-    ubuntu|debian|rocky|centos|rhel|fedora|almalinux|openeuler|opensuse*|sles) emit os ok "${PRETTY_NAME:-$ID}" ;;
+  osid=$(printf '%s' "${ID:-}" | tr '[:upper:]' '[:lower:]')
+  case "$osid" in
+    ubuntu|debian|rocky|centos|rhel|fedora|almalinux|openeuler|kylin|opensuse*|sles) emit os ok "${PRETTY_NAME:-$ID}" ;;
     *) emit os warn "untested distribution: ${PRETTY_NAME:-$ID}" ;;
   esac
 else emit os warn "/etc/os-release missing (cannot identify distribution)"; fi
@@ -477,6 +480,28 @@ role = "control-plane"
         assert!(s.contains("(settable via sudo)"), "{s}");
         // Root keeps the direct `-w` fast path first.
         assert!(s.contains("(settable)"), "{s}");
+    }
+
+    #[test]
+    fn os_check_covers_the_wp74_matrix_case_insensitively() {
+        let s = first_script(&cluster_ssh("user = \"root\""));
+        // the case list covers the WP-74 matrix, including the two ids
+        // the raw comparison used to miss (openEuler's capital E, kylin)
+        let case_line = s
+            .lines()
+            .find(|l| l.contains("ubuntu|debian"))
+            .expect("os case list line");
+        for id in [
+            "ubuntu|debian",
+            "rocky|centos|rhel|fedora|almalinux",
+            "openeuler|kylin",
+        ] {
+            assert!(case_line.contains(id), "missing {id}: {case_line}");
+        }
+        // …and the comparison runs through `tr`, so openEuler's
+        // `ID="openEuler"` classifies instead of tripping the case
+        // sensitivity of POSIX `case`.
+        assert!(s.contains("tr '[:upper:]' '[:lower:]'"), "{s}");
     }
 
     #[test]

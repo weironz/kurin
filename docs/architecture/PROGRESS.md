@@ -71,7 +71,7 @@
 | WP-71 证书自动续期 | done | 见提交 | 无 | tier2 手动模拟：`kurin certs schedule --every 1h --warn-days 3650` 后观察 timer 触发（步骤见 command-matrix「certs check / renew / schedule」）| 每控制面装 `kurin-cert-renew.{service,timer}` + `/usr/local/bin/kurin-cert-renew.sh`（幂等重装、`--every` 复用 WP-70 解析器、`WARN_DAYS` 固化进脚本）；kubeadm：`check-expiration` 最小剩余 < warn-days 才 `renew all` + 静态 pod 轮转 + `/readyz` 门控（CA 表不计入：renew all 无法续 CA）；k3s：`certificate check --output table` 门控 + `rotate` + `systemctl restart k3s`；`status`/`certs check` 显示下次续期（`NextElapseUSecRealtime`，`Monotonic` 回退）|
 | WP-72 k3s 升级 | done | 见提交 | `kurin/tests/upgrade_k3s.rs` 新增 2 个计划快照（`k3s_upgrade_plan_1cp_1w`、`k3s_upgrade_plan_3cp_3w_batch2`）；`kurin-core` `Stage` 枚举新增 `stop-service`/`start-service`（纯新增，无既有快照变化）| 待人工：`just tier1-k3s-upgrade`（需先 `just tier1-k3s`；目标 release 需制品清单 pin 或离线 bundle）| 计划按发行版分支：kubeadm 链不变；k3s 链 = `version-check` → `stop-service` → `install-bins`（上传暂存 + `cp -a` 保留旧二进制 `k3s.pre-upgrade-<ts>` 永不删除 + 原子 rename）→ `start-service` → `ready-gate`；server 逐台且 gate 含 `/readyz`，agent 按 `--batch`；agent 单元探测 `k3s-agent`（上游装法）回退 kurin 的 `k3s`；在线仅当清单 pin 目标 release，否则明确报错指引 `--offline`（绝不静默下载未校验二进制）；已在目标的节点全链 InSync |
 | WP-73 kurin import | done | 见提交 | 无 | 在另一台控制机 `kurin import --from-cluster … -o tier2.toml` 后 `kurin add nodes -f tier2.toml` | 只读直连（无计划/锁/操作日志）；v1alpha1 记录先迁移为 v1alpha2；kubectl 形态按节点上的 kubeconfig 探测（kubeadm/k3s）；`--password-env` 把每个 `******` 都写成同一 env 引用并列出清单告警，`--key` 只重写 `[ssh.auth]`，密码形态缺口明确报错列出字段；`-o` 0600 落盘、缺省 stdout；`--json` 报告 `{cluster, distribution, kubernetes_version, nodes, output}`（需配 `-o`） |
-| WP-74 OS 扩展 | todo | | | | |
+| WP-74 OS 扩展 | done | 见提交 | 22 个新单测 + `kurin/tests/os_families.rs`（真实 discover 脚本往返 + 包行交叉校验） | 人工：`just tier1-ubuntu2204*` / `tier1-alma*` / `tier1-openeuler*` / `tier1-kylin*`（含离线；Kylin 需本地 qcow2） | facts 支持 Ubuntu 22.04/24.04、RHEL/Alma/Rocky 9、openEuler 24.03、Kylin V10（ID_LIKE 兜底、V10 归一）；kernel-deps 按族选包名/包管理器（Ubuntu/Rocky 命令逐字节不变）；OS 包新增 5 个目标；Kylin 无公共镜像时校验期拒绝 |
 | WP-75 CIS 加固 | done | 见提交 | `kurin/tests/plan_snapshots.rs` 的 cis 计划快照；default 档位全部既有快照不变 | 人工：`just cis-check`（需 kube-bench + tier1），报告存 `docs/cis/<ts>/` | `[kubernetes] profile = "cis"`（v1alpha2）：apiserver/kubelet CIS 参数、审计策略、PSA restricted（仅 default ns）、kubeconfig/kubelet 0600；default 渲染逐字节不变 |
 | WP-76 conformance 门禁 | done | 见提交 | 无 | 维护者：`just conformance`（需 hydrophone + tier3），报告存 `docs/conformance/<ts>/` | `scripts/conformance.sh`（复制 kubeconfig、改 server 地址、hydrophone run、归档）；本机未装 hydrophone 未执行 |
 | WP-77 种子仓库 | todo | | | | |
@@ -145,6 +145,7 @@
 - WP-39：签名包校验、篡改 blob 拒绝、未签名包在 signature 模式拒绝（`cargo test -p kurin-artifact --test transfer`）；CI 工作流需在 tag 上人工验证。
 - WP-49：`just tier3-registry zot`、`docker-registry`、`external`（external 指向 zot）。
 - WP-63：tier1 真实 create 过程中刷新页面，确认日志从断点继续；`pnpm --dir web test:e2e`。
+- WP-74：`just tier1-ubuntu2204` / `tier1-ubuntu2204-offline` / `tier1-alma` / `tier1-alma-offline` / `tier1-openeuler` / `tier1-openeuler-offline` / `tier1-kylin <qcow2>` / `tier1-kylin-offline <qcow2> <os-pkg>`（麒麟需本地镜像与 os 包）。
 - WP-75：`just cis-check`（需安装 kube-bench 与 tier1），报告归档到 `docs/cis/`；阈值按 kube-bench 报告人工判定。
 - WP-76：`just conformance`（需安装 hydrophone 与 tier3 集群），报告归档到 `docs/conformance/`。
 - WP-66：tier1 已实跑 `lifecycle.spec.ts`（3.9m PASS）与「创建中关闭浏览器」（2.4m PASS）；`resilience.spec.ts` 的重启 retry、CLI 抢锁、密码扫描需 `KURIN_E2E_RESTART_CMD` / `KURIN_E2E_CLI` / `KURIN_E2E_SECRET`，待维护者执行。
@@ -174,6 +175,7 @@
 - WP-39：签名包校验、篡改 blob 拒绝、未签名包在 signature 模式拒绝（`cargo test -p kurin-artifact --test transfer`）；CI 工作流需在 tag 上人工验证。
 - WP-49：`just tier3-registry zot`、`docker-registry`、`external`（external 指向 zot）。
 - WP-63：tier1 真实 create 过程中刷新页面，确认日志从断点继续；`pnpm --dir web test:e2e`。
+- WP-74：`just tier1-ubuntu2204` / `tier1-ubuntu2204-offline` / `tier1-alma` / `tier1-alma-offline` / `tier1-openeuler` / `tier1-openeuler-offline` / `tier1-kylin <qcow2>` / `tier1-kylin-offline <qcow2> <os-pkg>`（麒麟需本地镜像与 os 包）。
 - WP-75：`just cis-check`（需安装 kube-bench 与 tier1），报告归档到 `docs/cis/`；阈值按 kube-bench 报告人工判定。
 - WP-76：`just conformance`（需安装 hydrophone 与 tier3 集群），报告归档到 `docs/conformance/`。
 - WP-66：tier1 已实跑 `lifecycle.spec.ts`（3.9m PASS）与「创建中关闭浏览器」（2.4m PASS）；`resilience.spec.ts` 的重启 retry、CLI 抢锁、密码扫描需 `KURIN_E2E_RESTART_CMD` / `KURIN_E2E_CLI` / `KURIN_E2E_SECRET`，待维护者执行。

@@ -2,12 +2,32 @@
 
 All notable changes to kurin. Format follows Keep a Changelog; semver.
 
+### Added (WP-74)
+- OS support matrix widened to Ubuntu 22.04, RHEL 9 / AlmaLinux 9,
+  openEuler 24.03 LTS and Kylin Linux Advanced Server V10 (Ubuntu 24.04,
+  Debian 12 and Rocky 9 unchanged). Facts now expose a stable
+  `OsFamily` (`Deb` / `Rpm` / `Euler` / `Kylin` / `Other`) plus an
+  `OsRelease` matrix enum; `kernel-deps` picks its package names and
+  package manager (apt vs dnf) from the probed family instead of
+  probing `command -v` at run time, and an OS that does not classify
+  fails with a clear error naming it. openEuler and Kylin keep the
+  standalone `ebtables` package RHEL 9 folded into `iptables-nft`.
+- `kurin package create os` targets `ubuntu-22.04`, `rhel-9`
+  (`redhat/ubi9`), `almalinux-9`, `openeuler-24.03` and `kylin-10`;
+  openEuler/Kylin rows match their nodes (Kylin's `VERSION_ID=V10`
+  normalizes to `10`). The `kylin-10` target has no verifiable public
+  container image and is refused (`UnverifiedTargetImage`) until one is
+  pinned locally, rather than shipping an unverifiable upstream.
+  Kylin's VM images and ISOs are vendor-portal only: its e2e
+  (`e2e/tier1/kylin*.sh`, `just tier1-kylin*`) is manual, like the
+  other new per-OS tracks (`just tier1-ubuntu2204*`, `tier1-alma*`,
+  `tier1-openeuler*`).
+
 ### Changed (WP-47)
 - Dynamic storage provisioning moved from first-layer components to the
   declarative addon layer: `local-path` and `nfs-subdir` are installed by
   the addon engine (`addons/local-path@<node>` / `addons/nfs-subdir@<node>`
   in the `addons` phase instead of `storage/install@<node>` in `cni`).
-  The `storage/*` components and their task are gone.
 - v1alpha1 `[storage]` lowers to `[addons.local-path]` /
   `[addons.nfs-subdir]` at load time, so both schema versions produce the
   same `ClusterSpec`; the object names, namespaces and StorageClass

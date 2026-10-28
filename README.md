@@ -8,7 +8,8 @@ real end-to-end tests ([`docs/progress.md`](docs/progress.md)).
 
 ## What it does
 
-- **Nodes**: Ubuntu 24.04+ / Debian 12 / Rocky Linux 9, amd64 + arm64
+- **Nodes**: Ubuntu 22.04/24.04, Debian 12, Rocky/RHEL/Alma 9, openEuler 24.03,
+  Kylin V10 (WP-74), amd64 + arm64
 - **Distributions**: kubeadm-track (binary-first) or `kubernetes.distribution = "k3s"`
   (embedded-etcd HA included)
 - **Runtime**: containerd (binary-first; no apt/yum for the Kubernetes stack)

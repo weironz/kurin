@@ -381,7 +381,9 @@ enum PackageCreateWhat {
     /// downloaded inside a container of that distro (docker/podman)
     /// with its repository metadata, for air-gapped system packages.
     Os {
-        /// Target OS: one of ubuntu-24.04, debian-12, rocky-9.
+        /// Target OS: one of ubuntu-24.04, ubuntu-22.04, debian-12,
+        /// rocky-9, rhel-9, almalinux-9, openeuler-24.03, kylin-10
+        /// (kylin-10 needs a locally pinned container image).
         #[arg(long)]
         target: String,
         /// Architecture(s) to build for, comma-separated (default: this

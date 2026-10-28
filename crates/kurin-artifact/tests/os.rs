@@ -192,11 +192,18 @@ fn calver_is_year_dot_month() {
 fn supported_targets_are_stable() {
     assert_eq!(
         supported_targets().join(", "),
-        "ubuntu-24.04, debian-12, rocky-9"
+        "ubuntu-24.04, ubuntu-22.04, debian-12, rocky-9, rhel-9, almalinux-9, \
+         openeuler-24.03, kylin-10"
     );
     assert_eq!(
         OsTarget::parse("debian-12").unwrap().container_image(),
         "debian:12"
+    );
+    assert_eq!(
+        OsTarget::parse("openeuler-24.03")
+            .unwrap()
+            .container_image(),
+        "openeuler/openeuler:24.03"
     );
     // PackageSource still opens the built os package.
     let _ = PackageSource::open; // re-exported API stays reachable
