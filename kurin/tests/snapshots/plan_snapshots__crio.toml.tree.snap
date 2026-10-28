@@ -14,12 +14,12 @@ expression: render_tree(&plan)
 │   └── artifacts/install@worker01 :: fetch+install pinned binaries (amd64)
 ├── stage: prepare (14 tasks)
 │   ├── prepare/os-baseline@master01 :: disable swap / firewalld, SELinux permissive
-│   ├── prepare/sysctl@master01 :: modprobe br_netfilter; persist net.bridge.bridge-nf-call-iptables net.bridge.bridge-nf-call-ip6tables net.ipv4.ip_forward
 │   ├── prepare/kernel-deps@master01 :: ensure conntrack/socat (+recommended ebtables ipset ipvsadm)
+│   ├── prepare/sysctl@master01 :: modprobe br_netfilter; persist net.bridge.bridge-nf-call-iptables net.bridge.bridge-nf-call-ip6tables net.ipv4.ip_forward
 │   ├── prepare/kubelet-unit@master01 :: render + install /etc/systemd/system/kubelet.service, enable (start deferred to kubeadm)
 │   ├── prepare/os-baseline@worker01 :: disable swap / firewalld, SELinux permissive
-│   ├── prepare/sysctl@worker01 :: modprobe br_netfilter; persist net.bridge.bridge-nf-call-iptables net.bridge.bridge-nf-call-ip6tables net.ipv4.ip_forward
 │   ├── prepare/kernel-deps@worker01 :: ensure conntrack/socat (+recommended ebtables ipset ipvsadm)
+│   ├── prepare/sysctl@worker01 :: modprobe br_netfilter; persist net.bridge.bridge-nf-call-iptables net.bridge.bridge-nf-call-ip6tables net.ipv4.ip_forward
 │   ├── prepare/kubelet-unit@worker01 :: render + install /etc/systemd/system/kubelet.service, enable (start deferred to kubeadm)
 │   ├── prepare/crio-install@master01 :: install crio 1.33.4 static package
 │   ├── prepare/crio-config@master01 :: render + install /etc/crio/crio.conf.d/10-kurin.conf

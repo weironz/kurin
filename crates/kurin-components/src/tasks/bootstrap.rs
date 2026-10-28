@@ -341,6 +341,12 @@ impl Task for KubeadmInit {
             .await?
             .is_some();
         if !already {
+            // Package scriptlets during prepare may re-run systemd-sysctl;
+            // kubeadm's preflight requires ip_forward=1, so re-assert it
+            // immediately before init.
+            session
+                .exec("sysctl -w net.ipv4.ip_forward=1 >/dev/null 2>&1 || true")
+                .await?;
             let out = session
                 .exec(&format!(
                     "kubeadm init --config {} --upload-certs",

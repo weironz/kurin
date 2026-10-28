@@ -54,6 +54,7 @@ multipass info "$NAME" >/dev/null 2>&1 || \
 IP=$(multipass info "$NAME" --format yaml | awk '/^    ipv4:/{getline; print $2; exit}')
 [ -n "$IP" ] || { echo "[FAIL] no ipv4"; exit 1; }
 ssh-keygen -R "$IP" -f ~/.ssh/known_hosts >/dev/null 2>&1 || true
+ssh-keygen -R "$IP" -f ~/.cache/kurin/known_hosts >/dev/null 2>&1 || true
 # Cloud images may keep root locked; install the key through multipass
 # (same as tier1/up.sh) instead of relying on cloud-init users.
 multipass exec "$NAME" -- sudo mkdir -p /root/.ssh

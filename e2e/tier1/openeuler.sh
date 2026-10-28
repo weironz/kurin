@@ -44,6 +44,7 @@ multipass info "$NAME" >/dev/null 2>&1 || \
 IP=$(multipass info "$NAME" --format yaml | awk '/^    ipv4:/{getline; print $2; exit}')
 [ -n "$IP" ] || { echo "[FAIL] no ipv4"; exit 1; }
 ssh-keygen -R "$IP" -f ~/.ssh/known_hosts >/dev/null 2>&1 || true
+ssh-keygen -R "$IP" -f ~/.cache/kurin/known_hosts >/dev/null 2>&1 || true
 # Cloud images may keep root locked; install the key through multipass
 # (same as tier1/up.sh) instead of relying on cloud-init users.
 multipass exec "$NAME" -- sudo -n mkdir -p /root/.ssh 2>/dev/null || true
@@ -98,16 +99,16 @@ fails=$(grep -c '"task-failed"' "$EVENTS" || true)
 grep -q '"id":"prepare/os-baseline@node01"' "$EVENTS" || { echo "[FAIL] no os-baseline event"; exit 1; }
 echo "[ok] openeuler2403: cluster-ready, zero failures (os-baseline ran)"
 
-KC="sudo /usr/local/bin/kubectl --kubeconfig /etc/kubernetes/admin.conf"
+KC="/usr/local/bin/kubectl --kubeconfig /etc/kubernetes/admin.conf"
 for i in $(seq 1 60); do
-    READY=$(multipass exec "$NAME" -- sh -c "$KC get node node01 -o jsonpath='{.status.conditions[?(@.type==\"Ready\")].status}'" 2>/dev/null || true)
+    READY=$(ssh -i "$KEYS/id_ed25519" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 root@"$IP" "$KC get node node01 -o jsonpath='{.status.conditions[?(@.type==\"Ready\")].status}'" 2>/dev/null || true)
     [ "$READY" = "True" ] && break; sleep 10
 done
 [ "$READY" = "True" ] || { echo "[FAIL] node Ready=$READY"; exit 1; }
 echo "[ok] node Ready (~$((i*10))s)"
 
 for i in $(seq 1 60); do
-    BAD=$(multipass exec "$NAME" -- sh -c "$KC get pods -A --no-headers" 2>/dev/null | awk '$4 !~ /^(Running|Succeeded|Completed)$/ {print $1"/"$2" "$4}')
+    BAD=$(ssh -i "$KEYS/id_ed25519" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 root@"$IP" "$KC get pods -A --no-headers" 2>/dev/null | awk '$4 !~ /^(Running|Succeeded|Completed)$/ {print $1"/"$2" "$4}')
     [ -z "$BAD" ] && { echo "[ok] all pods healthy (~$((i*10))s)"; break; }
     [ "$i" = "60" ] && { echo "[FAIL] pods: $BAD"; exit 1; }
     sleep 10

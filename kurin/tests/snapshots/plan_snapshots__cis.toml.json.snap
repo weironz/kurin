@@ -63,14 +63,14 @@ expression: plan_matrix(&plan)
     {
       "ids": [
         "prepare/os-baseline@cp1",
-        "prepare/sysctl@cp1",
         "prepare/kernel-deps@cp1",
+        "prepare/sysctl@cp1",
         "prepare/containerd-config@cp1",
         "prepare/containerd-unit@cp1",
         "prepare/kubelet-unit@cp1",
         "prepare/os-baseline@w1",
-        "prepare/sysctl@w1",
         "prepare/kernel-deps@w1",
+        "prepare/sysctl@w1",
         "prepare/containerd-config@w1",
         "prepare/containerd-unit@w1",
         "prepare/kubelet-unit@w1"
@@ -82,12 +82,12 @@ expression: plan_matrix(&plan)
           "id": "prepare/os-baseline@cp1"
         },
         {
-          "describe": "modprobe br_netfilter; persist net.bridge.bridge-nf-call-iptables net.bridge.bridge-nf-call-ip6tables net.ipv4.ip_forward vm.overcommit_memory kernel.panic kernel.panic_on_oops",
-          "id": "prepare/sysctl@cp1"
-        },
-        {
           "describe": "ensure conntrack/socat (+recommended ebtables ipset ipvsadm)",
           "id": "prepare/kernel-deps@cp1"
+        },
+        {
+          "describe": "modprobe br_netfilter; persist net.bridge.bridge-nf-call-iptables net.bridge.bridge-nf-call-ip6tables net.ipv4.ip_forward vm.overcommit_memory kernel.panic kernel.panic_on_oops",
+          "id": "prepare/sysctl@cp1"
         },
         {
           "describe": "render + install /etc/containerd/config.toml",
@@ -106,12 +106,12 @@ expression: plan_matrix(&plan)
           "id": "prepare/os-baseline@w1"
         },
         {
-          "describe": "modprobe br_netfilter; persist net.bridge.bridge-nf-call-iptables net.bridge.bridge-nf-call-ip6tables net.ipv4.ip_forward vm.overcommit_memory kernel.panic kernel.panic_on_oops",
-          "id": "prepare/sysctl@w1"
-        },
-        {
           "describe": "ensure conntrack/socat (+recommended ebtables ipset ipvsadm)",
           "id": "prepare/kernel-deps@w1"
+        },
+        {
+          "describe": "modprobe br_netfilter; persist net.bridge.bridge-nf-call-iptables net.bridge.bridge-nf-call-ip6tables net.ipv4.ip_forward vm.overcommit_memory kernel.panic kernel.panic_on_oops",
+          "id": "prepare/sysctl@w1"
         },
         {
           "describe": "render + install /etc/containerd/config.toml",

@@ -63,12 +63,12 @@ expression: plan_matrix(&plan)
     {
       "ids": [
         "prepare/os-baseline@master01",
-        "prepare/sysctl@master01",
         "prepare/kernel-deps@master01",
+        "prepare/sysctl@master01",
         "prepare/kubelet-unit@master01",
         "prepare/os-baseline@worker01",
-        "prepare/sysctl@worker01",
         "prepare/kernel-deps@worker01",
+        "prepare/sysctl@worker01",
         "prepare/kubelet-unit@worker01",
         "prepare/crio-install@master01",
         "prepare/crio-config@master01",
@@ -84,12 +84,12 @@ expression: plan_matrix(&plan)
           "id": "prepare/os-baseline@master01"
         },
         {
-          "describe": "modprobe br_netfilter; persist net.bridge.bridge-nf-call-iptables net.bridge.bridge-nf-call-ip6tables net.ipv4.ip_forward",
-          "id": "prepare/sysctl@master01"
-        },
-        {
           "describe": "ensure conntrack/socat (+recommended ebtables ipset ipvsadm)",
           "id": "prepare/kernel-deps@master01"
+        },
+        {
+          "describe": "modprobe br_netfilter; persist net.bridge.bridge-nf-call-iptables net.bridge.bridge-nf-call-ip6tables net.ipv4.ip_forward",
+          "id": "prepare/sysctl@master01"
         },
         {
           "describe": "render + install /etc/systemd/system/kubelet.service, enable (start deferred to kubeadm)",
@@ -100,12 +100,12 @@ expression: plan_matrix(&plan)
           "id": "prepare/os-baseline@worker01"
         },
         {
-          "describe": "modprobe br_netfilter; persist net.bridge.bridge-nf-call-iptables net.bridge.bridge-nf-call-ip6tables net.ipv4.ip_forward",
-          "id": "prepare/sysctl@worker01"
-        },
-        {
           "describe": "ensure conntrack/socat (+recommended ebtables ipset ipvsadm)",
           "id": "prepare/kernel-deps@worker01"
+        },
+        {
+          "describe": "modprobe br_netfilter; persist net.bridge.bridge-nf-call-iptables net.bridge.bridge-nf-call-ip6tables net.ipv4.ip_forward",
+          "id": "prepare/sysctl@worker01"
         },
         {
           "describe": "render + install /etc/systemd/system/kubelet.service, enable (start deferred to kubeadm)",

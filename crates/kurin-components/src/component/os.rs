@@ -290,7 +290,7 @@ role = "worker"
     #[test]
     fn os_components_are_always_enabled() {
         let c = component_toml("");
-        for id in ["os/baseline", "os/sysctl", "os/kernel-deps"] {
+        for id in ["os/baseline", "os/kernel-deps", "os/sysctl"] {
             let comp = super::super::registry().get(id).expect(id);
             assert!(comp.enabled(&c), "{id} must be enabled");
         }
@@ -299,7 +299,7 @@ role = "worker"
     #[test]
     fn os_components_declare_no_rules() {
         let c = component_toml("");
-        for id in ["os/baseline", "os/sysctl", "os/kernel-deps"] {
+        for id in ["os/baseline", "os/kernel-deps", "os/sysctl"] {
             let comp = super::super::registry().get(id).expect(id);
             let mut d = Diagnostics::new("");
             comp.validate(&c, &mut d);
@@ -365,14 +365,14 @@ role = "registry"
             crate::test_util::phase_ids(&plan, "prepare"),
             [
                 "prepare/os-baseline@cp1",
-                "prepare/sysctl@cp1",
                 "prepare/kernel-deps@cp1",
+                "prepare/sysctl@cp1",
                 "prepare/containerd-config@cp1",
                 "prepare/containerd-unit@cp1",
                 "prepare/kubelet-unit@cp1",
                 "prepare/os-baseline@w1",
-                "prepare/sysctl@w1",
                 "prepare/kernel-deps@w1",
+                "prepare/sysctl@w1",
                 "prepare/containerd-config@w1",
                 "prepare/containerd-unit@w1",
                 "prepare/kubelet-unit@w1",

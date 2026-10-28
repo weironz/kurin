@@ -63,11 +63,11 @@ expression: plan_matrix(&plan)
     {
       "ids": [
         "prepare/os-baseline@agent01",
-        "prepare/sysctl@agent01",
         "prepare/kernel-deps@agent01",
+        "prepare/sysctl@agent01",
         "prepare/os-baseline@server01",
-        "prepare/sysctl@server01",
         "prepare/kernel-deps@server01",
+        "prepare/sysctl@server01",
         "prepare/k3s-unit@agent01",
         "prepare/k3s-airgap@agent01",
         "prepare/k3s-unit@server01",
@@ -80,24 +80,24 @@ expression: plan_matrix(&plan)
           "id": "prepare/os-baseline@agent01"
         },
         {
-          "describe": "modprobe br_netfilter; persist net.bridge.bridge-nf-call-iptables net.bridge.bridge-nf-call-ip6tables net.ipv4.ip_forward",
-          "id": "prepare/sysctl@agent01"
-        },
-        {
           "describe": "ensure conntrack/socat (+recommended ebtables ipset ipvsadm)",
           "id": "prepare/kernel-deps@agent01"
+        },
+        {
+          "describe": "modprobe br_netfilter; persist net.bridge.bridge-nf-call-iptables net.bridge.bridge-nf-call-ip6tables net.ipv4.ip_forward",
+          "id": "prepare/sysctl@agent01"
         },
         {
           "describe": "disable swap / firewalld, SELinux permissive",
           "id": "prepare/os-baseline@server01"
         },
         {
-          "describe": "modprobe br_netfilter; persist net.bridge.bridge-nf-call-iptables net.bridge.bridge-nf-call-ip6tables net.ipv4.ip_forward",
-          "id": "prepare/sysctl@server01"
-        },
-        {
           "describe": "ensure conntrack/socat (+recommended ebtables ipset ipvsadm)",
           "id": "prepare/kernel-deps@server01"
+        },
+        {
+          "describe": "modprobe br_netfilter; persist net.bridge.bridge-nf-call-iptables net.bridge.bridge-nf-call-ip6tables net.ipv4.ip_forward",
+          "id": "prepare/sysctl@server01"
         },
         {
           "describe": "render + install /etc/systemd/system/k3s.service, enable (not start)",

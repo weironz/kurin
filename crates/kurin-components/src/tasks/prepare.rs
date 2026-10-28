@@ -85,27 +85,25 @@ impl Task for Sysctl {
     }
 
     async fn apply(&self, session: &dyn Session) -> miette::Result<Outcome> {
-        let mut script = String::from("set -e\nmodprobe br_netfilter 2>/dev/null || true\n");
+        let mut script = String::from("set -e\n");
+        // Persist the module list before writing into its directory, and
+        // load the bridge module the bridge sysctls depend on.
+        script.push_str("mkdir -p /etc/modules-load.d\n");
+        script.push_str("printf 'overlay\\nbr_netfilter\\n' > /etc/modules-load.d/kurin.conf\n");
+        script.push_str("modprobe overlay 2>&1 || true\n");
+        script.push_str("modprobe bridge 2>&1 || true\n");
+        script.push_str("modprobe br_netfilter 2>&1 || true\n");
         script.push_str(&format!(
             "cat > /etc/sysctl.d/99-kurin.conf <<'EOF'\n{}EOF\n",
             sysctl_unit(&self.pairs())
         ));
-        // Persist + load the modules these sysctls need; the bridge key only
-        // exists after br_netfilter loads. (OsBaseline handles the OS
-        // defaults; this belongs with the sysctl file itself.)
-        script.push_str("printf 'overlay\\nbr_netfilter\\n' > /etc/modules-load.d/kurin.conf\n");
-        script.push_str("mkdir -p /etc/modules-load.d\n");
-        script.push_str("modprobe overlay >/dev/null 2>&1 || true\n");
-        script.push_str("modprobe br_netfilter >/dev/null 2>&1 || true\n");
-        // Apply each key explicitly: `sysctl --system` aborts the rest of a
-        // file on a missing key (e.g. the bridge keys before br_netfilter
-        // is available on some distros), which left ip_forward at 0.
-        for (key, value) in self.pairs() {
-            script.push_str(&format!(
-                "sysctl -w {key}={value} >/dev/null 2>&1 || true\n"
-            ));
-        }
+        // `sysctl --system` first (it may abort on a missing bridge key);
+        // then re-assert every key explicitly, last, so a distro drop-in
+        // cannot leave ip_forward at 0.
         script.push_str("sysctl --system >/dev/null 2>&1 || true\n");
+        for (key, value) in self.pairs() {
+            script.push_str(&format!("sysctl -w {key}={value} 2>&1 || true\n"));
+        }
         let out = session.exec(&script).await?;
         if out.ok() {
             Ok(Outcome::Verified)

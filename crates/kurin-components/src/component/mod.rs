@@ -275,8 +275,10 @@ pub fn registry() -> &'static ComponentRegistry {
     static REGISTRY: LazyLock<ComponentRegistry> = LazyLock::new(|| ComponentRegistry {
         items: vec![
             Arc::new(os::OsBaseline),
-            Arc::new(os::Sysctl),
+            // Kernel dependencies install packages whose scriptlets may
+            // re-run systemd-sysctl; apply the sysctls after them.
             Arc::new(os::KernelDeps),
+            Arc::new(os::Sysctl),
             Arc::new(runtime::Containerd),
             Arc::new(runtime::Crio),
             Arc::new(distro::Kubeadm),
@@ -586,8 +588,8 @@ mod tests {
             ids,
             [
                 "os/baseline",
-                "os/sysctl",
                 "os/kernel-deps",
+                "os/sysctl",
                 "runtime/containerd",
                 "runtime/crio",
                 "distro/kubeadm",

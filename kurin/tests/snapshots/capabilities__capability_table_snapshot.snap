@@ -24,7 +24,7 @@ expression: json
     ]
   },
   {
-    "id": "os/sysctl",
+    "id": "os/kernel-deps",
     "kind": "os",
     "distributions": [
       "k8s",
@@ -44,7 +44,7 @@ expression: json
     ]
   },
   {
-    "id": "os/kernel-deps",
+    "id": "os/sysctl",
     "kind": "os",
     "distributions": [
       "k8s",

@@ -20,17 +20,17 @@ expression: render_tree(&plan)
 │   └── artifacts/install@server03 :: fetch+install pinned binaries (amd64)
 ├── stage: prepare (16 tasks)
 │   ├── prepare/os-baseline@agent01 :: disable swap / firewalld, SELinux permissive
-│   ├── prepare/sysctl@agent01 :: modprobe br_netfilter; persist net.bridge.bridge-nf-call-iptables net.bridge.bridge-nf-call-ip6tables net.ipv4.ip_forward
 │   ├── prepare/kernel-deps@agent01 :: ensure conntrack/socat (+recommended ebtables ipset ipvsadm)
+│   ├── prepare/sysctl@agent01 :: modprobe br_netfilter; persist net.bridge.bridge-nf-call-iptables net.bridge.bridge-nf-call-ip6tables net.ipv4.ip_forward
 │   ├── prepare/os-baseline@server01 :: disable swap / firewalld, SELinux permissive
-│   ├── prepare/sysctl@server01 :: modprobe br_netfilter; persist net.bridge.bridge-nf-call-iptables net.bridge.bridge-nf-call-ip6tables net.ipv4.ip_forward
 │   ├── prepare/kernel-deps@server01 :: ensure conntrack/socat (+recommended ebtables ipset ipvsadm)
+│   ├── prepare/sysctl@server01 :: modprobe br_netfilter; persist net.bridge.bridge-nf-call-iptables net.bridge.bridge-nf-call-ip6tables net.ipv4.ip_forward
 │   ├── prepare/os-baseline@server02 :: disable swap / firewalld, SELinux permissive
-│   ├── prepare/sysctl@server02 :: modprobe br_netfilter; persist net.bridge.bridge-nf-call-iptables net.bridge.bridge-nf-call-ip6tables net.ipv4.ip_forward
 │   ├── prepare/kernel-deps@server02 :: ensure conntrack/socat (+recommended ebtables ipset ipvsadm)
+│   ├── prepare/sysctl@server02 :: modprobe br_netfilter; persist net.bridge.bridge-nf-call-iptables net.bridge.bridge-nf-call-ip6tables net.ipv4.ip_forward
 │   ├── prepare/os-baseline@server03 :: disable swap / firewalld, SELinux permissive
-│   ├── prepare/sysctl@server03 :: modprobe br_netfilter; persist net.bridge.bridge-nf-call-iptables net.bridge.bridge-nf-call-ip6tables net.ipv4.ip_forward
 │   ├── prepare/kernel-deps@server03 :: ensure conntrack/socat (+recommended ebtables ipset ipvsadm)
+│   ├── prepare/sysctl@server03 :: modprobe br_netfilter; persist net.bridge.bridge-nf-call-iptables net.bridge.bridge-nf-call-ip6tables net.ipv4.ip_forward
 │   ├── prepare/k3s-unit@agent01 :: render + install /etc/systemd/system/k3s.service, enable (not start)
 │   ├── prepare/k3s-unit@server01 :: render + install /etc/systemd/system/k3s.service, enable (not start)
 │   ├── prepare/k3s-unit@server02 :: render + install /etc/systemd/system/k3s.service, enable (not start)

@@ -419,11 +419,11 @@ role = "worker"
             crate::test_util::phase_ids(&plan, "prepare"),
             [
                 "prepare/os-baseline@a1",
-                "prepare/sysctl@a1",
                 "prepare/kernel-deps@a1",
+                "prepare/sysctl@a1",
                 "prepare/os-baseline@s1",
-                "prepare/sysctl@s1",
                 "prepare/kernel-deps@s1",
+                "prepare/sysctl@s1",
                 "prepare/k3s-unit@a1",
                 "prepare/k3s-unit@s1",
             ]

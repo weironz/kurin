@@ -25,14 +25,14 @@ expression: render_tree(&plan)
 ├── stage: prepare (13 tasks)
 │   ├── prepare/os-baseline@registry01 :: disable swap / firewalld, SELinux permissive
 │   ├── prepare/os-baseline@master01 :: disable swap / firewalld, SELinux permissive
-│   ├── prepare/sysctl@master01 :: modprobe br_netfilter; persist net.bridge.bridge-nf-call-iptables net.bridge.bridge-nf-call-ip6tables net.ipv4.ip_forward
 │   ├── prepare/kernel-deps@master01 :: ensure conntrack/socat (+recommended ebtables ipset ipvsadm)
+│   ├── prepare/sysctl@master01 :: modprobe br_netfilter; persist net.bridge.bridge-nf-call-iptables net.bridge.bridge-nf-call-ip6tables net.ipv4.ip_forward
 │   ├── prepare/containerd-config@master01 :: render + install /etc/containerd/config.toml
 │   ├── prepare/containerd-unit@master01 :: render + install /etc/systemd/system/containerd.service, enable --now
 │   ├── prepare/kubelet-unit@master01 :: render + install /etc/systemd/system/kubelet.service, enable (start deferred to kubeadm)
 │   ├── prepare/os-baseline@worker01 :: disable swap / firewalld, SELinux permissive
-│   ├── prepare/sysctl@worker01 :: modprobe br_netfilter; persist net.bridge.bridge-nf-call-iptables net.bridge.bridge-nf-call-ip6tables net.ipv4.ip_forward
 │   ├── prepare/kernel-deps@worker01 :: ensure conntrack/socat (+recommended ebtables ipset ipvsadm)
+│   ├── prepare/sysctl@worker01 :: modprobe br_netfilter; persist net.bridge.bridge-nf-call-iptables net.bridge.bridge-nf-call-ip6tables net.ipv4.ip_forward
 │   ├── prepare/containerd-config@worker01 :: render + install /etc/containerd/config.toml
 │   ├── prepare/containerd-unit@worker01 :: render + install /etc/systemd/system/containerd.service, enable --now
 │   └── prepare/kubelet-unit@worker01 :: render + install /etc/systemd/system/kubelet.service, enable (start deferred to kubeadm)
