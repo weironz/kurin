@@ -294,6 +294,122 @@ impl Task for NodeLabels {
         Ok(Outcome::Verified)
     }
 }
+
+// ---------------------------------------------------------------------------
+// PsaLabels: CIS profile pod-security labels (WP-75)
+// ---------------------------------------------------------------------------
+
+/// The PSA labels the CIS profile stamps on the namespaces kurin manages.
+pub const PSA_LABELS: &[(&str, &str)] = &[
+    ("pod-security.kubernetes.io/enforce", "restricted"),
+    ("pod-security.kubernetes.io/audit", "restricted"),
+    ("pod-security.kubernetes.io/warn", "restricted"),
+];
+
+/// Namespaces the CIS profile labels; `kube-system` is deliberately
+/// absent (its system pods are not restricted-compatible).
+pub const PSA_NAMESPACES: &[&str] = &["default"];
+
+/// Server-side-applies the CIS profile's Pod Security Admission labels on
+/// [`PSA_NAMESPACES`] (WP-75: `enforce|audit|warn = restricted`). Only
+/// planned when the cluster runs `profile = "cis"`.
+pub struct PsaLabels {
+    node_name: String,
+    flavor: Flavor,
+}
+
+impl PsaLabels {
+    pub fn new(cluster: &Cluster) -> Self {
+        Self {
+            node_name: cluster
+                .control_plane()
+                .next()
+                .map(|n| n.name.clone())
+                .or_else(|| cluster.nodes.first().map(|n| n.name.clone()))
+                .unwrap_or_default(),
+            flavor: cluster.distribution.into(),
+        }
+    }
+
+    /// The labels as a plain map (test surface).
+    pub fn labels() -> std::collections::BTreeMap<String, String> {
+        PSA_LABELS
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    }
+}
+
+#[async_trait::async_trait]
+impl Task for PsaLabels {
+    fn id(&self) -> String {
+        "post/psa-labels".into()
+    }
+    fn stage(&self) -> Stage {
+        Stage::Post
+    }
+    fn node(&self) -> &str {
+        // Runs through the anchor control plane like the other post
+        // tasks; the label is namespace-wide, not per node.
+        &self.node_name
+    }
+    fn describe(&self) -> String {
+        format!(
+            "label {} namespace(s) pod-security.kubernetes.io/*=restricted",
+            PSA_NAMESPACES.len()
+        )
+    }
+
+    async fn check(&self, session: &dyn Session) -> Result<Drift> {
+        let api = SessionKubectl::new(session, self.flavor);
+        let mut missing = Vec::new();
+        for ns in PSA_NAMESPACES {
+            let obj = ObjRef::new("v1", "Namespace", *ns);
+            let Some(v) = api.get_json(&obj).await? else {
+                missing.push(ns.to_string());
+                continue;
+            };
+            let labels = PsaLabels::labels();
+            let current = v
+                .pointer("/metadata/labels")
+                .and_then(|l| l.as_object())
+                .cloned()
+                .unwrap_or_default();
+            for (k, val) in &labels {
+                if current.get(k).and_then(|x| x.as_str()) != Some(val.as_str()) {
+                    missing.push(format!("{ns}:{k}"));
+                }
+            }
+        }
+        if missing.is_empty() {
+            Ok(Drift::InSync)
+        } else {
+            Ok(Drift::Drifted(format!(
+                "pod-security labels differ: {}",
+                missing.join(",")
+            )))
+        }
+    }
+
+    async fn apply(&self, session: &dyn Session) -> Result<Outcome> {
+        let api = SessionKubectl::new(session, self.flavor);
+        let labels = PsaLabels::labels();
+        for ns in PSA_NAMESPACES {
+            let mut obj = dynamic_object(&Gvk::core("v1", "Namespace"), *ns, None);
+            obj.metadata.labels = Some(labels.clone());
+            api.apply(
+                &[obj],
+                ApplyOpts {
+                    force: true,
+                    ..ApplyOpts::default()
+                },
+            )
+            .await
+            .map_err(|err| miette::miette!("labeling namespace {ns} failed: {err}"))?;
+        }
+        Ok(Outcome::Verified)
+    }
+}
 // ---------------------------------------------------------------------------
 // Summary: end-of-run inventory
 // ---------------------------------------------------------------------------
@@ -970,6 +1086,7 @@ kind: Config
             distribution: kurin_config::Distribution::K8s,
             ha_mode: kurin_config::HaMode::KubeVip,
             runtime: kurin_config::RuntimeKind::Containerd,
+            hardening: kurin_config::HardeningProfile::Default,
             ssh: kurin_config::SshDefaultsSpec {
                 user: "root".into(),
                 port: 22,
@@ -1049,6 +1166,36 @@ kind: Config
             Some("https://192.168.10.100:6443")
         );
     }
+
+    /// WP-75: the CIS profile's PSA labels are exactly the three
+    /// `restricted` stamps, and `kube-system` is never in the target set.
+    #[test]
+    fn psa_labels_cover_default_but_not_kube_system() {
+        let labels = PsaLabels::labels();
+        assert_eq!(
+            labels,
+            BTreeMap::from([
+                (
+                    "pod-security.kubernetes.io/enforce".to_string(),
+                    "restricted".to_string()
+                ),
+                (
+                    "pod-security.kubernetes.io/audit".to_string(),
+                    "restricted".to_string()
+                ),
+                (
+                    "pod-security.kubernetes.io/warn".to_string(),
+                    "restricted".to_string()
+                ),
+            ])
+        );
+        assert_eq!(PSA_NAMESPACES, ["default"]);
+        assert!(!PSA_NAMESPACES.contains(&"kube-system"));
+        let t = PsaLabels::new(&cluster());
+        assert_eq!(t.node_name, "master01");
+        assert_eq!(t.id(), "post/psa-labels");
+        assert!(t.describe().contains("restricted"));
+    }
 }
 
 #[cfg(test)]
@@ -1093,6 +1240,7 @@ mod summary_tests {
             distribution: kurin_config::Distribution::K8s,
             ha_mode: kurin_config::HaMode::KubeVip,
             runtime: kurin_config::RuntimeKind::Containerd,
+            hardening: kurin_config::HardeningProfile::Default,
             ssh: kurin_config::SshDefaultsSpec {
                 user: "root".into(),
                 port: 22,

@@ -124,6 +124,27 @@ pub struct KubernetesConfig {
     /// Container runtime for the kubeadm track. k3s embeds its own.
     #[serde(default)]
     pub runtime: RuntimeKind,
+    /// Hardening profile (WP-75). v1alpha2 only: accepted here purely so
+    /// the version gate can reject it with a migration hint instead of a
+    /// bare "unknown field" error. Never serialized: a v1alpha1 document
+    /// cannot carry one (the roundtrip snapshots stay byte-identical).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile: Option<HardeningProfile>,
+}
+
+/// Security posture of the installed control plane (WP-75).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum HardeningProfile {
+    /// The historical kurin behavior: upstream kubeadm defaults, nothing
+    /// rendered beyond what the templates already carry.
+    #[default]
+    Default,
+    /// CIS benchmark hardening on the kubeadm track: apiserver/kubelet
+    /// flags, an audit policy, PSA `restricted` labels on `default` and
+    /// 0600 file modes. Compare against a kube-bench report with
+    /// `just cis-check`.
+    Cis,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]

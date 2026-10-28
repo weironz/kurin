@@ -28,8 +28,9 @@ use std::path::Path;
 
 pub use config::{
     ArtifactsConfig, BecomeMode, ClusterConfig, CniConfig, Distribution, HaConfig, HaMode,
-    HostKeyMode, KubernetesConfig, NetworkConfig, NodeConfig, NodeRole, RegistryConfig,
-    RegistryKind, RuntimeKind, SshAuth, SshDefaults, StorageConfig, StorageKind, CONFIG_VERSION,
+    HardeningProfile, HostKeyMode, KubernetesConfig, NetworkConfig, NodeConfig, NodeRole,
+    RegistryConfig, RegistryKind, RuntimeKind, SshAuth, SshDefaults, StorageConfig, StorageKind,
+    CONFIG_VERSION,
 };
 pub use error::{ConfigError, Result};
 pub use model::{

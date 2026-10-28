@@ -17,6 +17,32 @@ clusterName: {{ cluster }}
 apiServer:
   certSANs:
   - "127.0.0.1"
+{%- if cis %}
+  extraArgs:
+  # CIS 1.2.x: audit to a dedicated file (the audit policy itself is
+  # rendered by the bootstrap task at /etc/kubernetes/audit-policy.yaml).
+  - --audit-log-path=/var/log/kubernetes/audit.log
+  - --audit-log-maxage=30
+  - --audit-policy-file=/etc/kubernetes/audit-policy.yaml
+  # CIS 1.2.1 / 1.2.4: disable profiling endpoints; NodeRestriction +
+  # PodSecurity admission.
+  - --profiling=false
+  - --enable-admission-plugins=NodeRestriction,PodSecurity
+  # CIS 1.2.5: Node,RBAC authorization (no always-allow).
+  - --authorization-mode=Node,RBAC
+  # CIS 1.2.30-ish: modern TLS ciphers only (Go names, Go 1.22+).
+  - --tls-cipher-suites=TLS_AES_128_GCM_SHA256,TLS_AES_256_GCM_SHA384,TLS_CHACHA20_POLY1305_SHA256,TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305,TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305
+  extraVolumes:
+  - name: audit-policy
+    hostPath: /etc/kubernetes/audit-policy.yaml
+    mountPath: /etc/kubernetes/audit-policy.yaml
+    readOnly: true
+    pathType: File
+  - name: audit-log
+    hostPath: /var/log/kubernetes
+    mountPath: /var/log/kubernetes
+    pathType: DirectoryOrCreate
+{% endif %}
 controlPlaneEndpoint: {{ control_plane_endpoint }}
 kubernetesVersion: v{{ kubernetes_version }}
 {% if image_repository %}imageRepository: {{ image_repository }}
@@ -28,3 +54,30 @@ kubernetesVersion: v{{ kubernetes_version }}
 apiVersion: kubelet.config.k8s.io/v1beta1
 kind: KubeletConfiguration
 cgroupDriver: systemd
+{%- if cis %}
+# CIS 4.2.x hardening, applied by every kubelet on the kubeadm track.
+protectKernelDefaults: true
+readOnlyPort: 0
+rotateCertificates: true
+serverTLSBootstrap: true
+streamingConnectionIdleTimeout: 5m
+eventRecordQPS: 0
+tlsCipherSuites:
+- TLS_AES_128_GCM_SHA256
+- TLS_AES_256_GCM_SHA384
+- TLS_CHACHA20_POLY1305_SHA256
+- TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256
+- TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384
+- TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305
+- TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
+- TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384
+- TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305
+authentication:
+  anonymous:
+    enabled: false
+  webhook:
+    cacheTTL: 2m
+    enabled: true
+authorization:
+  mode: Webhook
+{%- endif %}

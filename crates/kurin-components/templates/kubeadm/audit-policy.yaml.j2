@@ -1,0 +1,79 @@
+# Kubernetes audit policy for the CIS profile (WP-75).
+#
+# kube-apiserver loads this file from --audit-policy-file
+# (/etc/kubernetes/audit-policy.yaml); the bootstrap task writes it with
+# mode 0600. Rules follow the CIS benchmark's recommended minimal policy:
+# everything at Metadata level, secrets and tokens redacted, kubelet/auth
+# activity at RequestResponse for attribution, and a fallback that drops
+# the high-volume non-resource request stream.
+apiVersion: audit.k8s.io/v1
+kind: Policy
+omitStages:
+- RequestReceived
+rules:
+- level: RequestResponse
+  resources:
+  - group: ""
+    resources:
+    - pods
+  - group: ""
+    resources:
+    - pods/attach
+    - pods/exec
+    - pods/portforward
+    - pods/proxy
+  verbs:
+  - create
+  - update
+  - patch
+  - delete
+- level: Request
+  resources:
+  - group: ""
+    resources:
+    - pods
+  - group: ""
+    resources:
+    - events
+  verbs:
+  - create
+  - update
+  - patch
+  - delete
+- level: Metadata
+  resources:
+  - group: ""
+    resources:
+    - secrets
+    - configmaps
+  - group: authentication.k8s.io
+  - group: authorization.k8s.io
+  - group: ""
+    resources:
+    - serviceaccounts
+    - serviceaccounts/token
+- level: Request
+  users:
+  - system:kube-proxy
+  verbs:
+  - watch
+  - list
+- level: None
+  users:
+  - system:unsecured
+  - system:kube-controller-manager
+  - system:kube-scheduler
+  - system:apiserver
+  verbs:
+  - get
+  - watch
+  - list
+  nonResourceURLs:
+  - /healthz*
+  - /readyz*
+  - /livez*
+  - /version
+  - /version/
+- level: Metadata
+  omitStages:
+  - RequestReceived

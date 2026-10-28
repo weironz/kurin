@@ -1233,6 +1233,7 @@ mod tests {
             distribution,
             ha_mode: HaMode::KubeVip,
             runtime,
+            hardening: kurin_config::HardeningProfile::Default,
             kubernetes_version: semver::Version::parse("1.33.2").unwrap(),
             pod_cidr: "10.244.0.0/16".parse().unwrap(),
             service_cidr: "10.96.0.0/12".parse().unwrap(),

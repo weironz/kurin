@@ -675,6 +675,7 @@ pub(crate) async fn probe_nodes(
             .unwrap(),
         distribution: kurin_config::Distribution::K8s,
         runtime: kurin_config::RuntimeKind::Containerd,
+        hardening: kurin_config::HardeningProfile::Default,
         pod_cidr: "10.233.64.0/18".parse().expect("cidr literal"),
         service_cidr: "10.233.0.0/18".parse().expect("cidr literal"),
         dns_domain: "cluster.local".into(),

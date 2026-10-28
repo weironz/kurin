@@ -149,6 +149,12 @@ impl Component for Labels {
                 Arc::new(tasks::post::NodeLabels::new(b.cluster(), node)),
             );
         }
+        // WP-75: the CIS profile stamps PSA `restricted` on `default`
+        // after the cluster is up. Not planned for `default` (the
+        // historical behavior is byte-identical).
+        if b.cluster().is_cis() {
+            b.add(phase, Arc::new(tasks::post::PsaLabels::new(b.cluster())));
+        }
         Ok(())
     }
 }
@@ -271,6 +277,29 @@ labels = {{"node-role.kurin.io/pool" = "general"}}
                 "post/labels@w1",
                 "post/state-record@cp1"
             ]
+        );
+    }
+
+    #[test]
+    fn psa_labels_are_planned_only_for_the_cis_profile() {
+        let plain = cluster(&base(""));
+        assert!(!plain.is_cis());
+        assert!(
+            !crate::test_util::phase_ids(&crate::test_util::plan_for(&plain), "post")
+                .iter()
+                .any(|id| id.starts_with("post/psa-labels"))
+        );
+
+        let cis = cluster(
+            &(base("")
+                .replace("version = \"v1alpha1\"", "version = \"v1alpha2\"")
+                .replace("[kubernetes]", "[kubernetes]\nprofile = \"cis\"")),
+        );
+        assert!(cis.is_cis());
+        assert!(
+            crate::test_util::phase_ids(&crate::test_util::plan_for(&cis), "post")
+                .iter()
+                .any(|id| id.starts_with("post/psa-labels"))
         );
     }
 }

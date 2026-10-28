@@ -19,6 +19,50 @@ use kurin_core::run::RunContext;
 
 pub const KUBEADM_DIR: &str = "/etc/kurin";
 
+/// Where the CIS profile's audit policy lives on every control plane
+/// (WP-75): the apiserver mounts it read-only into its static pod.
+pub const AUDIT_POLICY_PATH: &str = "/etc/kubernetes/audit-policy.yaml";
+/// Directory the apiserver writes audit logs into (CIS profile only).
+pub const AUDIT_LOG_DIR: &str = "/var/log/kubernetes";
+/// kubeconfigs the CIS profile tightens to 0600 (kubeadm defaults to
+/// 0644; every file carries cluster-admin credentials).
+pub const CIS_KUBECONFIGS: &[&str] = &[
+    "/etc/kubernetes/admin.conf",
+    "/etc/kubernetes/kubelet.conf",
+    "/etc/kubernetes/controller-manager.conf",
+    "/etc/kubernetes/scheduler.conf",
+    "/var/lib/kubelet/config.yaml",
+];
+/// File mode the CIS profile enforces on kubeconfigs and its own files.
+pub const CIS_FILE_MODE: u32 = 0o600;
+
+/// The rendered CIS audit policy (WP-75). Static today: one policy for
+/// every cluster on the `cis` profile.
+pub fn audit_policy() -> String {
+    templates::render("kubeadm/audit-policy.yaml.j2", minijinja::context! {})
+        .expect("embedded audit policy template renders")
+}
+
+/// Apply the CIS profile's file modes to the kubeconfigs kubeadm wrote
+/// (WP-75: admin/kubelet/controller-manager/scheduler.conf 0600, the
+/// kubelet config 0600). A missing file is not an error: `apply` runs
+/// right after `kubeadm init`, and joins only write a subset.
+pub async fn apply_cis_file_modes(session: &dyn Session) -> Result<()> {
+    let script = format!(
+        "for f in {}; do [ -e \"$f\" ] && chmod {CIS_FILE_MODE:o} \"$f\"; done; true",
+        CIS_KUBECONFIGS.join(" ")
+    );
+    let out = session.exec(&script).await?;
+    if out.ok() {
+        Ok(())
+    } else {
+        Err(miette::miette!(
+            "CIS file modes failed: {}",
+            out.stderr.lines().last().unwrap_or("").trim()
+        ))
+    }
+}
+
 /// Legacy local rendezvous (`~/.cache/kurin/clusters/<name>`), read by
 /// kurin releases before the Blackboard existed. Only `delete cluster`
 /// touches it now, to clean the stale directory up.
@@ -117,6 +161,7 @@ pub struct KubeadmInit {
     node_name: String,
     api_endpoint: String,
     rendered: String,
+    cis: bool,
     run: Arc<RunContext>,
 }
 
@@ -162,6 +207,7 @@ impl KubeadmInit {
                     }
                     _ => String::new(),
                 },
+                cis => cluster.is_cis(),
             },
         )
         .expect("kubeadm init template renders");
@@ -169,6 +215,7 @@ impl KubeadmInit {
             node_name: first.name.clone(),
             api_endpoint: endpoint_host,
             rendered,
+            cis: cluster.is_cis(),
             run: Arc::clone(run),
         }
     }
@@ -271,6 +318,19 @@ impl Task for KubeadmInit {
             .unwrap_or(KUBEADM_DIR)
             .to_string();
         session.exec(&format!("mkdir -p {dir}")).await?;
+        // WP-75 CIS profile: the audit policy and its log directory must
+        // exist before `kubeadm init` starts the apiserver, which mounts
+        // the policy file through an extraVolume.
+        if self.cis {
+            session
+                .exec(&format!(
+                    "mkdir -p {AUDIT_LOG_DIR} && chmod 700 {AUDIT_LOG_DIR}"
+                ))
+                .await?;
+            session
+                .write_file_mode(AUDIT_POLICY_PATH, audit_policy().as_bytes(), CIS_FILE_MODE)
+                .await?;
+        }
         session
             .write_file(&Self::config_path(), self.rendered.as_bytes())
             .await?;
@@ -299,7 +359,12 @@ impl Task for KubeadmInit {
                 Ok(Some(_)) => {}
             }
         }
-
+        // WP-75: tighten the kubeconfigs kubeadm just wrote (0644 ->
+        // 0600). Runs after every init, so a re-run on an already
+        // initialized node converges the modes too.
+        if self.cis {
+            apply_cis_file_modes(session).await?;
+        }
         // kubeadm 1.33 HA: repair the admin-group RBAC first (kube-vip's
         // lease depends on it; kubeadm's own attempt runs against the
         // not-yet-routable VIP). Then wait for the VIP-backed API, re-run
@@ -534,6 +599,7 @@ mod tests {
             distribution: kurin_config::Distribution::K8s,
             ha_mode: kurin_config::HaMode::KubeVip,
             runtime: kurin_config::RuntimeKind::Containerd,
+            hardening: kurin_config::HardeningProfile::Default,
             kubernetes_version: "1.33.1".parse().unwrap(),
             pod_cidr: "10.233.64.0/18".parse().unwrap(),
             service_cidr: "10.233.0.0/18".parse().unwrap(),
@@ -570,6 +636,113 @@ mod tests {
             .rendered
             .contains("controlPlaneEndpoint: 192.168.10.100:6443"));
         assert!(t.rendered.contains("advertiseAddress: 192.168.10.11"));
+    }
+
+    /// WP-75: the default profile renders exactly what it did before the
+    /// CIS profile existed — no apiserver extraArgs, no audit volumes, no
+    /// kubelet hardening block.
+    #[test]
+    fn default_profile_renders_no_cis_hardening() {
+        let c = cluster(Some("192.168.10.100"));
+        let t = KubeadmInit::new(&c, &c.nodes[0], &crate::test_util::run());
+        for absent in [
+            "extraArgs",
+            "audit-policy",
+            "audit-log",
+            "profiling=false",
+            "protectKernelDefaults",
+            "readOnlyPort",
+            "tlsCipherSuites",
+            "anonymous",
+        ] {
+            assert!(!t.rendered.contains(absent), "default render has {absent}");
+        }
+        // The template's only kubelet section stays the historical one.
+        let kubelet_doc = t.rendered.split("---").last().unwrap();
+        assert_eq!(
+            kubelet_doc.trim(),
+            "apiVersion: kubelet.config.k8s.io/v1beta1\nkind: KubeletConfiguration\ncgroupDriver: systemd"
+        );
+    }
+
+    /// WP-75: `profile = "cis"` adds the apiserver audit/admission/TLS
+    /// flags, the audit-policy mount, and the kubelet hardening block.
+    #[test]
+    fn cis_profile_renders_apiserver_and_kubelet_hardening() {
+        let mut c = cluster(Some("192.168.10.100"));
+        c.hardening = kurin_config::HardeningProfile::Cis;
+        let t = KubeadmInit::new(&c, &c.nodes[0], &crate::test_util::run());
+        for present in [
+            "--audit-log-path=/var/log/kubernetes/audit.log",
+            "--audit-policy-file=/etc/kubernetes/audit-policy.yaml",
+            "--profiling=false",
+            "--enable-admission-plugins=NodeRestriction,PodSecurity",
+            "--authorization-mode=Node,RBAC",
+            "--tls-cipher-suites=TLS_AES_128_GCM_SHA256",
+            "hostPath: /etc/kubernetes/audit-policy.yaml",
+            "protectKernelDefaults: true",
+            "enabled: false",
+            "mode: Webhook",
+            "readOnlyPort: 0",
+            "streamingConnectionIdleTimeout: 5m",
+            "eventRecordQPS: 0",
+            "rotateCertificates: true",
+        ] {
+            assert!(t.rendered.contains(present), "cis render lacks {present}");
+        }
+        assert!(t.cis);
+    }
+
+    /// WP-75: the audit policy is a real Kubernetes audit document.
+    #[test]
+    fn audit_policy_renders_the_cis_document() {
+        let p = audit_policy();
+        assert!(p.contains("apiVersion: audit.k8s.io/v1"));
+        assert!(p.contains("kind: Policy"));
+        assert!(p.contains("level: RequestResponse"));
+        assert!(p.contains("level: Metadata"));
+        assert!(p.contains("omitStages"));
+    }
+
+    /// WP-75: the CIS file-mode sweep chmods every kubeconfig kubeadm
+    /// writes (and the kubelet config) to 0600, skipping missing files.
+    #[tokio::test]
+    async fn cis_file_modes_target_the_kubeconfigs_and_skip_missing() {
+        struct Mock {
+            commands: std::sync::Mutex<Vec<String>>,
+        }
+        #[async_trait::async_trait]
+        impl Session for Mock {
+            async fn exec(&self, command: &str) -> Result<kurin_core::engine::ExecOutput> {
+                self.commands.lock().unwrap().push(command.to_string());
+                Ok(kurin_core::engine::ExecOutput {
+                    exit_code: 0,
+                    stdout: String::new(),
+                    stderr: String::new(),
+                })
+            }
+            async fn write_file(&self, _p: &str, _c: &[u8]) -> Result<()> {
+                Ok(())
+            }
+            async fn file_sha256(&self, _p: &str) -> Result<Option<String>> {
+                Ok(None)
+            }
+            async fn service_active(&self, _n: &str) -> Result<bool> {
+                Ok(true)
+            }
+        }
+        let m = Mock {
+            commands: std::sync::Mutex::new(Vec::new()),
+        };
+        apply_cis_file_modes(&m).await.expect("chmod sweep runs");
+        let cmds = m.commands.lock().unwrap().clone();
+        assert_eq!(cmds.len(), 1);
+        let cmd = &cmds[0];
+        for path in CIS_KUBECONFIGS {
+            assert!(cmd.contains(path), "{path} missing from {cmd}");
+        }
+        assert!(cmd.contains("chmod 600"), "{cmd}");
+        assert!(cmd.contains("[ -e \"$f\" ]"), "{cmd}");
     }
 
     #[test]

@@ -8,7 +8,10 @@ use std::sync::Arc;
 use kurin_config::{Cluster, Node};
 use miette::Result;
 
-use crate::tasks::bootstrap::KUBEADM_DIR;
+use crate::tasks::bootstrap::{
+    apply_cis_file_modes, audit_policy, AUDIT_LOG_DIR, AUDIT_POLICY_PATH, CIS_FILE_MODE,
+    KUBEADM_DIR,
+};
 use crate::templates;
 use kurin_core::blackboard::JOIN_MATERIAL;
 use kurin_core::engine::{Drift, Outcome, Session, Stage, Task};
@@ -22,6 +25,7 @@ pub struct KubeadmJoin {
     api_server_endpoint: String,
     advertise_address: String,
     rendered: String,
+    cis: bool,
     run: Arc<RunContext>,
 }
 
@@ -63,6 +67,7 @@ impl KubeadmJoin {
             api_server_endpoint,
             advertise_address: node.internal_address.to_string(),
             rendered,
+            cis: cluster.is_cis(),
             run: Arc::clone(run),
         }
     }
@@ -134,6 +139,19 @@ impl Task for KubeadmJoin {
             ));
         }
         session.exec(&format!("mkdir -p {KUBEADM_DIR}")).await?;
+        // WP-75: joining members need the audit policy in place before
+        // their apiserver starts (control-plane joins), and every member
+        // converges the kubeconfigs kubeadm writes to 0600.
+        if self.cis {
+            session
+                .exec(&format!(
+                    "mkdir -p {AUDIT_LOG_DIR} && chmod 700 {AUDIT_LOG_DIR}"
+                ))
+                .await?;
+            session
+                .write_file_mode(AUDIT_POLICY_PATH, audit_policy().as_bytes(), CIS_FILE_MODE)
+                .await?;
+        }
         session
             .write_file(&Self::config_path(), self.rendered.as_bytes())
             .await?;
@@ -145,6 +163,12 @@ impl Task for KubeadmJoin {
             Err(e) => return Ok(Outcome::Unknown(format!("join exec lost: {e}"))),
         };
         match session.file_sha256("/etc/kubernetes/kubelet.conf").await? {
+            Some(_) if self.cis => {
+                // WP-75: the join wrote kubelet.conf (and on control
+                // planes the other kubeconfigs) with kubeadm's 0644.
+                apply_cis_file_modes(session).await?;
+                Ok(Outcome::Verified)
+            }
             Some(_) => Ok(Outcome::Verified),
             None => Err(miette::miette!(
                 "kubeadm join on {} left no kubelet.conf (exit {}): {}",
@@ -192,6 +216,7 @@ mod tests {
             distribution: kurin_config::Distribution::K8s,
             ha_mode: kurin_config::HaMode::KubeVip,
             runtime: kurin_config::RuntimeKind::Containerd,
+            hardening: kurin_config::HardeningProfile::Default,
             kubernetes_version: "1.33.1".parse().unwrap(),
             pod_cidr: "10.233.64.0/18".parse().unwrap(),
             service_cidr: "10.233.0.0/18".parse().unwrap(),

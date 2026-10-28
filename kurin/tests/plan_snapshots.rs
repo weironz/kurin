@@ -43,7 +43,7 @@ const FIXTURES: &[&str] = &[
     "offline.toml",
     "package-base.toml",
     "zone-cn.toml",
-    "labels.toml",
+    "cis.toml",
 ];
 
 /// Placeholder in `offline.toml`; replaced before parsing.

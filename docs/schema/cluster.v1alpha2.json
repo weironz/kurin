@@ -180,6 +180,21 @@
       ],
       "type": "string"
     },
+    "HardeningProfile": {
+      "description": "Security posture of the installed control plane (WP-75).",
+      "oneOf": [
+        {
+          "const": "default",
+          "description": "The historical kurin behavior: upstream kubeadm defaults, nothing\nrendered beyond what the templates already carry.",
+          "type": "string"
+        },
+        {
+          "const": "cis",
+          "description": "CIS benchmark hardening on the kubeadm track: apiserver/kubelet\nflags, an audit policy, PSA `restricted` labels on `default` and\n0600 file modes. Compare against a kube-bench report with\n`just cis-check`.",
+          "type": "string"
+        }
+      ]
+    },
     "HostKeyMode": {
       "description": "What to do when a host key is not yet recorded.\n\nA key that *is* recorded but does not match is always rejected, in every\nmode: that is the signal of a rebuilt node (remove the stale entry) or of\nan interception attempt.",
       "oneOf": [
@@ -207,6 +222,11 @@
           "$ref": "#/$defs/Distribution",
           "default": "kubeadm",
           "description": "Cluster distribution: `kubeadm` (default, formerly `k8s`) or `k3s`."
+        },
+        "profile": {
+          "$ref": "#/$defs/HardeningProfile",
+          "default": "default",
+          "description": "Hardening profile (WP-75): `default` (the historical behavior) or\n`cis` — kubeadm-track apiserver/kubelet flags, audit policy, PSA\n`restricted` labels and 0600 file modes."
         },
         "version": {
           "anyOf": [
@@ -732,6 +752,7 @@
       "$ref": "#/$defs/KubernetesConfig",
       "default": {
         "distribution": "kubeadm",
+        "profile": "default",
         "version": null
       }
     },

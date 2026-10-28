@@ -1,0 +1,44 @@
+---
+source: kurin/tests/plan_snapshots.rs
+expression: render_tree(&plan)
+---
+├── stage: discover (2 tasks)
+│   ├── discover/facts@cp1 :: arch=amd64 os=? cpu=0 mem=0MiB
+│   └── discover/facts@w1 :: arch=amd64 os=? cpu=0 mem=0MiB
+├── stage: preflight (2 tasks)
+│   ├── preflight/cp1 :: probe swap / selinux / time-sync / kernel modules
+│   └── preflight/w1 :: probe swap / selinux / time-sync / kernel modules
+├── stage: registry (0 tasks)
+├── stage: artifacts (2 tasks)
+│   ├── artifacts/install@cp1 :: fetch+install pinned binaries (amd64)
+│   └── artifacts/install@w1 :: fetch+install pinned binaries (amd64)
+├── stage: prepare (12 tasks)
+│   ├── prepare/os-baseline@cp1 :: disable swap / firewalld, SELinux permissive
+│   ├── prepare/sysctl@cp1 :: modprobe br_netfilter; persist net.bridge.bridge-nf-call-iptables net.bridge.bridge-nf-call-ip6tables net.ipv4.ip_forward
+│   ├── prepare/kernel-deps@cp1 :: ensure conntrack/socat (+recommended ebtables ipset ipvsadm)
+│   ├── prepare/containerd-config@cp1 :: render + install /etc/containerd/config.toml
+│   ├── prepare/containerd-unit@cp1 :: render + install /etc/systemd/system/containerd.service, enable --now
+│   ├── prepare/kubelet-unit@cp1 :: render + install /etc/systemd/system/kubelet.service, enable (start deferred to kubeadm)
+│   ├── prepare/os-baseline@w1 :: disable swap / firewalld, SELinux permissive
+│   ├── prepare/sysctl@w1 :: modprobe br_netfilter; persist net.bridge.bridge-nf-call-iptables net.bridge.bridge-nf-call-ip6tables net.ipv4.ip_forward
+│   ├── prepare/kernel-deps@w1 :: ensure conntrack/socat (+recommended ebtables ipset ipvsadm)
+│   ├── prepare/containerd-config@w1 :: render + install /etc/containerd/config.toml
+│   ├── prepare/containerd-unit@w1 :: render + install /etc/systemd/system/containerd.service, enable --now
+│   └── prepare/kubelet-unit@w1 :: render + install /etc/systemd/system/kubelet.service, enable (start deferred to kubeadm)
+├── stage: images (2 tasks)
+│   ├── images/import@cp1 :: no-op online (kubelet pulls from registries)
+│   └── images/import@w1 :: no-op online (kubelet pulls from registries)
+├── stage: vip (1 tasks)
+│   └── bootstrap/kubeadm-init@cp1 :: kubeadm init --config /etc/kurin/kubeadm-init.yaml on cp1
+├── stage: bootstrap (1 tasks)
+│   └── bootstrap/api-ready@cp1 :: wait until 10.99.0.11:6443 serves the API (VIP backend up)
+├── stage: api-ready (1 tasks)
+│   └── join/kubeadm@w1 :: kubeadm join (worker) -> 10.99.0.11:6443
+├── stage: join (0 tasks)
+├── stage: cni (1 tasks)
+│   └── cni/calico-operator@cp1 :: kubectl apply tigera-operator manifest + Installation CR
+├── stage: addons (0 tasks)
+└── stage: post (3 tasks)
+    ├── post/kubeconfig@cp1 :: fetch admin.conf -> merge local kubeconfig (context cluster-cis)
+    ├── post/psa-labels :: label 1 namespace(s) pod-security.kubernetes.io/*=restricted
+    └── post/state-record@cp1 :: record cluster state in kube-system/kurin-state

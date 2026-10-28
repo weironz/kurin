@@ -6,7 +6,9 @@
 //! - `[runtime] kind` replaces `kubernetes.runtime`;
 //! - `kubernetes.distribution` spells the kubeadm track `"kubeadm"`
 //!   (`"k8s"` stays accepted as an alias);
-//! - `[packages]` declares package sources (WP-30+);
+//! - `[kubernetes] profile` (WP-75) selects the hardening posture
+//!   (`default` | `cis`); v1alpha1 rejects the field with a migration
+//!   error;
 //! - `[addons.<name>]` declares addons declaratively; `[storage]` is gone
 //!   and maps to `addons.local-path` / `addons.nfs-subdir`;
 //! - a `role = "registry"` node without an explicit `[registry] kind`
@@ -25,8 +27,8 @@ use semver::Version;
 use serde::{Deserialize, Serialize};
 
 use crate::config::{
-    ArtifactsConfig, Distribution as DistributionV1, HaConfig, NetworkConfig, NodeConfig, NodeRole,
-    RegistryKind, RuntimeKind, SshDefaults,
+    ArtifactsConfig, Distribution as DistributionV1, HaConfig, HardeningProfile, NetworkConfig,
+    NodeConfig, NodeRole, RegistryKind, RuntimeKind, SshDefaults,
 };
 use crate::error::{ConfigError, Result};
 use crate::model::{AddonSpec, ClusterSpec, PackageSources};
@@ -94,6 +96,11 @@ pub struct KubernetesConfig {
     /// Cluster distribution: `kubeadm` (default, formerly `k8s`) or `k3s`.
     #[serde(default)]
     pub distribution: Distribution,
+    /// Hardening profile (WP-75): `default` (the historical behavior) or
+    /// `cis` — kubeadm-track apiserver/kubelet flags, audit policy, PSA
+    /// `restricted` labels and 0600 file modes.
+    #[serde(default)]
+    pub profile: HardeningProfile,
 }
 
 /// Distribution names in v1alpha2: the kubeadm track is spelled
@@ -364,6 +371,7 @@ impl TryFrom<ClusterConfig> for ClusterSpec {
                 version: cfg.kubernetes.version,
                 distribution: cfg.kubernetes.distribution.into(),
                 runtime: cfg.runtime.kind,
+                profile: Some(cfg.kubernetes.profile),
             },
             network: cfg.network,
             ssh: cfg.ssh,
@@ -500,6 +508,41 @@ role = "control-plane"
         let toml = MINIMAL.to_string() + "\n[kubernetes]\ndistribution = \"k8s\"\n";
         let spec = parse_str(Path::new("x.toml"), &toml).expect("v1alpha2 parses");
         assert_eq!(spec.distribution, crate::config::Distribution::K8s);
+    }
+
+    /// WP-75: `profile` defaults to the historical behavior, `cis` lowers
+    /// into the model, and any other value fails at parse time.
+    #[test]
+    fn hardening_profile_parses_and_defaults() {
+        let plain = parse_str(Path::new("x.toml"), MINIMAL).expect("v1alpha2 parses");
+        assert_eq!(plain.hardening, HardeningProfile::Default);
+        assert!(!plain.is_cis());
+
+        let toml = MINIMAL.to_string() + "\n[kubernetes]\nprofile = \"cis\"\n";
+        let spec = parse_str(Path::new("x.toml"), &toml).expect("v1alpha2 parses");
+        assert_eq!(spec.hardening, HardeningProfile::Cis);
+        assert!(spec.is_cis());
+
+        // `default` is the explicit spelling of the default.
+        let toml = MINIMAL.to_string() + "\n[kubernetes]\nprofile = \"default\"\n";
+        let spec = parse_str(Path::new("x.toml"), &toml).expect("v1alpha2 parses");
+        assert_eq!(spec.hardening, HardeningProfile::Default);
+
+        let toml = MINIMAL.to_string() + "\n[kubernetes]\nprofile = \"hardened\"\n";
+        let err = parse_str(Path::new("x.toml"), &toml).expect_err("unknown profile is rejected");
+        assert!(
+            matches!(&err, crate::ConfigError::Parse { message, .. } if message.contains("hardened")),
+            "error: {err:?}"
+        );
+
+        // v1alpha1 keeps rejecting the field, with the migration hint.
+        let toml = MINIMAL.replace("version = \"v1alpha2\"", "version = \"v1alpha1\"")
+            + "\n[kubernetes]\nprofile = \"cis\"\n";
+        let err = parse_str(Path::new("x.toml"), &toml).expect_err("v1alpha1 rejects profile");
+        assert!(
+            format!("{err}").contains("kubernetes.profile requires version"),
+            "message: {err}"
+        );
     }
 
     #[test]

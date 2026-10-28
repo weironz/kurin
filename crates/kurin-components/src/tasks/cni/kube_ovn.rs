@@ -340,6 +340,7 @@ mod tests {
             distribution: kurin_config::Distribution::K8s,
             ha_mode: kurin_config::HaMode::KubeVip,
             runtime: kurin_config::RuntimeKind::Containerd,
+            hardening: kurin_config::HardeningProfile::Default,
             ssh: kurin_config::SshDefaultsSpec {
                 user: "root".into(),
                 port: 22,

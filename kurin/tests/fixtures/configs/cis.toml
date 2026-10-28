@@ -1,0 +1,31 @@
+version = "v1alpha2"
+name = "cis"
+
+[kubernetes]
+version = "1.33.1"
+profile = "cis"
+
+[runtime]
+kind = "containerd"
+
+[network]
+pod-cidr = "10.233.64.0/18"
+service-cidr = "10.233.0.0/18"
+
+[network.cni]
+kind = "calico"
+
+[ssh]
+user = "root"
+
+[ssh.auth]
+method = "password"
+password = "fake"
+
+[nodes.cp1]
+address = "10.99.0.11"
+role = "control-plane"
+
+[nodes.w1]
+address = "10.99.0.21"
+role = "worker"

@@ -23,8 +23,8 @@ use semver::Version;
 use serde::Serialize;
 
 use crate::config::{
-    BecomeMode, ClusterConfig, CniConfig, Distribution, HaMode, HostKeyMode, NodeRole,
-    RegistryKind, RuntimeKind, SshAuth, StorageConfig, StorageKind, CONFIG_VERSION,
+    BecomeMode, ClusterConfig, CniConfig, Distribution, HaMode, HardeningProfile, HostKeyMode,
+    NodeRole, RegistryKind, RuntimeKind, SshAuth, StorageConfig, StorageKind, CONFIG_VERSION,
 };
 use crate::error::{ConfigError, Result};
 use crate::secret::SecretRef;
@@ -232,6 +232,10 @@ pub struct ClusterSpec {
     pub kubernetes_version: Version,
     pub distribution: Distribution,
     pub runtime: RuntimeKind,
+    /// Security posture of the installed control plane (WP-75): `default`
+    /// keeps the historical kubeadm behavior, `cis` renders the CIS
+    /// apiserver/kubelet flags, audit policy, PSA labels and 0600 modes.
+    pub hardening: HardeningProfile,
     pub pod_cidr: Ipv4Net,
     pub service_cidr: Ipv4Net,
     pub dns_domain: String,
@@ -312,6 +316,10 @@ impl ClusterSpec {
     /// Configured mirror zone, if any.
     pub fn zone(&self) -> Option<&str> {
         self.packages.zone.as_deref()
+    }
+    /// True when the cluster runs the CIS hardening profile (WP-75).
+    pub fn is_cis(&self) -> bool {
+        self.hardening == HardeningProfile::Cis
     }
     /// Registry implementation, when one is configured.
     pub fn registry_kind(&self) -> Option<RegistryKind> {
@@ -442,12 +450,17 @@ impl ClusterSpec {
         let distribution = cfg.kubernetes.distribution;
         let ha_mode = cfg.ha.mode;
         let runtime = cfg.kubernetes.runtime;
+        // v1alpha1 documents never reach this point with a profile set:
+        // `check_version` rejects one. `unwrap_or_default` keeps the two
+        // schema versions agreeing on the absent-field meaning.
+        let hardening = cfg.kubernetes.profile.unwrap_or_default();
         let spec = ClusterSpec {
             name: cfg.name,
             labels: BTreeMap::new(),
             kubernetes_version,
             distribution,
             runtime,
+            hardening,
             pod_cidr,
             service_cidr,
             dns_domain,
@@ -836,6 +849,17 @@ pub fn check_version(cfg: &ClusterConfig) -> Result<()> {
             String::new(),
             format!(
                 "registry.kind = \"external\" requires version = \"{}\"",
+                crate::v1alpha2::CONFIG_VERSION
+            ),
+        ));
+    }
+    // `profile` is a v1alpha2 addition (WP-75); same honest-failure rule.
+    if cfg.kubernetes.profile.is_some() {
+        return Err(ConfigError::invalid(
+            String::new(),
+            format!(
+                "kubernetes.profile requires version = \"{}\": remove it, run `kurin config \
+                 migrate`, then add profile = \"cis\" to the migrated document",
                 crate::v1alpha2::CONFIG_VERSION
             ),
         ));

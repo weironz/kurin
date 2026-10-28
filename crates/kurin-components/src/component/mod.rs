@@ -368,6 +368,7 @@ fn bundle_spec() -> Cluster {
         distribution: Distribution::K8s,
         ha_mode: kurin_config::HaMode::KubeVip,
         runtime: kurin_config::RuntimeKind::Containerd,
+        hardening: kurin_config::HardeningProfile::Default,
         kubernetes_version: kurin_artifact::version::KUBERNETES_VERSION
             .parse()
             .expect("the pinned kubernetes version parses"),
