@@ -869,6 +869,9 @@ fn k3s_registries(endpoint: &str, upstreams: &[String]) -> String {
 #[derive(Default)]
 struct SeedOp {
     registry: Option<Arc<SeedRegistry>>,
+    /// The opened payload set: its package temp dir must outlive the
+    /// registry, because `SeedStore` keeps file paths into it.
+    payloads: Option<kurin_artifact::preload::PayloadSet>,
     /// Node name → its tunnel record (kept for the install duration).
     tunnels: BTreeMap<String, SeedTunnel>,
 }
@@ -904,12 +907,33 @@ fn seed_targets(cluster: &Cluster, run: &RunContext) -> Result<Vec<SeedTarget>> 
         }
         Ok(())
     };
+    // Only the architectures this cluster actually uses: an amd64-only
+    // package carries no arm64 blobs, and serving the whole multi-arch
+    // index would 404 on the missing children.
+    let mut arches: Vec<Arch> = Vec::new();
+    {
+        let facts = run.facts.read().unwrap_or_else(|e| e.into_inner());
+        for node in cluster
+            .nodes
+            .iter()
+            .filter(|node| node.role != kurin_config::NodeRole::Lb)
+        {
+            if let Ok(arch) = facts.arch(&node.name) {
+                if !arches.contains(&arch) {
+                    arches.push(arch);
+                }
+            }
+        }
+    }
+    if arches.is_empty() {
+        arches.push(Arch::Amd64);
+    }
     for entry in manifest.artifacts() {
         if entry.kind != ArtifactKind::Image {
             continue;
         }
-        for arch in [Arch::Amd64, Arch::Arm64] {
-            let spec = manifest.spec(&entry.name, arch)?;
+        for arch in &arches {
+            let spec = manifest.spec(&entry.name, *arch)?;
             if spec.expected_sha256().is_none() {
                 continue;
             }
@@ -922,7 +946,7 @@ fn seed_targets(cluster: &Cluster, run: &RunContext) -> Result<Vec<SeedTarget>> 
     {
         for reference in &selected.addon.manifest().spec.images {
             add(
-                SeedTarget::Reference(reference.clone(), Arch::Amd64),
+                SeedTarget::Reference(reference.clone(), arches[0]),
                 reference,
             )?;
         }
@@ -930,18 +954,55 @@ fn seed_targets(cluster: &Cluster, run: &RunContext) -> Result<Vec<SeedTarget>> 
     Ok(targets)
 }
 
+/// The architectures this cluster actually uses (LB nodes excluded).
+fn cluster_arches(cluster: &Cluster, run: &RunContext) -> Vec<Arch> {
+    let mut arches: Vec<Arch> = Vec::new();
+    let facts = run.facts.read().unwrap_or_else(|e| e.into_inner());
+    for node in cluster
+        .nodes
+        .iter()
+        .filter(|node| node.role != kurin_config::NodeRole::Lb)
+    {
+        if let Ok(arch) = facts.arch(&node.name) {
+            if !arches.contains(&arch) {
+                arches.push(arch);
+            }
+        }
+    }
+    if arches.is_empty() {
+        arches.push(Arch::Amd64);
+    }
+    arches
+}
+
 /// Build the seed store for one run: every image of [`seed_targets`],
 /// resolved from the run's payload set (package, legacy bundle or cache)
 /// and registered under its mirror repo:tag.
-async fn build_store(cluster: &Cluster, run: &RunContext) -> Result<SeedStore> {
-    let targets = seed_targets(cluster, run)?;
+async fn build_store(cluster: &Cluster, run: &RunContext) -> Result<(SeedStore, PayloadSet)> {
     let payloads = PayloadSet::open(&run.sources).await?;
+    // A package carries exactly the images it was built with (`--cni`,
+    // addons); the embedded manifest lists every component and would ask
+    // for payloads the package does not have.
+    let targets = match &payloads {
+        PayloadSet::Package { package } => {
+            let arches = cluster_arches(cluster, run);
+            let meta = package.manifest()?;
+            let mut targets = Vec::new();
+            for image in &meta.images {
+                for arch in &arches {
+                    targets.push(SeedTarget::Reference(image.reference.clone(), *arch));
+                }
+            }
+            targets
+        }
+        _ => seed_targets(cluster, run)?,
+    };
     let mut store = SeedStore::default();
     for target in &targets {
         let payload = match target {
-            SeedTarget::Spec(spec) => payloads.image_for_push(spec).await?,
+            SeedTarget::Spec(spec) => payloads.image_for_seed(spec).await?,
             SeedTarget::Reference(reference, arch) => {
-                payloads.image_for_push_ref(reference, *arch).await?
+                payloads.image_for_seed_ref(reference, *arch).await?
             }
         };
         let reference = match target {
@@ -951,17 +1012,18 @@ async fn build_store(cluster: &Cluster, run: &RunContext) -> Result<SeedStore> {
         let (repo, tag) = mirror_repo_tag(&reference, run.sources.zone)?;
         store.add_image(&repo, &tag, &payload);
     }
-    Ok(store)
+    Ok((store, payloads))
 }
 
 /// Start (or restart) this operation's seed registry from the run's
 /// payload set and return its loopback address.
 async fn serve(cluster: &Cluster, run: &RunContext) -> Result<SocketAddr> {
-    let store = build_store(cluster, run).await?;
+    let (store, payloads) = build_store(cluster, run).await?;
     let registry = Arc::new(SeedRegistry::bind(Arc::new(store))?);
     let addr = registry.addr();
     let mut ops = SEED_OPS.lock().unwrap_or_else(|e| e.into_inner());
     let op = ops.entry(run.op_id.clone()).or_default();
+    op.payloads = Some(payloads);
     if let Some(old) = op.registry.replace(registry) {
         old.shutdown();
     }

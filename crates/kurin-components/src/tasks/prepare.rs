@@ -97,7 +97,15 @@ impl Task for Sysctl {
         script.push_str("mkdir -p /etc/modules-load.d\n");
         script.push_str("modprobe overlay >/dev/null 2>&1 || true\n");
         script.push_str("modprobe br_netfilter >/dev/null 2>&1 || true\n");
-        script.push_str("sysctl --system >/dev/null\n");
+        // Apply each key explicitly: `sysctl --system` aborts the rest of a
+        // file on a missing key (e.g. the bridge keys before br_netfilter
+        // is available on some distros), which left ip_forward at 0.
+        for (key, value) in self.pairs() {
+            script.push_str(&format!(
+                "sysctl -w {key}={value} >/dev/null 2>&1 || true\n"
+            ));
+        }
+        script.push_str("sysctl --system >/dev/null 2>&1 || true\n");
         let out = session.exec(&script).await?;
         if out.ok() {
             Ok(Outcome::Verified)

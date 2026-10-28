@@ -55,6 +55,17 @@ fn install_for_runtime(name: &str, runtime: kurin_config::RuntimeKind) -> Option
     install_for(name)
 }
 
+/// Whether this artifact belongs to the cluster's distribution: the
+/// embedded manifest lists both kubeadm and k3s binaries, but a package
+/// carries only the one it was built with.
+fn install_for_distribution(name: &str, distribution: kurin_config::Distribution) -> bool {
+    match name {
+        "k3s" => distribution == kurin_config::Distribution::K3s,
+        "kubeadm" | "kubelet" | "kubectl" => distribution == kurin_config::Distribution::K8s,
+        _ => true,
+    }
+}
+
 fn install_for(name: &str) -> Option<Install> {
     Some(match name {
         "kubeadm" => Install::Direct("/usr/local/bin/kubeadm"),
@@ -94,6 +105,9 @@ pub struct ArtifactsInstall {
     arch: Arch,
     /// Runtime selection (CRI-O clusters skip the containerd payload).
     runtime: kurin_config::RuntimeKind,
+    /// Distribution selection (a kubeadm package carries no k3s binary and
+    /// vice versa; the manifest lists both).
+    distribution: kurin_config::Distribution,
     /// Registry delivery: the file blobs were already downloaded by
     /// [`FetchFromRegistry`] into [`fetch_path`]; install them locally
     /// instead of streaming the package payload.
@@ -107,6 +121,7 @@ impl ArtifactsInstall {
         node: &Node,
         arch: Arch,
         runtime: kurin_config::RuntimeKind,
+        distribution: kurin_config::Distribution,
         run: &Arc<RunContext>,
         registry_fetch: bool,
     ) -> Self {
@@ -114,6 +129,7 @@ impl ArtifactsInstall {
             node: node.clone(),
             arch,
             runtime,
+            distribution,
             registry_fetch,
             run: Arc::clone(run),
         }
@@ -154,8 +170,10 @@ impl Task for ArtifactsInstall {
         let manifest = install_manifest(&self.run.sources)?;
         let marker = self.marker(session).await?;
         for entry in manifest.artifacts() {
-            if install_for_runtime(&entry.name, self.runtime).is_none() {
-                continue; // images/manifests don't install to the node
+            if !install_for_distribution(&entry.name, self.distribution)
+                || install_for_runtime(&entry.name, self.runtime).is_none()
+            {
+                continue; // images/manifests/other distros don't install here
             }
             let spec = manifest.spec(&entry.name, self.arch)?;
             let expected = spec.expected_sha256();
@@ -196,6 +214,9 @@ impl Task for ArtifactsInstall {
             .await?;
 
         for entry in manifest.artifacts() {
+            if !install_for_distribution(&entry.name, self.distribution) {
+                continue;
+            }
             let Some(install) = install_for(&entry.name) else {
                 continue;
             };
@@ -276,7 +297,9 @@ impl Task for ArtifactsInstall {
         // Marker records what is installed; check compares to the manifest.
         let mut lines = String::new();
         for entry in manifest.artifacts() {
-            if install_for_runtime(&entry.name, self.runtime).is_none() {
+            if !install_for_distribution(&entry.name, self.distribution)
+                || install_for_runtime(&entry.name, self.runtime).is_none()
+            {
                 continue;
             }
             let spec = manifest.spec(&entry.name, self.arch)?;
@@ -300,6 +323,7 @@ pub struct FetchFromRegistry {
     node: Node,
     arch: Arch,
     runtime: kurin_config::RuntimeKind,
+    distribution: kurin_config::Distribution,
     endpoint: String,
     prefix: String,
     username: Option<String>,
@@ -316,6 +340,7 @@ impl FetchFromRegistry {
         node: &Node,
         arch: Arch,
         runtime: kurin_config::RuntimeKind,
+        distribution: kurin_config::Distribution,
         endpoint: &str,
         prefix: &str,
         username: Option<&str>,
@@ -327,6 +352,7 @@ impl FetchFromRegistry {
             node: node.clone(),
             arch,
             runtime,
+            distribution,
             endpoint: endpoint.to_string(),
             prefix: prefix.to_string(),
             username: username.map(str::to_string),
@@ -380,7 +406,9 @@ impl Task for FetchFromRegistry {
     async fn check(&self, session: &dyn Session) -> Result<Drift> {
         let manifest = install_manifest(&self.run.sources)?;
         for entry in manifest.artifacts() {
-            if install_for_runtime(&entry.name, self.runtime).is_none() {
+            if !install_for_distribution(&entry.name, self.distribution)
+                || install_for_runtime(&entry.name, self.runtime).is_none()
+            {
                 continue;
             }
             let spec = manifest.spec(&entry.name, self.arch)?;
@@ -409,7 +437,9 @@ impl Task for FetchFromRegistry {
         let manifest = install_manifest(&self.run.sources)?;
         let redact = self.password.clone().unwrap_or_default();
         for entry in manifest.artifacts() {
-            if install_for_runtime(&entry.name, self.runtime).is_none() {
+            if !install_for_distribution(&entry.name, self.distribution)
+                || install_for_runtime(&entry.name, self.runtime).is_none()
+            {
                 continue;
             }
             let spec = manifest.spec(&entry.name, self.arch)?;

@@ -207,6 +207,7 @@ async fn artifacts_install_streams_the_selected_arch_blob() {
             &node,
             arch,
             kurin_config::RuntimeKind::Containerd,
+            cluster.distribution,
             &run,
             false,
         );
@@ -218,10 +219,13 @@ async fn artifacts_install_streams_the_selected_arch_blob() {
         task.apply(&session).await.expect("apply succeeds");
 
         let uploads = session.uploads();
+        // The cluster is kubeadm: the k3s binary is in the manifest but
+        // belongs to the other distribution and must not be installed.
+        let expected: Vec<_> = INSTALLABLE.iter().filter(|name| **name != "k3s").collect();
         assert_eq!(
             uploads.len(),
-            INSTALLABLE.len(),
-            "one upload per installable artifact"
+            expected.len(),
+            "one upload per installable artifact of this distribution"
         );
         for upload in &uploads {
             assert_eq!(

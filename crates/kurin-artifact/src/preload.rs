@@ -382,6 +382,35 @@ impl PayloadSet {
     ///
     /// [`PreloadError::MissingImage`] when the source does not carry the
     /// image.
+    /// Like [`Self::image_for_push`], but for the seed registry: a package
+    /// serves only the selected platform (arch-specific packages do not
+    /// carry the other platforms' blobs).
+    pub async fn image_for_seed(
+        &self,
+        spec: &ArtifactSpec,
+    ) -> Result<ImagePushPayload, PreloadError> {
+        match self {
+            PayloadSet::Package { package } => {
+                image_push_from_package_ref_platform(package, &spec.url(), spec.arch)
+            }
+            _ => self.image_for_push(spec).await,
+        }
+    }
+
+    /// [`Self::image_for_seed`] for a reference-declared image.
+    pub async fn image_for_seed_ref(
+        &self,
+        reference: &str,
+        arch: Arch,
+    ) -> Result<ImagePushPayload, PreloadError> {
+        match self {
+            PayloadSet::Package { package } => {
+                image_push_from_package_ref_platform(package, reference, arch)
+            }
+            _ => self.image_for_push_ref(reference, arch).await,
+        }
+    }
+
     pub async fn image_for_push_ref(
         &self,
         reference: &str,
@@ -721,6 +750,44 @@ fn image_push_from_package_ref(
     let index_digest = package_digest(image)?;
     let source = PushSource::Store(package.layout().blobs().clone());
     let root_bytes = source.read(&index_digest)?;
+    push_payload(root_bytes, source, reference)
+}
+
+/// Like [`image_push_from_package_ref`], but serve the selected platform's
+/// manifest instead of the whole multi-arch index. Used by the seed
+/// registry: an arch-specific package does not carry the other platforms'
+/// blobs, so serving the index would 404 on their children.
+fn image_push_from_package_ref_platform(
+    package: &PackageSource,
+    reference: &str,
+    arch: Arch,
+) -> Result<ImagePushPayload, PreloadError> {
+    let meta = package.manifest()?;
+    let image = meta
+        .images
+        .iter()
+        .find(|i| i.reference == reference)
+        .ok_or_else(|| PreloadError::MissingImage {
+            reference: reference.to_string(),
+        })?;
+    let index_digest = package_digest(image)?;
+    let source = PushSource::Store(package.layout().blobs().clone());
+    let root_bytes = source.read(&index_digest)?;
+    let is_index = serde_json::from_slice::<serde_json::Value>(&root_bytes)
+        .ok()
+        .and_then(|value| {
+            value
+                .get("manifests")
+                .and_then(serde_json::Value::as_array)
+                .map(|manifests| !manifests.is_empty())
+        })
+        .unwrap_or(false);
+    let root_bytes = if is_index {
+        let (digest, _, _) = platform_entry(&root_bytes, arch)?;
+        source.read(&digest)?
+    } else {
+        root_bytes
+    };
     push_payload(root_bytes, source, reference)
 }
 

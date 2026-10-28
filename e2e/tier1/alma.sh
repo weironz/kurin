@@ -10,12 +10,9 @@ LOCAL_IMG="$HOME/AlmaLinux-9-GenericCloud-latest.x86_64.qcow2"
 if [ -f "$LOCAL_IMG" ]; then
     IMG_URL="file://$LOCAL_IMG"
 else
-    # dl.almalinux.org is the canonical source; mirrors carry the same
-    # latest symlink. Pick whichever is reachable from this host.
-    IMG_URL="https://dl.almalinux.org/9/cloud/x86_64/images/AlmaLinux-9-GenericCloud-latest.x86_64.qcow2"
-    if ! curl -sI --max-time 10 "$IMG_URL" -o /dev/null; then
-        IMG_URL="https://mirror.yandex.ru/almalinux/9/cloud/x86_64/images/AlmaLinux-9-GenericCloud-latest.x86_64.qcow2"
-    fi
+    # The canonical repo host serves the GenericCloud qcow2 directly;
+    # dl.almalinux.org redirects to mirrors that may be unreachable.
+    IMG_URL="https://repo.almalinux.org/almalinux/9/cloud/x86_64/images/AlmaLinux-9-GenericCloud-latest.x86_64.qcow2"
 fi
 CID="$HOME/kurin-alma9-cloud-init.yaml"
 EVENTS=$(mktemp)

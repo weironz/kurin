@@ -39,16 +39,16 @@ EOF
 
 echo "[openeuler] launching from $IMG_URL (first run downloads ~1GB)"
 multipass info "$NAME" >/dev/null 2>&1 || \
-    multipass launch "$IMG_URL" --name "$NAME" --cpus 2 --memory 3G --disk 20G --cloud-init "$CID" >/dev/null
+    multipass launch "$IMG_URL" --name "$NAME" --cpus 2 --memory 4G --disk 40G --cloud-init "$CID" >/dev/null
 
 IP=$(multipass info "$NAME" --format yaml | awk '/^    ipv4:/{getline; print $2; exit}')
 [ -n "$IP" ] || { echo "[FAIL] no ipv4"; exit 1; }
 ssh-keygen -R "$IP" -f ~/.ssh/known_hosts >/dev/null 2>&1 || true
 # Cloud images may keep root locked; install the key through multipass
 # (same as tier1/up.sh) instead of relying on cloud-init users.
-multipass exec "$NAME" -- sudo mkdir -p /root/.ssh
-multipass exec "$NAME" -- sudo bash -c "echo '$PUB' > /root/.ssh/authorized_keys && chmod 700 /root/.ssh && chmod 600 /root/.ssh/authorized_keys"
-multipass exec "$NAME" -- sudo bash -c "sed -i 's/^#\\?PermitRootLogin.*/PermitRootLogin prohibit-password/' /etc/ssh/sshd_config; systemctl restart sshd || systemctl restart ssh"
+multipass exec "$NAME" -- sudo -n mkdir -p /root/.ssh 2>/dev/null || true
+multipass exec "$NAME" -- sudo -n bash -c "echo '$PUB' > /root/.ssh/authorized_keys && chmod 700 /root/.ssh && chmod 600 /root/.ssh/authorized_keys" 2>/dev/null || true
+multipass exec "$NAME" -- sudo -n bash -c "sed -i 's/^#\\?PermitRootLogin.*/PermitRootLogin prohibit-password/' /etc/ssh/sshd_config; systemctl restart sshd || systemctl restart ssh" 2>/dev/null || true
 
 for i in $(seq 1 30); do
     if ssh -i "$KEYS/id_ed25519" -o StrictHostKeyChecking=no -o ConnectTimeout=5 \

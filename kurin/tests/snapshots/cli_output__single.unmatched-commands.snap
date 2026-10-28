@@ -35,7 +35,10 @@ expression: report
     mkdir -p /etc/modules-load.d
     modprobe overlay >/dev/null 2>&1 || true
     modprobe br_netfilter >/dev/null 2>&1 || true
-    sysctl --system >/dev/null
+    sysctl -w net.bridge.bridge-nf-call-iptables=1 >/dev/null 2>&1 || true
+    sysctl -w net.bridge.bridge-nf-call-ip6tables=1 >/dev/null 2>&1 || true
+    sysctl -w net.ipv4.ip_forward=1 >/dev/null 2>&1 || true
+    sysctl --system >/dev/null 2>&1 || true
 
     sh -eu -c '
     for c in /etc/kubernetes/pki/*.crt /etc/kubernetes/pki/etcd/*.crt; do
@@ -100,7 +103,10 @@ expression: report
     mkdir -p /etc/modules-load.d
     modprobe overlay >/dev/null 2>&1 || true
     modprobe br_netfilter >/dev/null 2>&1 || true
-    sysctl --system >/dev/null
+    sysctl -w net.bridge.bridge-nf-call-iptables=1 >/dev/null 2>&1 || true
+    sysctl -w net.bridge.bridge-nf-call-ip6tables=1 >/dev/null 2>&1 || true
+    sysctl -w net.ipv4.ip_forward=1 >/dev/null 2>&1 || true
+    sysctl --system >/dev/null 2>&1 || true
 
     sh -eu -c '
     for c in /etc/kubernetes/pki/*.crt /etc/kubernetes/pki/etcd/*.crt; do
