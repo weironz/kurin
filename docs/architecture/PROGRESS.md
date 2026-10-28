@@ -142,7 +142,7 @@
 ## 待人工 e2e
 
 ### 已执行（本机，2026-10-28）
-- WP-66：tier1 lifecycle、创建中关浏览器、服务重启 interrupted→retry、CLI 抢锁、密码明文扫描，全部 PASS。
+- WP-62/63/66：真实 `kurin serve` + tier1 上跑 `pnpm test:e2e:real`（lifecycle + resilience 5 个 spec）：9 步向导创建、创建中关浏览器重开继续、serve 重启 interrupted→retry、CLI 抢锁、密码明文扫描，全部 PASS。
 - WP-71：tier1 cert timer 安装、`status` 下次续期、手动触发续期 + 静态 pod 轮转 + `/readyz`，PASS。
 - WP-72：tier1 k3s 1.33.1 → 1.34.1（手工离线 bundle），`k3s --version` / node Ready / `/readyz`，PASS。
 - WP-73：tier1 `kurin import --from-cluster` 重建 v1alpha2 配置，`status` 可用，PASS。
@@ -157,6 +157,8 @@
 - **WP-72 `just tier1-k3s-upgrade` 原脚本**：需要制品清单 pin 目标 k3s release；本次用等价的手工离线 bundle 验证了升级链。
 - **WP-76 tier3 多节点 conformance**：单节点 tier1 的 3 个失败中「至少两个 untainted node」要求 ≥2 节点；完整门禁需 tier3（约 2h）。
 - **WP-75 kube-bench 正式阈值**：报告已出，阈值需维护者按 kube-bench 版本/适用项确定。
+- **WP-64 页面安装/卸载 metrics-server**：Playwright mock 已覆盖，tier1 真实 UI 操作未跑。
+- **WP-65 tier2 页面升级一个小版本**：Playwright mock 已覆盖，tier2 真实 UI 升级未跑。
 - **WP-71/WP-73 的 tier2 多控制面场景**：已在 tier1 验证等价路径，tier2 未跑。
 
 ## 待决问题
