@@ -1,0 +1,15 @@
+target
+release-dist
+docs
+e2e
+spikes
+scripts
+.github
+.omp
+.git
+.gitignore
+web/node_modules
+web/dist
+web/test-results
+web/playwright-report
+**/*.log
