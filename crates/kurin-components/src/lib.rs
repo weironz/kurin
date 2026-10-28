@@ -10,6 +10,7 @@ pub mod etcd;
 pub mod import;
 pub mod plan;
 pub mod precheck;
+pub mod seed;
 pub mod status;
 pub mod tasks;
 pub mod teardown;

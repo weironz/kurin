@@ -5,9 +5,9 @@
 //!   image as a single-image OCI layout tar, exactly like the bootstrap
 //!   image task — only the images differ (they come from the addon, not
 //!   the artifact manifest, and are resolved by reference).
-//! - **registry** (04 §5.2): the control machine pushes them once
-//!   (`registry/push`, see [`crate::tasks::registry`]); the runtime
-//!   mirror then serves them, so this task does nothing.
+//! - **registry** (04 §5.2) and **seed** (04 §5.3, WP-77): the runtime
+//!   mirror serves them (from the pushed registry, or the
+//!   controller-side seed registry), so this task does nothing.
 //!
 //! An offline install of a selected addon therefore has no gap: the
 //! images are either in every node's store before the addon is applied,
@@ -34,9 +34,9 @@ pub struct AddonImagesTask {
     addon: String,
     /// Digest-pinned image references (`spec.images`).
     images: Vec<String>,
-    /// Registry delivery: the runtime mirror pulls from the registry, so
-    /// nothing is preloaded.
-    registry_delivery: bool,
+    /// Mirror delivery (a node-hosted registry, or the controller-side
+    /// seed registry): the runtime mirror pulls, so nothing is preloaded.
+    mirror_delivery: bool,
     /// True when the images must be imported (offline package/bundle, or
     /// the domestic mirror zone).
     needs_import: bool,
@@ -52,8 +52,7 @@ impl AddonImagesTask {
         images: Vec<String>,
         run: &Arc<RunContext>,
     ) -> Self {
-        let registry_delivery = crate::tasks::effective_delivery(cluster, run.sources.as_ref())
-            == kurin_config::v1alpha2::Delivery::Registry;
+        let mirror_delivery = crate::tasks::mirror_delivery(cluster, run.sources.as_ref());
         let needs_import =
             run.sources.is_offline() || run.sources.zone == kurin_core::zone::Zone::Cn;
         Self {
@@ -62,14 +61,14 @@ impl AddonImagesTask {
             distribution: cluster.distribution,
             addon: addon.to_string(),
             images,
-            registry_delivery,
+            mirror_delivery,
             needs_import,
             run: Arc::clone(run),
         }
     }
 
     fn imports(&self) -> bool {
-        !self.registry_delivery && self.needs_import
+        !self.mirror_delivery && self.needs_import
     }
 
     fn remote_tar(&self, reference: &str) -> String {
@@ -97,9 +96,9 @@ impl Task for AddonImagesTask {
     }
 
     fn describe(&self) -> String {
-        if self.registry_delivery {
+        if self.mirror_delivery {
             format!(
-                "no-op registry delivery for addon {} images (runtime mirror)",
+                "no-op mirror delivery for addon {} images (runtime mirror)",
                 self.addon
             )
         } else if self.needs_import {

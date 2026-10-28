@@ -162,11 +162,11 @@ expression: plan_matrix(&plan)
       "stage": "images",
       "tasks": [
         {
-          "describe": "no-op registry delivery (runtime mirror pulls from the registry)",
+          "describe": "no-op mirror delivery (the runtime mirror pulls from the registry)",
           "id": "images/import@master01"
         },
         {
-          "describe": "no-op registry delivery (runtime mirror pulls from the registry)",
+          "describe": "no-op mirror delivery (the runtime mirror pulls from the registry)",
           "id": "images/import@worker01"
         }
       ]

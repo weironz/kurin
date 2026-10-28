@@ -374,6 +374,27 @@ expression: json
     ]
   },
   {
+    "id": "registry/seed",
+    "kind": "registry",
+    "distributions": [
+      "k8s",
+      "k3s"
+    ],
+    "archs": [
+      "amd64",
+      "arm64"
+    ],
+    "offline": "bundle",
+    "zones": [
+      "global",
+      "cn"
+    ],
+    "ops": [
+      "create",
+      "add-nodes"
+    ]
+  },
+  {
     "id": "addon/engine",
     "kind": "addon-engine",
     "distributions": [

@@ -112,9 +112,10 @@ pub struct ImagesImport {
     /// [`crate::component::bootstrap_images`]; storage and post apply
     /// after the cluster is up and pull on demand).
     images: Vec<String>,
-    /// Registry delivery: images come from the registry through the
-    /// runtime mirror, so nothing is preloaded into the node store.
-    registry_delivery: bool,
+    /// Mirror delivery (a node-hosted registry, or the controller-side
+    /// seed registry over per-node SSH forwards): images come through
+    /// the runtime mirror, so nothing is preloaded into the node store.
+    mirror_delivery: bool,
     /// Run sources: package, offline dir, manifest override and zone.
     run: Arc<RunContext>,
 }
@@ -129,8 +130,7 @@ impl ImagesImport {
                 .into_iter()
                 .map(|r| r.name)
                 .collect(),
-            registry_delivery: crate::tasks::effective_delivery(cluster, run.sources.as_ref())
-                == kurin_config::v1alpha2::Delivery::Registry,
+            mirror_delivery: crate::tasks::mirror_delivery(cluster, run.sources.as_ref()),
             run: Arc::clone(run),
         }
     }
@@ -152,7 +152,7 @@ impl ImagesImport {
     /// domestic mirror zone (its images are fetched through the mirror
     /// before the cluster starts).
     fn needs_import(&self) -> bool {
-        if self.registry_delivery {
+        if self.mirror_delivery {
             return false;
         }
         self.run.sources.is_offline() || self.run.sources.zone == kurin_core::zone::Zone::Cn
@@ -189,8 +189,8 @@ impl Task for ImagesImport {
         &self.node.name
     }
     fn describe(&self) -> String {
-        if self.registry_delivery {
-            "no-op registry delivery (runtime mirror pulls from the registry)".into()
+        if self.mirror_delivery {
+            "no-op mirror delivery (the runtime mirror pulls from the registry)".into()
         } else if self.needs_import() {
             format!(
                 "import pinned images into containerd k8s.io ({})",

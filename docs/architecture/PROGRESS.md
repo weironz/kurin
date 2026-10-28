@@ -74,7 +74,7 @@
 | WP-74 OS 扩展 | done | 见提交 | 22 个新单测 + `kurin/tests/os_families.rs`（真实 discover 脚本往返 + 包行交叉校验） | 人工：`just tier1-ubuntu2204*` / `tier1-alma*` / `tier1-openeuler*` / `tier1-kylin*`（含离线；Kylin 需本地 qcow2） | facts 支持 Ubuntu 22.04/24.04、RHEL/Alma/Rocky 9、openEuler 24.03、Kylin V10（ID_LIKE 兜底、V10 归一）；kernel-deps 按族选包名/包管理器（Ubuntu/Rocky 命令逐字节不变）；OS 包新增 5 个目标；Kylin 无公共镜像时校验期拒绝 |
 | WP-75 CIS 加固 | done | 见提交 | `kurin/tests/plan_snapshots.rs` 的 cis 计划快照；default 档位全部既有快照不变 | 人工：`just cis-check`（需 kube-bench + tier1），报告存 `docs/cis/<ts>/` | `[kubernetes] profile = "cis"`（v1alpha2）：apiserver/kubelet CIS 参数、审计策略、PSA restricted（仅 default ns）、kubeconfig/kubelet 0600；default 渲染逐字节不变 |
 | WP-76 conformance 门禁 | done | 见提交 | 无 | 维护者：`just conformance`（需 hydrophone + tier3），报告存 `docs/conformance/<ts>/` | `scripts/conformance.sh`（复制 kubeconfig、改 server 地址、hydrophone run、归档）；本机未装 hydrophone 未执行 |
-| WP-77 种子仓库 | todo | | | | |
+| WP-77 种子仓库 | done | `crates/kurin-components/src/seed.rs`；`[packages] delivery = "seed"`（v1alpha2，加载期校验：不得与 [registry] 并存、需离线载荷源） | `just check` 全绿（1083 tests，新增 15：配置校验 2 + seed 13）；快照：capabilities +registry/seed 行、10 个 plan 快照 images/import 描述文案更新 | 人工 e2e 待跑：无 registry 节点离线安装（见 docs/command-matrix.md §registry 的 seed 命令块） | registry/seed-serve@controller + registry/seed-mirror@node（SSH -R）；containerd/CRI-O/k3s 回环 http mirror；镜像走 pull、二进制仍 preload；操作收尾拆除（仅回环、无认证、只读 405） |
 | WP-78 英文文案与文档站 | done | 见提交 | 无 | `mdbook build`（docs/site，需安装 mdbook）| 593 键 en 字典（类型强制键集一致）、运行时语言切换（antd/dayjs 跟随、localStorage 持久化）、189 Vitest + 8 Playwright；mdBook 脚手架 + 同步脚本 |
 
 ## 偏离记录
@@ -145,6 +145,7 @@
 - WP-39：签名包校验、篡改 blob 拒绝、未签名包在 signature 模式拒绝（`cargo test -p kurin-artifact --test transfer`）；CI 工作流需在 tag 上人工验证。
 - WP-49：`just tier3-registry zot`、`docker-registry`、`external`（external 指向 zot）。
 - WP-63：tier1 真实 create 过程中刷新页面，确认日志从断点继续；`pnpm --dir web test:e2e`。
+- WP-77：无 registry 节点的离线安装（`[packages] delivery = "seed"`），镜像经控制机只读 registry + SSH -R 回环 pull；见 `docs/command-matrix.md` §registry。
 - WP-74：`just tier1-ubuntu2204` / `tier1-ubuntu2204-offline` / `tier1-alma` / `tier1-alma-offline` / `tier1-openeuler` / `tier1-openeuler-offline` / `tier1-kylin <qcow2>` / `tier1-kylin-offline <qcow2> <os-pkg>`（麒麟需本地镜像与 os 包）。
 - WP-75：`just cis-check`（需安装 kube-bench 与 tier1），报告归档到 `docs/cis/`；阈值按 kube-bench 报告人工判定。
 - WP-76：`just conformance`（需安装 hydrophone 与 tier3 集群），报告归档到 `docs/conformance/`。
@@ -175,6 +176,7 @@
 - WP-39：签名包校验、篡改 blob 拒绝、未签名包在 signature 模式拒绝（`cargo test -p kurin-artifact --test transfer`）；CI 工作流需在 tag 上人工验证。
 - WP-49：`just tier3-registry zot`、`docker-registry`、`external`（external 指向 zot）。
 - WP-63：tier1 真实 create 过程中刷新页面，确认日志从断点继续；`pnpm --dir web test:e2e`。
+- WP-77：无 registry 节点的离线安装（`[packages] delivery = "seed"`），镜像经控制机只读 registry + SSH -R 回环 pull；见 `docs/command-matrix.md` §registry。
 - WP-74：`just tier1-ubuntu2204` / `tier1-ubuntu2204-offline` / `tier1-alma` / `tier1-alma-offline` / `tier1-openeuler` / `tier1-openeuler-offline` / `tier1-kylin <qcow2>` / `tier1-kylin-offline <qcow2> <os-pkg>`（麒麟需本地镜像与 os 包）。
 - WP-75：`just cis-check`（需安装 kube-bench 与 tier1），报告归档到 `docs/cis/`；阈值按 kube-bench 报告人工判定。
 - WP-76：`just conformance`（需安装 hydrophone 与 tier3 集群），报告归档到 `docs/conformance/`。

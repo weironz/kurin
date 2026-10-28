@@ -37,6 +37,10 @@ pub(crate) async fn run(prepared: Prepared, mut plan: Plan) -> Result<OpResult> 
     session.begin(params.op_name(), &spec.name, &fingerprint);
 
     let result = run_op(&run, &pool, &spec, &params, &mut plan, out).await;
+    // The seed registry (04 §5.3) is per-operation: stop it before the
+    // operation is reported done, so a resident server does not leak
+    // loopback listeners. The SSH forwards die with the session pool.
+    kurin_components::seed::finish_op(&run.op_id);
     session.finish(&result);
     let outcome = result?;
     Ok(OpResult {

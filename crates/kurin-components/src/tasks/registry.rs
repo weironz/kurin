@@ -900,6 +900,33 @@ struct PushFile {
     tag: String,
 }
 
+/// The deterministic 04 §5.2 mirror layout for one image reference,
+/// before any registry-specific prefix: repo `mirror/<upstream host>/<path>`
+/// and the tag (or the digest when the reference carries none, as addon
+/// images may). Shared by the registry push (with its prefix) and the
+/// controller-side seed registry (WP-77), so both spell a mirror the
+/// runtime mirror configuration addresses the same way.
+pub fn mirror_repo_tag(reference: &str, zone: kurin_core::zone::Zone) -> Result<(String, String)> {
+    let rewritten = kurin_artifact::zone::rewrite_image_ref(reference, zone);
+    let (name, digest) = match rewritten.split_once('@') {
+        Some((name, digest)) => (name.to_string(), Some(digest.to_string())),
+        None => (rewritten.clone(), None),
+    };
+    let host = name
+        .split_once('/')
+        .map(|(host, _)| host)
+        .ok_or_else(|| miette::miette!("cannot split image reference {reference}"))?;
+    let rest = &name[host.len() + 1..];
+    let (path, tag) = match rest.rsplit_once(':') {
+        Some((path, tag)) if !tag.contains('/') => (path, Some(tag.to_string())),
+        _ => (rest, None),
+    };
+    let tag = tag.or(digest).ok_or_else(|| {
+        miette::miette!("image reference {reference} has neither a tag nor a digest")
+    })?;
+    Ok((format!("mirror/{host}/{path}"), tag))
+}
+
 /// `registry/push@controller`: push every package image and file into the
 /// registry exactly once, in the deterministic 04 §5.2 layout.
 ///
@@ -1050,27 +1077,13 @@ impl RegistryPush {
     /// `<prefix>mirror/<upstream host>/<path>` with the tag (or the digest
     /// when the reference carries none, as addon images may).
     fn mirror_target(&self, reference: &str) -> Result<(String, String)> {
-        let rewritten = kurin_artifact::zone::rewrite_image_ref(reference, self.run.sources.zone);
-        let (name, digest) = match rewritten.split_once('@') {
-            Some((name, digest)) => (name.to_string(), Some(digest.to_string())),
-            None => (rewritten.clone(), None),
-        };
-        let host = name
-            .split_once('/')
-            .map(|(host, _)| host)
-            .ok_or_else(|| miette::miette!("cannot split image reference {reference}"))?;
-        let rest = &name[host.len() + 1..];
-        let (path, tag) = match rest.rsplit_once(':') {
-            Some((path, tag)) if !tag.contains('/') => (path, Some(tag.to_string())),
-            _ => (rest, None),
-        };
-        let tag = tag.or(digest).ok_or_else(|| {
-            miette::miette!("image reference {reference} has neither a tag nor a digest")
-        })?;
+        let (repo, tag) = mirror_repo_tag(reference, self.run.sources.zone)?;
         let repo = if self.kind == RegistryKind::Harbor {
-            format!("library/{}", path.rsplit('/').next().unwrap_or(path))
+            // Harbor's project namespace is flat: only the last path
+            // segment survives (04 §5.2's harbor note).
+            format!("library/{}", repo.rsplit('/').next().unwrap_or(&repo))
         } else {
-            format!("{}mirror/{host}/{path}", self.prefix)
+            format!("{}{}", self.prefix, repo)
         };
         Ok((repo, tag))
     }

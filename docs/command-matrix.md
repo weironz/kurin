@@ -81,7 +81,7 @@
 | `docker-registry` | registry 节点 | `kind` 必填 | 显式指定 | ✅ `e2e/tier3/registry.sh docker-registry` |
 | `zot` | registry 节点 | `kind` 必填 | 未写 `kind` 时默认 | ✅ `e2e/tier3/registry.sh zot` |
 | `harbor` | registry 节点（仅单节点） | `kind` 必填 | 显式指定 | ✅ `e2e/tier3/registry.sh harbor` |
-| `external` | 无（使用已有仓库） | ❌ 拒绝 | `address` 必填；`ca-file`、`namespace` 可选 | 人工：见下 |
+| `seed` | 控制机（只读，`delivery = "seed"`） | ❌ 拒绝（无 `[packages]`） | 需 `packages.base` 或 `artifacts.offline-dir`；不能与 `[registry]` 并存 | 人工：见下 |
 
 `external` 的校验与 WP-36 一致：`address` 必填，`namespace` 只能是斜杠分隔的
 小写路径段（默认 `kurin`），`ca-file` 必须存在且只能与 `external` 一起使用；
@@ -93,6 +93,25 @@
 just tier3-registry zot
 just tier3-registry docker-registry
 KURIN_REGISTRY_EXTERNAL=1 just tier3-registry external
+```
+
+`seed` 不是 `[registry]` 的 kind，而是 `[packages] delivery = "seed"`
+（v1alpha2）：控制机起只读 OCI registry（`registry/seed-serve@controller`），
+每个节点经 SSH 远程转发看到 `127.0.0.1:<port>`，运行时 mirror 指向该端点
+（`registry/seed-mirror@node`），镜像以 pull 语义到达；二进制仍走 SSH 流式
+上传。详见 `docs/configuration.md` §种子仓库。**需要人工 e2e**（无 registry
+节点的离线安装，multipass 真机环境）：
+
+```text
+# 1. 控制机上准备离线包（或用已有的 file:// 包）
+target/debug/kurin package create base -kubernetes <ver> -o file:///tmp/kurin-base.tar.zst
+# 2. 无 [registry]、无 registry 节点的 v1alpha2 配置：
+#    [packages] base = "file:///tmp/kurin-base.tar.zst", delivery = "seed"
+# 3. 离线安装：registry 阶段应出现 seed-serve + 每节点 seed-mirror，
+#    images 阶段 no-op（运行时经 mirror 拉取），bootstrap 正常完成
+target/debug/kurin create cluster -f seed-cluster.toml
+# 4. 验证：节点上 crictl images 的镜像来自 127.0.0.1 拉取；
+#    操作结束后节点对 127.0.0.1:<port> 的连接应失效（转发已拆除）
 ```
 
 ## add nodes / delete node / delete cluster

@@ -138,12 +138,21 @@
     },
     "Delivery": {
       "description": "How packages reach the nodes.",
-      "enum": [
-        "auto",
-        "preload",
-        "registry"
-      ],
-      "type": "string"
+      "oneOf": [
+        {
+          "enum": [
+            "auto",
+            "preload",
+            "registry"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "seed",
+          "description": "Controller-side read-only seed registry (04 §5.3, WP-77): the\ncontrol machine serves the local package/blob store over loopback\nand exposes it to every node through an SSH remote forward, so\nimages reach the nodes with pull semantics without a registry\nnode. v1alpha2 only; requires no `[registry]` configuration and\nan offline payload source.",
+          "type": "string"
+        }
+      ]
     },
     "Distribution": {
       "description": "Distribution names in v1alpha2: the kubeadm track is spelled\n`kubeadm`, and `k8s` remains accepted as a compatibility alias.",

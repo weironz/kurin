@@ -191,9 +191,15 @@ trusted-keys = ["/etc/kurin/cosign.pub"]                   # verify = "signature
 4. 镜像由运行时 mirror 配置透明改写（§5.4）。
 5. 之后的 add nodes、addon 安装、升级也走同一个仓库，只推增量 blob。
 
-### 5.3 `seed`（远期，可选）
+### 5.3 `seed`（可选，WP-77 已实现）
 
-控制机内置一个只读 OCI registry（直接读本地 blob 缓存），通过 SSH 远程端口转发暴露到每个节点的 `127.0.0.1:5005`。适用于“没有 registry 节点，但想用拉取语义”的场景，例如引导集群内 registry addon。安装结束后转发即失效，所以它**不能**作为集群长期的镜像来源。列为 P7，不在主路径上。
+控制机内置一个只读 OCI registry（直接读本地 blob 缓存），通过 SSH 远程端口转发暴露到每个节点的回环地址（实现用随机端口；文档示例 `127.0.0.1:5005`）。适用于"没有 registry 节点，但想用拉取语义"的场景，例如引导集群内 registry addon。安装结束后转发即失效，所以它**不能**作为集群长期的镜像来源。
+
+实现（v1alpha2 `[packages] delivery = "seed"`，与任何 `[registry]` 配置互斥，需
+离线载荷来源）：`registry/seed-serve@controller` 起服务（`127.0.0.1:0`，随机端口），
+`registry/seed-mirror@node` 开远程转发并写回环 `http://` 运行时 mirror；镜像走
+pull，二进制仍走 SSH 流式上传；操作收尾即拆除。安全边界：仅回环、无认证、
+只读（上传/写入一律 405）。
 
 ### 5.4 镜像改写：运行时 mirror（ADR-13）
 

@@ -1,3 +1,10 @@
+## WP-77：种子仓库（2026-10-28）
+
+- **`[packages] delivery = "seed"`**（v1alpha2）：控制机内置只读 OCI registry（`127.0.0.1:0`，手写 HTTP/1.1，tokio 无新依赖），按 `mirror/<upstream host>/<path>` 提供 manifest/blob；每个节点用 `Session::forward_remote` 开 SSH `-R` 回环隧道；containerd/CRI-O/k3s 的 mirror 指向节点本地端口（http/insecure）。镜像走 pull，二进制载荷仍走 SSH preload；操作结束拆除，仅回环、无认证、只读（写请求 405）。
+- **校验**：seed 不得与 `[registry]` 或 `role = "registry"` 节点并存，且必须有离线载荷源（`packages.base` / `artifacts.offline-dir`）；v1alpha1 拒绝。
+- **测试**：1083 全绿（新增 15：配置校验 2 + seed 13，覆盖 HTTP ping/manifest/blob/HEAD/404/405/400/413、隧道、三种运行时 mirror、去重与拆除）；快照仅 capabilities 新增 `registry/seed` 行与 10 个 plan 的 `images/import` 描述文案。
+- **待人工 e2e**：无 registry 节点离线安装（见 `docs/command-matrix.md` §registry 的 seed 命令块）。
+
 ## WP-74：OS 扩展（2026-10-28）
 
 - **facts**：`OsFamily` 新增 `Euler`/`Kylin` 变体 + 新 `OsRelease` 支持矩阵枚举（Ubuntu 22.04/24.04、RHEL/Alma/Rocky 9、openEuler 24.03、Kylin V10），`ID_LIKE` 兜底；Kylin `VERSION_ID="V10"` 经 `normalize_version_id` 归一。

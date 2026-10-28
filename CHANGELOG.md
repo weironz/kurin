@@ -2,6 +2,23 @@
 
 All notable changes to kurin. Format follows Keep a Changelog; semver.
 
+### Added (WP-77)
+- Opt-in seed registry (`[packages] delivery = "seed"`, v1alpha2 only): the
+  control machine runs a read-only OCI distribution server against its local
+  package/blob store on `127.0.0.1:0` and exposes it to every node through an
+  SSH remote forward, so clusters without a registry node still get pull
+  semantics for images (bootstrap an in-cluster registry addon from it). The
+  `registry` phase plans `registry/seed-serve@controller` plus one
+  `registry/seed-mirror@node` per member (loopback `http://` mirrors for
+  containerd, insecure for CRI-O, http endpoints for k3s); `images/import`
+  becomes a no-op and the runtime pulls through the node-local endpoint.
+  Binaries keep streaming over SSH preload. The registry is loopback-only,
+  unauthenticated, read-only (uploads and writes are 405) and dies with the
+  operation. Load-time validation: no `[registry]` configuration may coexist,
+  and an offline payload source (`packages.base` or
+  `artifacts.offline-dir`) is required; v1alpha1 has no `[packages]` section
+  and rejects the setting. Default behavior is unchanged.
+
 ### Added (WP-74)
 - OS support matrix widened to Ubuntu 22.04, RHEL 9 / AlmaLinux 9,
   openEuler 24.03 LTS and Kylin Linux Advanced Server V10 (Ubuntu 24.04,

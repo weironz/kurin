@@ -229,7 +229,7 @@ provisioner）。常用参数（受各 addon 的 values schema 校验）见
 |---|---|
 | `base` | base 包 URI（`oci-layout://DIR` / `file://X.tar[.zst]`）；不写用内置清单。`oci://` 需先 `kurin package pull`（WP-33） |
 | `os` | 按 OS 的包 URI 列表（04 §3.4 `os` 包，`kurin package create os` 制作，目标见 `docs/command-matrix.md` 的 OS 支持矩阵：ubuntu-24.04 / ubuntu-22.04 / debian-12 / rocky-9 / rhel-9 / almalinux-9 / openeuler-24.03 / kylin-10）；不写时从 base 包的 os 行按节点 facts（OS id + 版本前缀、架构）自动匹配。**离线运行必须能匹配**：任何一个节点匹配不到都在校验期报错（WP-38），错误信息列出每个候选行被拒绝的原因 |
-| `delivery` | `auto`（默认；配置了 `[registry]` 时用 `registry`，否则 `preload`）\| `preload` \| `registry` |
+| `delivery` | `auto`（默认；配置了 `[registry]` 时用 `registry`，否则 `preload`）\| `preload` \| `registry` \| `seed`（WP-77，仅 v1alpha2；见下文「种子仓库」） |
 | `verify` | `none`（默认）\| `digest` \| `signature` |
 | `trusted-keys` | cosign 公钥路径列表；`verify = "signature"` 时必填且文件必须存在（加载期校验） |
 
@@ -461,6 +461,44 @@ join 时 CLI 显式警告）。
   包内镜像引用。`harbor` 因 project/repo 命名形状不做上游 mirror，控制面镜像走
   `imageRepository`（推到 `library` 项目）
 - 离线：zot / docker-registry / harbor 的安装包都进 `kurin artifact` bundle
+
+#### 种子仓库（`delivery = "seed"`，WP-77）
+
+控制机内置一个**只读** OCI registry，直接读本地包/blob 缓存，通过 SSH
+远程端口转发（`ssh -R`）暴露到每个节点的 `127.0.0.1:<port>`；运行时
+mirror 指向该节点本地端点，镜像以**拉取**语义到达节点。适用于"没有
+registry 节点、但想用 pull 语义"的场景，例如引导集群内 registry addon。
+
+```toml
+[packages]
+base = "file:///media/usb/kurin-base-v1.33.1.tar.zst"
+delivery = "seed"
+```
+
+要求（都在加载期校验）：
+
+- 仅 v1alpha2（v1alpha1 没有 `[packages]` 节点，直接拒绝）；
+- **不能**同时配置 `[registry]`（任何 kind）或 `role = "registry"` 节点——
+  种子仓库在控制机上，取代而不是补充 registry 层；
+- 必须有离线载荷来源：`packages.base` 或 `artifacts.offline-dir`。
+
+行为：
+
+- `registry/seed-serve@controller`（registry 阶段，先于 images）从当前运行的
+  载荷集合解析全部镜像（清单条目 + 启用 addon 的 `spec.images`），按
+  §5.2 的 `mirror/<上游主机>/<路径>` 布局登记到 `127.0.0.1:0` 的只读服务；
+- `registry/seed-mirror@node` 对每个节点开远程转发并写运行时 mirror
+  （containerd `hosts.toml`、CRI-O `registries.conf.d`、k3s `registries.yaml`，
+  均为 `http://127.0.0.1:<port>` 回环语义：containerd 显式 `http://` host、
+  CRI-O `insecure = true`）；
+- `images/import` 变为 no-op：镜像由运行时经 mirror 拉取；二进制载荷仍走
+  SSH 流式上传（preload 路径，无需 registry）；
+- 操作结束即拆除：`kurin-ops` 在每次操作收尾停掉种子仓库，SSH 转发随
+  会话池一起消失——**它不能作为集群长期的镜像来源**。
+
+安全边界：服务只绑 `127.0.0.1`、无认证、只读（`POST/PUT/DELETE` 与
+`blobs/uploads/` 一律 405）。节点只能经自己的 SSH 连接看到它，节点之间
+互不可见；控制机之外的机器完全不可达。
 
 ### `[storage]`（动态存储，仅 v1alpha1）
 

@@ -1,8 +1,8 @@
-//! `registry/*`: the node-hosted image registries (one component per
-//! `[registry]` kind, docs/registry-contracts.md). A registry node is
+//! `registry/*`: the image registries behind registry delivery (one
+//! component per `[registry]` kind, docs/registry-contracts.md, plus the
+//! controller-side seed registry of 04 §5.3). A registry node is
 //! kubeadm-track only — the historical k3s branch never planned
 //! registry nodes — so `plan` contributes nothing on the k3s track
-//! while `enabled`/`validate` stay kind-based.
 //!
 //! ONE CA is minted per plan build and shared by install (writes the
 //! cert), trust (writes the CA) and seed (curl/ctr against it): each
@@ -251,6 +251,81 @@ impl Component for External {
 
     fn plan(&self, b: &mut PlanBuilder<'_>) -> Result<()> {
         plan_registry_track(b, None)
+    }
+}
+
+/// `registry/seed`: the controller-side seed registry (04 §5.3, WP-77).
+/// Active when `[packages] delivery = "seed"` — no node hosts anything.
+/// The controller serves the local package/blob store read-only over
+/// loopback, every node gets an SSH remote forward to it, and the runtime
+/// mirrors point at the node-local endpoint so images arrive by pull.
+pub struct Seed;
+
+impl Component for Seed {
+    fn id(&self) -> &'static str {
+        "registry/seed"
+    }
+
+    fn kind(&self) -> ComponentKind {
+        ComponentKind::Registry
+    }
+
+    fn enabled(&self, spec: &Cluster) -> bool {
+        spec.packages.delivery == kurin_config::v1alpha2::Delivery::Seed
+    }
+
+    fn validate(&self, spec: &Cluster, d: &mut Diagnostics) {
+        // The load pipeline already rejects seed next to any [registry]
+        // configuration or without an offline payload source; this is the
+        // belt-and-braces check for specs built programmatically.
+        if spec.registry_kind().is_some() {
+            d.error("[packages] delivery = \"seed\" replaces the registry layer");
+        }
+        if spec.packages.base.is_none() && spec.packages.offline_dir.is_none() {
+            d.error(
+                "[packages] delivery = \"seed\" requires an offline payload source \
+                 (packages.base or artifacts.offline-dir)",
+            );
+        }
+    }
+
+    fn capabilities(&self) -> Capabilities {
+        Capabilities {
+            distributions: &[Distribution::K8s, Distribution::K3s],
+            archs: &[Arch::Amd64, Arch::Arm64],
+            offline: Offline::Bundle,
+            zones: ALL_ZONES,
+            ops: &[OpKind::Create, OpKind::AddNodes],
+        }
+    }
+
+    fn artifacts(&self, _spec: &Cluster, _arch: Arch) -> Vec<ArtifactRef> {
+        Vec::new()
+    }
+
+    fn plan(&self, b: &mut PlanBuilder<'_>) -> Result<()> {
+        let upstreams = tasks::registry::upstream_hosts(b.cluster(), b.run());
+        let phase = b.phase("registry");
+        // The controller starts the registry first; every node's mirror
+        // task waits for it (explicit in-phase edges) and then opens its
+        // own remote forward.
+        let serve = b.add(
+            phase,
+            Arc::new(crate::seed::SeedServe::new(b.cluster(), b.run())),
+        );
+        for node in b.nodes().k8s().collect::<Vec<_>>() {
+            let mirror = b.add(
+                phase,
+                Arc::new(crate::seed::SeedMirror::new(
+                    b.cluster(),
+                    node,
+                    &upstreams,
+                    b.run(),
+                )),
+            );
+            b.after(mirror, serve);
+        }
+        Ok(())
     }
 }
 

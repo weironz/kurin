@@ -37,8 +37,8 @@ expression: render_tree(&plan)
 │   ├── prepare/containerd-unit@worker01 :: render + install /etc/systemd/system/containerd.service, enable --now
 │   └── prepare/kubelet-unit@worker01 :: render + install /etc/systemd/system/kubelet.service, enable (start deferred to kubeadm)
 ├── stage: images (2 tasks)
-│   ├── images/import@master01 :: no-op registry delivery (runtime mirror pulls from the registry)
-│   └── images/import@worker01 :: no-op registry delivery (runtime mirror pulls from the registry)
+│   ├── images/import@master01 :: no-op mirror delivery (the runtime mirror pulls from the registry)
+│   └── images/import@worker01 :: no-op mirror delivery (the runtime mirror pulls from the registry)
 ├── stage: vip (1 tasks)
 │   └── bootstrap/kubeadm-init@master01 :: kubeadm init --config /etc/kurin/kubeadm-init.yaml on master01
 ├── stage: bootstrap (1 tasks)

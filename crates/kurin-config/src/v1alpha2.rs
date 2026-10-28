@@ -202,6 +202,13 @@ pub enum Delivery {
     Auto,
     Preload,
     Registry,
+    /// Controller-side read-only seed registry (04 §5.3, WP-77): the
+    /// control machine serves the local package/blob store over loopback
+    /// and exposes it to every node through an SSH remote forward, so
+    /// images reach the nodes with pull semantics without a registry
+    /// node. v1alpha2 only; requires no `[registry]` configuration and
+    /// an offline payload source.
+    Seed,
 }
 
 /// Package integrity policy.
@@ -346,6 +353,27 @@ impl TryFrom<ClusterConfig> for ClusterSpec {
                 return Err(ConfigError::invalid(
                     String::new(),
                     format!("registry.ca-file {} does not exist", ca.display()),
+                ));
+            }
+        }
+        // WP-77: the seed registry is controller-side and read-only, so it
+        // replaces (not complements) the node-hosted registry layer, and it
+        // only makes sense with a local payload source to serve from.
+        if cfg.packages.delivery == Delivery::Seed {
+            if registry_kind.is_some() {
+                return Err(ConfigError::invalid(
+                    String::new(),
+                    "packages.delivery = \"seed\" replaces the registry layer: remove [registry] \
+                     and any role = \"registry\" node (the seed registry runs on the control \
+                     machine and needs no node)",
+                ));
+            }
+            if cfg.packages.base.is_none() && cfg.artifacts.offline_dir.is_none() {
+                return Err(ConfigError::invalid(
+                    String::new(),
+                    "packages.delivery = \"seed\" requires an offline payload source: set \
+                     packages.base or artifacts.offline-dir (the seed registry serves the \
+                     local package/blob store)",
                 ));
             }
         }
@@ -776,5 +804,62 @@ role = "control-plane"
             );
         let spec = parse_str(Path::new("x.toml"), &toml).expect("v1alpha2 parses");
         spec.validate().expect("an existing key file validates");
+    }
+
+    /// WP-77: `delivery = "seed"` needs no registry at all and an offline
+    /// payload source; both a base package and a legacy bundle qualify.
+    #[test]
+    fn seed_delivery_requires_no_registry_and_an_offline_source() {
+        let with_base = MINIMAL.to_string()
+            + "\n[packages]\nbase = \"oci-layout:///srv/kurin/base\"\n\
+               delivery = \"seed\"\n";
+        let spec = parse_str(Path::new("x.toml"), &with_base).expect("v1alpha2 parses");
+        assert_eq!(spec.packages.delivery, Delivery::Seed);
+        assert_eq!(spec.registry_kind(), None);
+
+        let dir = tempfile::tempdir().unwrap();
+        let with_dir = MINIMAL.to_string()
+            + &format!(
+                "\n[artifacts]\noffline-dir = \"{}\"\n[packages]\ndelivery = \"seed\"\n",
+                dir.path().display()
+            );
+        let spec = parse_str(Path::new("x.toml"), &with_dir).expect("legacy bundle qualifies");
+        assert_eq!(spec.packages.delivery, Delivery::Seed);
+
+        let with_kind = with_base.clone() + "\n[registry]\nkind = \"zot\"\n";
+        let err = parse_str(Path::new("x.toml"), &with_kind).expect_err("registry kind conflicts");
+        assert!(
+            format!("{err}").contains("delivery = \"seed\" replaces the registry layer"),
+            "message: {err}"
+        );
+
+        let with_node = MINIMAL.to_string()
+            + "\n[packages]\nbase = \"oci-layout:///srv/kurin/base\"\ndelivery = \"seed\"\n\
+               [nodes.reg1]\naddress = \"10.0.0.31\"\nrole = \"registry\"\n";
+        let err = parse_str(Path::new("x.toml"), &with_node).expect_err("registry node conflicts");
+        assert!(
+            format!("{err}").contains("delivery = \"seed\" replaces the registry layer"),
+            "message: {err}"
+        );
+
+        let online = MINIMAL.to_string() + "\n[packages]\ndelivery = \"seed\"\n";
+        let err = parse_str(Path::new("x.toml"), &online).expect_err("seed needs a payload source");
+        assert!(
+            format!("{err}").contains("requires an offline payload source"),
+            "message: {err}"
+        );
+    }
+
+    /// WP-77: v1alpha1 has no `[packages]` section, so the seed delivery
+    /// strategy is rejected there (`deny_unknown_fields`).
+    #[test]
+    fn seed_delivery_is_rejected_in_v1alpha1() {
+        let toml = MINIMAL.replace("version = \"v1alpha2\"", "version = \"v1alpha1\"")
+            + "\n[packages]\ndelivery = \"seed\"\n";
+        let err = parse_str(Path::new("x.toml"), &toml).expect_err("v1alpha1 keeps rejecting");
+        assert!(
+            matches!(&err, crate::ConfigError::Parse { message, .. } if message.contains("packages")),
+            "error: {err:?}"
+        );
     }
 }

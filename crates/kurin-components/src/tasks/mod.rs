@@ -39,3 +39,14 @@ pub fn effective_delivery(cluster: &Cluster, sources: &ArtifactSources) -> Deliv
         other => other,
     }
 }
+
+/// True when the delivery strategy serves images from a registry the
+/// runtime mirror points at: a node-hosted `[registry]` (04 §5.2) or the
+/// controller-side seed registry tunnelled to each node's loopback
+/// (04 §5.3, WP-77). Image import tasks become no-ops in both cases.
+pub fn mirror_delivery(cluster: &Cluster, sources: &ArtifactSources) -> bool {
+    matches!(
+        effective_delivery(cluster, sources),
+        Delivery::Registry | Delivery::Seed
+    )
+}
