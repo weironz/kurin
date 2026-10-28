@@ -141,96 +141,23 @@
 
 ## 待人工 e2e
 
-（随 WP 完成追加）
-- WP-39：签名包校验、篡改 blob 拒绝、未签名包在 signature 模式拒绝（`cargo test -p kurin-artifact --test transfer`）；CI 工作流需在 tag 上人工验证。
-- WP-49：`just tier3-registry zot`、`docker-registry`、`external`（external 指向 zot）。
-- WP-63：tier1 真实 create 过程中刷新页面，确认日志从断点继续；`pnpm --dir web test:e2e`。
-- WP-77：无 registry 节点的离线安装（`[packages] delivery = "seed"`），镜像经控制机只读 registry + SSH -R 回环 pull；见 `docs/command-matrix.md` §registry。
-- WP-74：`tier1-ubuntu2204` 已 PASS；`tier1-ubuntu2204-offline` / `tier1-alma` / `tier1-alma-offline` / `tier1-openeuler` / `tier1-openeuler-offline` / `tier1-kylin <qcow2>` / `tier1-kylin-offline <qcow2> <os-pkg>` 仍待人工。
-- WP-75：`just cis-check`（需安装 kube-bench 与 tier1），报告归档到 `docs/cis/`；阈值按 kube-bench 报告人工判定。
-- WP-76：`just conformance`（需安装 hydrophone 与 tier3 集群），报告归档到 `docs/conformance/`。
-- WP-66：tier1 已实跑 lifecycle、关浏览器、服务重启 interrupted→retry、CLI 抢锁、密码明文扫描，全部 PASS。
-- WP-65：Playwright `packages.spec.ts` 覆盖包导入/校验/推送/制作 base、升级预览+执行、证书续期、TOML 编辑保存；tier2 页面升级一个小版本。
-- WP-64：Playwright `addons.spec.ts` 覆盖安装/卸载与三个危险操作；tier1 页面安装/卸载 metrics-server。
-- WP-62：Playwright `wizard.spec.ts` 在 mock 后端走完 9 步并提交；tier1 真实创建。
-- WP-66：真实 e2e 暴露并修复：`GET /clusters/{name}` 缺 `desired_nodes`/`observed_nodes`/`config_summary`；`OperationView` 未序列化 `result`；create/add-nodes/delete-cluster 不更新 lifecycle；containerd config 先于 unit 安装；SPA 回退把带点 operation id 当资产 404；wizard 发送 `artifacts.zone=global`；precheck 在 TOML 未就绪时可点。
-- WP-64：addon 操作的 `values` 由服务端写入 `[addons.<name>.values]`（WP-54 遗漏）；`POST /clusters/{name}/archive` 为 WP-54 遗漏的端点，WP-64 补齐。
-- WP-55：`just release-musl` 后 `kurin serve` 打开页面；`just ts-bindings` 漂移测试。
-- WP-54：tier1 上 `/nodes/probe` 真实节点、`/addons` 安装后采集、`/packages/create-base` → push 到本地 zot。
-- WP-48：`just tier1-cilium`、`e2e/tier1/kube-ovn.sh`、`just tier1-cni-takeover cilium|kube-ovn`、`just tier1-offline-cni cilium`。
-- WP-47：`e2e/tier1/storage.sh local-path`、`nfs`（配置不变，断言 addons 任务与 StorageClass/PVC）。
-- WP-46：`just tier1-addons`（在线）与 `just tier1-addons cn`（zone=cn），逐 addon install→ready→remove。
-- WP-45：`package create addon -f addons/ingress-nginx/addon.yaml` → `package create base --addons ingress-nginx` → 离线 tier1 create。
-- WP-38：`just tier1-rocky-offline`（先构建 os 包；或分步 `package create os` + `rocky-offline.sh`）。
-- WP-37：`just bundle` 后 `just tier1-offline-cni flannel`、`cilium`、`kube-ovn`（需 multipass）。
-- WP-36：`e2e/tier3/registry.sh zot`；完全断网 3 节点：`KURIN_DISCONNECTED=1 KURIN_BASE_PACKAGE=oci-layout:///abs/base e2e/tier3/registry.sh zot`。
-- WP-35：`just tier1-offline oci-layout:///tmp/kurin-pkg`、`file:///tmp/kurin-base.tar.zst`、`oci://127.0.0.1:5000/kurin/base:v1.33.1-kubeadm`（三种来源各一次）。
-- WP-34：`just tier1-offline`（用既有旧 bundle 目录，验证不回归）；
-  另可用 `kurin package create base -o file:///tmp/base.tar.zst` 后
-  `create cluster --offline file:///tmp/base.tar.zst --dry-run` 验证
-  覆盖性诊断（真包、真缺口列表）。
+### 已执行（本机，2026-10-28）
+- WP-66：tier1 lifecycle、创建中关浏览器、服务重启 interrupted→retry、CLI 抢锁、密码明文扫描，全部 PASS。
+- WP-71：tier1 cert timer 安装、`status` 下次续期、手动触发续期 + 静态 pod 轮转 + `/readyz`，PASS。
+- WP-72：tier1 k3s 1.33.1 → 1.34.1（手工离线 bundle），`k3s --version` / node Ready / `/readyz`，PASS。
+- WP-73：tier1 `kurin import --from-cluster` 重建 v1alpha2 配置，`status` 可用，PASS。
+- WP-74：Ubuntu 22.04.5、AlmaLinux 9.8、openEuler 24.03 的 tier1 在线安装，PASS。
+- WP-75：tier1 CIS 集群创建；kube-bench v0.10.7：default 64 pass/15 fail/51 warn，CIS 70 pass/11 fail/49 warn。
+- WP-76：hydrophone v0.8.0 在 tier1 k3s 单节点：421/424 PASS，报告 `docs/conformance/20261028T074500Z/`。
+- WP-77：tier1 无 registry 节点、`file://` base + os 包、`delivery = "seed"` 创建，PASS。
 
-- WP-15：纯重构，快照零变化；回归 `just tier1`/`tier2` 即可。
-- WP-16：`just tier1-offline`、`just tier3-external-lb`。
-- WP-50：`kurin serve` 回环冒烟（一次性登录链接、`/session`、401/403/400、TLS h2）；`cargo clippy -p kurin --features ui`。
-- WP-39：签名包校验、篡改 blob 拒绝、未签名包在 signature 模式拒绝（`cargo test -p kurin-artifact --test transfer`）；CI 工作流需在 tag 上人工验证。
-- WP-49：`just tier3-registry zot`、`docker-registry`、`external`（external 指向 zot）。
-- WP-63：tier1 真实 create 过程中刷新页面，确认日志从断点继续；`pnpm --dir web test:e2e`。
-- WP-77：无 registry 节点的离线安装（`[packages] delivery = "seed"`），镜像经控制机只读 registry + SSH -R 回环 pull；见 `docs/command-matrix.md` §registry。
-- WP-74：`tier1-ubuntu2204` 已 PASS；`tier1-ubuntu2204-offline` / `tier1-alma` / `tier1-alma-offline` / `tier1-openeuler` / `tier1-openeuler-offline` / `tier1-kylin <qcow2>` / `tier1-kylin-offline <qcow2> <os-pkg>` 仍待人工。
-- WP-75：`just cis-check`（需安装 kube-bench 与 tier1），报告归档到 `docs/cis/`；阈值按 kube-bench 报告人工判定。
-- WP-76：`just conformance`（需安装 hydrophone 与 tier3 集群），报告归档到 `docs/conformance/`。
-- WP-66：tier1 已实跑 lifecycle、关浏览器、服务重启 interrupted→retry、CLI 抢锁、密码明文扫描，全部 PASS。
-- WP-65：Playwright `packages.spec.ts` 覆盖包导入/校验/推送/制作 base、升级预览+执行、证书续期、TOML 编辑保存；tier2 页面升级一个小版本。
-- WP-64：Playwright `addons.spec.ts` 覆盖安装/卸载与三个危险操作；tier1 页面安装/卸载 metrics-server。
-- WP-62：Playwright `wizard.spec.ts` 在 mock 后端走完 9 步并提交；tier1 真实创建。
-- WP-66：真实 e2e 暴露并修复：`GET /clusters/{name}` 缺 `desired_nodes`/`observed_nodes`/`config_summary`；`OperationView` 未序列化 `result`；create/add-nodes/delete-cluster 不更新 lifecycle；containerd config 先于 unit 安装；SPA 回退把带点 operation id 当资产 404；wizard 发送 `artifacts.zone=global`；precheck 在 TOML 未就绪时可点。
-- WP-64：addon 操作的 `values` 由服务端写入 `[addons.<name>.values]`（WP-54 遗漏）；`POST /clusters/{name}/archive` 为 WP-54 遗漏的端点，WP-64 补齐。
-- WP-55：`just release-musl` 后 `kurin serve` 打开页面；`just ts-bindings` 漂移测试。
-- WP-54：tier1 上 `/nodes/probe` 真实节点、`/addons` 安装后采集、`/packages/create-base` → push 到本地 zot。
-- WP-48：`just tier1-cilium`、`e2e/tier1/kube-ovn.sh`、`just tier1-cni-takeover cilium|kube-ovn`、`just tier1-offline-cni cilium`。
-- WP-47：`e2e/tier1/storage.sh local-path`、`nfs`（配置不变，断言 addons 任务与 StorageClass/PVC）。
-- WP-46：`just tier1-addons`（在线）与 `just tier1-addons cn`（zone=cn），逐 addon install→ready→remove。
-- WP-45：`package create addon -f addons/ingress-nginx/addon.yaml` → `package create base --addons ingress-nginx` → 离线 tier1 create。
-- WP-38：`just tier1-rocky-offline`（先构建 os 包；或分步 `package create os` + `rocky-offline.sh`）。
-- WP-37：`just bundle` 后 `just tier1-offline-cni flannel`、`cilium`、`kube-ovn`（需 multipass）。
-- WP-36：`e2e/tier3/registry.sh zot`；完全断网 3 节点：`KURIN_DISCONNECTED=1 KURIN_BASE_PACKAGE=oci-layout:///abs/base e2e/tier3/registry.sh zot`。
-- WP-35：`just tier1-offline oci-layout:///tmp/kurin-pkg`、`file:///tmp/kurin-base.tar.zst`、`oci://127.0.0.1:5000/kurin/base:v1.33.1-kubeadm`（三种来源各一次）。
-- WP-34：`just tier1-offline`（旧 bundle 不回归）；`kurin package create base -o file:///tmp/base.tar.zst && kurin create cluster -f cfg --offline file:///tmp/base.tar.zst --dry-run`。
-- WP-33：本地 zot 容器三形态互转（layout→zot→tar→verify→inspect，二次 push 零发送，错误凭据 401）；已清理容器。
-- WP-32：`kurin package create base --arch amd64,arm64 -o file:///tmp/base.tar.zst`，再 `kurin package inspect file:///tmp/base.tar.zst`（真实网络下载约 10 分钟；本地假上游测试已覆盖校验路径）。
-- WP-53：导入 3 个集群（1 个不可达），等待一轮采集后核对总览五态与 `collect_error`；刷新去重与操作期间暂停。
-- WP-54：tier1 上 `POST /nodes/probe`（真实节点回填 facts）、`GET /clusters/{name}/addons`（安装 metrics-server 后采集）、`POST /packages/create-base`（构建后 `POST /packages/{id}/push` 到本地 zot）；`curl` 脚本随 WP-52 的 `scripts/api-smoke.sh` 扩展。
-- WP-52：`cargo build -p kurin --features ui && scripts/api-smoke.sh <tier1-config.toml>`（导入 → precheck → create → SSE 日志 → status → delete）。
-- WP-51：`cargo test -p kurin-server --test store`；`rusqlite bundled` 的 musl/zig 交叉编译需在发布机验证。
-- WP-45：`kurin package create addon -f addons/ingress-nginx/addon.yaml -o oci-layout:///tmp/addons/ingress-nginx`，再 `kurin package create base --addons ingress-nginx -o oci-layout:///tmp/base`；离线 tier1 用该 base 创建集群并确认 `addons/ingress-nginx` 与镜像预载任务完成（本机未跑 multipass，包/计划路径已由 `kurin/tests/addon_package.rs` 覆盖）。
-- WP-44：tier1 `addon install/upgrade/remove metrics-server`，观察配置与 `kurin-state` 变化。
-- WP-43：tier1 带 `[addons.x]` 创建，观察 addons 阶段任务与 hooks；`kurin addon remove`（WP-44 CLI 落地后）。
-- WP-44：tier1 上 `kurin addon install metrics-server -f cfg` → `kurin addon upgrade metrics-server -f cfg` → `kurin addon remove metrics-server -f cfg`（内置目录由 WP-46 提供；在此之前用 `source = "dir://…"` 指向 addon 目录）。
-- WP-42：tier1 安装测试 chart（`helm upgrade --install ... --wait=false`），确认 `helm status` 与对象列表，再卸载。
-- WP-41：纯本地渲染/校验，无需远端 e2e；13 个集成 + 5 个单测。
-- WP-40：纯本地解析/校验，无需远端 e2e；`just addon-schema` 与漂移测试。
-- WP-27：`just tier2 && just tier2-test`，再 `e2e/tier2/add-worker.sh target/tier2/debug/kurin`。
-- WP-26：`just tier1-quick`（纯参数 + 密码认证单节点）、`just tier3-quick-ha`（3 控制面 + kube-vip）。
-- WP-22：`just schema && git diff --exit-code docs/schema/cluster.v1alpha2.json`；无需远端 e2e。
-- WP-21：`kurin config migrate` 后 `create cluster --dry-run`；全部 v1alpha1 样例迁移快照与等价断言已自动覆盖。
-- WP-20：tier1 用 `{ env = ... }` 与 `{ file = ... }`（0600）提供 SSH 密码；`--dry-run` 不读取秘密文件。
-- WP-19：tier2 安装后检查 `kube-system/kurin-state`（8 键、密码为 `******`、history 含本次 op）；改配置 `add nodes` 确认不再探测 `/version`；`status` 显示 expected vs observed。
-- WP-14：`just tier2-certs`、`just tier2-status`、`just tier1-k3s-ops`。
-- WP-13：`just tier2-upgrade-minor`、`e2e/tier2/upgrade-offline.sh`。
-- WP-12：`just tier1-k3s`（含 delete）、`e2e/tier1/k3s-delete.sh`、tier2 删除 worker、tier3 删除集群。
-- WP-11：`just tier1 && just tier1-test && just tier1-down`、`just tier2 ...`、`just tier3 ...`（执行器最高风险，必须全量回归）。
-- WP-10：结构性重构，快照零变化；回归 `just tier1`/`tier2` 即可。
-- WP-09：两个终端同时对 tier1 执行 `add nodes`，第二个立即失败并显示第一个的 pid 与命令。
-- WP-18：tier1 故意配错镜像，确认日志出现 Pod 事件与容器日志尾部及原因提示。
-- WP-17：`just tier2-status`、tier1 标签任务；`KURIN_IT_CLUSTER=<kubeconfig> cargo test -p kurin-kube --test cluster_it -- --ignored`。
-- WP-07：`just tier2`、`just tier1-zone`、`just tier1-k3s`（验证 zone/Blackboard/续跑）。
-- WP-06：`just tier1 && just tier1-test`，再执行 `target/tier1/debug/kurin logs --last -vv`，确认包含 kubeadm init 全量输出与时间戳。
-- WP-08：`just tier0 tier0-test`；转发集成 `cargo test -p kurin --test ssh_docker -- --ignored --nocapture`。
-- WP-04：`e2e/tier1/mixed-arch.md`（x86 控制机 + qemu/multipass arm64 节点，含 `--dry-run --check` 断言 discover 阶段与 arm64 制品行、离线 `--arch amd64,arm64`）；回归 `just tier1`（up/offline/precheck/nonroot）与 `just tier2` 升级路径。
-- WP-05：`just tier1-offline`（最大上传路径），记录上传期间控制机 RSS 峰值，确认无整文件缓冲回归。
-- WP-03：`e2e/tier1/nonroot.sh`（multipass 中 ubuntu 用户 + 免密 sudo，单节点 create + delete）；回归 `just tier0-test`、`just tier1`。
-- WP-01：`just tier2-upgrade-minor`。额外验证：让某 worker 的 drain 失败（如带 PDB 的 Pod），确认升级在该节点前中止且节点保持 cordon；再用 `--force-drain-failure` 复跑确认告警与继续执行。
+### 仍无法在本机执行
+- **WP-74 Kylin V10**：无公共 qcow2，镜像只在厂商门户；脚本已就绪，需本地提供 qcow2。
+- **WP-74 各 OS 离线变体**：需为每个 OS 构建 os 包并断网跑（`tier1-*-offline` 脚本已就绪）。
+- **WP-72 `just tier1-k3s-upgrade` 原脚本**：需要制品清单 pin 目标 k3s release；本次用等价的手工离线 bundle 验证了升级链。
+- **WP-76 tier3 多节点 conformance**：单节点 tier1 的 3 个失败中「至少两个 untainted node」要求 ≥2 节点；完整门禁需 tier3（约 2h）。
+- **WP-75 kube-bench 正式阈值**：报告已出，阈值需维护者按 kube-bench 版本/适用项确定。
+- **WP-71/WP-73 的 tier2 多控制面场景**：已在 tier1 验证等价路径，tier2 未跑。
 
 ## 待决问题
 
