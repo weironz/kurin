@@ -18,6 +18,7 @@ trap 'rm -f "$CID" "$EVENTS"; multipass delete -p "$NAME" >/dev/null 2>&1 || tru
 
 mkdir -p "$KEYS"
 [ -f "$KEYS/id_ed25519" ] || ssh-keygen -t ed25519 -N "" -f "$KEYS/id_ed25519" -q -C kurin-ubuntu2204
+chmod 600 "$KEYS/id_ed25519"
 PUB=$(cat "$KEYS/id_ed25519.pub")
 
 cat > "$CID" <<EOF
@@ -39,6 +40,11 @@ multipass info "$NAME" >/dev/null 2>&1 || \
 IP=$(multipass info "$NAME" --format yaml | awk '/^    ipv4:/{getline; print $2; exit}')
 [ -n "$IP" ] || { echo "[FAIL] no ipv4"; exit 1; }
 ssh-keygen -R "$IP" -f ~/.ssh/known_hosts >/dev/null 2>&1 || true
+# The jammy cloud image keeps root locked; install the key through
+# multipass (like tier1/up.sh) instead of relying on cloud-init users.
+multipass exec "$NAME" -- sudo mkdir -p /root/.ssh
+multipass exec "$NAME" -- sudo bash -c "echo '$PUB' > /root/.ssh/authorized_keys && chmod 700 /root/.ssh && chmod 600 /root/.ssh/authorized_keys"
+multipass exec "$NAME" -- sudo bash -c "sed -i 's/^#\\?PermitRootLogin.*/PermitRootLogin prohibit-password/' /etc/ssh/sshd_config; systemctl restart sshd || systemctl restart ssh"
 
 # Wait for root ssh to actually work (cloud-init runcmd).
 for i in $(seq 1 30); do

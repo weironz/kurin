@@ -66,12 +66,12 @@
 | WP-63 操作详情与日志控制台 | done | 见提交 | 无 | tier1 真实 create 中刷新页面，日志从断点继续 | 阶段×节点网格；资源表；日志控制台（筛选/搜索/跟随/虚拟滚动/下载）；取消/重试；91 Vitest + 1 Playwright |
 | WP-64 Addon 页面与危险操作 | done | 见提交 | 无 | Playwright mock 覆盖安装/卸载/删除节点/销毁/移除纳管；tier1 页面安装卸载 metrics-server | Addon 页 + 危险区；156 个 Vitest + 4 个 Playwright；补齐 `POST /clusters/{name}/archive` 与 addon values 落修订 |
 | WP-65 包页面/升级/证书/TOML 编辑器 | done | 见提交 | 无 | Playwright mock 覆盖包/升级/证书/编辑器；tier2 页面升级一个小版本 | 包页 + 升级对话框 + 证书 Tab + CodeMirror 6 懒加载；179 个 Vitest + 7 个 Playwright |
-| WP-66 前端端到端验收 | done | 见提交 | 无 | tier1 实跑：lifecycle（创建→加/删 worker→销毁）PASS；关浏览器 PASS；重启/CLI/密码扫描待人工 | `web/e2e/` 5 个场景 + 加节点 UI；tier1 两次实跑通过 |
+| WP-66 前端端到端验收 | done | 见提交 | 无 | tier1 实跑：lifecycle PASS、关浏览器 PASS、服务重启 interrupted→retry PASS、CLI 抢锁 PASS、密码明文扫描 PASS | `web/e2e/` 5 个场景 + 加节点 UI；tier1 两次实跑通过 |
 | WP-70 etcd 备份/恢复 | done | 见提交 | 无 | `just tier1-etcd` PASS（tier1 单节点：备份 → 建 ns → 恢复 → ns 消失、`/readyz`+`/healthz/etcd` ok）| kubeadm：etcdctl 经 `crictl exec`（回退 `kubectl exec`）快照到 `/var/lib/etcd` 后移至 `/var/lib/kurin/etcd-backups`；恢复在节点 stage 上游 etcdctl 3.5.21 tarball（distroless etcd 镜像无 shell，不能从容器取）；多成员恢复用 etcd DR flags（`--name/--initial-cluster/--initial-advertise-peer-urls/--initial-cluster-token`）重建 quorum；k3s：`k3s etcd-snapshot save` + `k3s server --cluster-reset`（新 k3s 已移除 `etcd-snapshot restore` 子命令）；跨机传输分块 `dd|base64 -w 4096`（6 MiB/块）绕过 exec 捕获上限；旧数据一律 `…-pre-restore-<ts>` 保留不删 |
 | WP-71 证书自动续期 | done | 见提交 | 无 | tier1 实跑：`certs schedule --every 1h --warn-days 3650` 安装 timer，`status` 显示下次续期；手动触发 service 完成 renew + 静态 pod 轮转 + `/readyz` ok | 每控制面装 `kurin-cert-renew.{service,timer}` + `/usr/local/bin/kurin-cert-renew.sh`（幂等重装、`--every` 复用 WP-70 解析器、`WARN_DAYS` 固化进脚本）；kubeadm：`check-expiration` 最小剩余 < warn-days 才 `renew all` + 静态 pod 轮转 + `/readyz` 门控（CA 表不计入：renew all 无法续 CA）；k3s：`certificate check --output table` 门控 + `rotate` + `systemctl restart k3s`；`status`/`certs check` 显示下次续期（`NextElapseUSecRealtime`，`Monotonic` 回退）|
 | WP-72 k3s 升级 | done | 见提交 | `kurin/tests/upgrade_k3s.rs` 新增 2 个计划快照（`k3s_upgrade_plan_1cp_1w`、`k3s_upgrade_plan_3cp_3w_batch2`）；`kurin-core` `Stage` 枚举新增 `stop-service`/`start-service`（纯新增，无既有快照变化）| 待人工：`just tier1-k3s-upgrade`（需先 `just tier1-k3s`；目标 release 需制品清单 pin 或离线 bundle）| 计划按发行版分支：kubeadm 链不变；k3s 链 = `version-check` → `stop-service` → `install-bins`（上传暂存 + `cp -a` 保留旧二进制 `k3s.pre-upgrade-<ts>` 永不删除 + 原子 rename）→ `start-service` → `ready-gate`；server 逐台且 gate 含 `/readyz`，agent 按 `--batch`；agent 单元探测 `k3s-agent`（上游装法）回退 kurin 的 `k3s`；在线仅当清单 pin 目标 release，否则明确报错指引 `--offline`（绝不静默下载未校验二进制）；已在目标的节点全链 InSync |
 | WP-73 kurin import | done | 见提交 | 无 | 在另一台控制机 `kurin import --from-cluster … -o tier2.toml` 后 `kurin add nodes -f tier2.toml` | 只读直连（无计划/锁/操作日志）；v1alpha1 记录先迁移为 v1alpha2；kubectl 形态按节点上的 kubeconfig 探测（kubeadm/k3s）；`--password-env` 把每个 `******` 都写成同一 env 引用并列出清单告警，`--key` 只重写 `[ssh.auth]`，密码形态缺口明确报错列出字段；`-o` 0600 落盘、缺省 stdout；`--json` 报告 `{cluster, distribution, kubernetes_version, nodes, output}`（需配 `-o`） |
-| WP-74 OS 扩展 | done | 见提交 | 22 个新单测 + `kurin/tests/os_families.rs`（真实 discover 脚本往返 + 包行交叉校验） | 人工：`just tier1-ubuntu2204*` / `tier1-alma*` / `tier1-openeuler*` / `tier1-kylin*`（含离线；Kylin 需本地 qcow2） | facts 支持 Ubuntu 22.04/24.04、RHEL/Alma/Rocky 9、openEuler 24.03、Kylin V10（ID_LIKE 兜底、V10 归一）；kernel-deps 按族选包名/包管理器（Ubuntu/Rocky 命令逐字节不变）；OS 包新增 5 个目标；Kylin 无公共镜像时校验期拒绝 |
+| WP-74 OS 扩展 | done | 见提交 | 22 个新单测 + `kurin/tests/os_families.rs`（真实 discover 脚本往返 + 包行交叉校验） | `just tier1-ubuntu2204` PASS（Ubuntu 22.04.5，cluster-ready、node Ready、pods healthy、os-baseline）；Alma/openEuler/Kylin 仍待人工 | facts 支持 Ubuntu 22.04/24.04、RHEL/Alma/Rocky 9、openEuler 24.03、Kylin V10（ID_LIKE 兜底、V10 归一）；kernel-deps 按族选包名/包管理器（Ubuntu/Rocky 命令逐字节不变）；OS 包新增 5 个目标；Kylin 无公共镜像时校验期拒绝 |
 | WP-75 CIS 加固 | done | 见提交 | cis 计划快照新增 sysctl 三键；default 档位全部既有快照不变 | tier1 实跑：CIS 集群创建成功；kube-bench v0.10.7：default 64 pass/15 fail/51 warn，CIS 70 pass/11 fail/49 warn | `[kubernetes] profile = "cis"`（v1alpha2）：apiserver/kubelet CIS 参数、审计策略、PSA restricted（仅 default ns）、kubeconfig/kubelet 0600；default 渲染逐字节不变 |
 | WP-76 conformance 门禁 | done | 见提交 | 无 | 维护者：`just conformance`（需 hydrophone + tier3），报告存 `docs/conformance/<ts>/` | `scripts/conformance.sh`（复制 kubeconfig、改 server 地址、hydrophone run、归档）；本机未装 hydrophone 未执行 |
 | WP-77 种子仓库 | done | 见提交 | `just check` 全绿（1083 tests，新增 15：配置校验 2 + seed 13）；快照：capabilities +registry/seed 行、10 个 plan 快照 images/import 描述文案更新 | 人工 e2e 待跑：无 registry 节点离线安装（见 docs/command-matrix.md §registry 的 seed 命令块） | `crates/kurin-components/src/seed.rs`；`[packages] delivery = "seed"`（v1alpha2，加载期校验：不得与 [registry] 并存、需离线载荷源）；registry/seed-serve@controller + registry/seed-mirror@node（SSH -R）；containerd/CRI-O/k3s 回环 http mirror；镜像走 pull、二进制仍 preload；操作收尾拆除（仅回环、无认证、只读 405） |
@@ -146,10 +146,10 @@
 - WP-49：`just tier3-registry zot`、`docker-registry`、`external`（external 指向 zot）。
 - WP-63：tier1 真实 create 过程中刷新页面，确认日志从断点继续；`pnpm --dir web test:e2e`。
 - WP-77：无 registry 节点的离线安装（`[packages] delivery = "seed"`），镜像经控制机只读 registry + SSH -R 回环 pull；见 `docs/command-matrix.md` §registry。
-- WP-74：`just tier1-ubuntu2204` / `tier1-ubuntu2204-offline` / `tier1-alma` / `tier1-alma-offline` / `tier1-openeuler` / `tier1-openeuler-offline` / `tier1-kylin <qcow2>` / `tier1-kylin-offline <qcow2> <os-pkg>`（麒麟需本地镜像与 os 包）。
+- WP-74：`tier1-ubuntu2204` 已 PASS；`tier1-ubuntu2204-offline` / `tier1-alma` / `tier1-alma-offline` / `tier1-openeuler` / `tier1-openeuler-offline` / `tier1-kylin <qcow2>` / `tier1-kylin-offline <qcow2> <os-pkg>` 仍待人工。
 - WP-75：`just cis-check`（需安装 kube-bench 与 tier1），报告归档到 `docs/cis/`；阈值按 kube-bench 报告人工判定。
 - WP-76：`just conformance`（需安装 hydrophone 与 tier3 集群），报告归档到 `docs/conformance/`。
-- WP-66：tier1 已实跑 `lifecycle.spec.ts`（3.9m PASS）与「创建中关闭浏览器」（2.4m PASS）；`resilience.spec.ts` 的重启 retry、CLI 抢锁、密码扫描需 `KURIN_E2E_RESTART_CMD` / `KURIN_E2E_CLI` / `KURIN_E2E_SECRET`，待维护者执行。
+- WP-66：tier1 已实跑 lifecycle、关浏览器、服务重启 interrupted→retry、CLI 抢锁、密码明文扫描，全部 PASS。
 - WP-65：Playwright `packages.spec.ts` 覆盖包导入/校验/推送/制作 base、升级预览+执行、证书续期、TOML 编辑保存；tier2 页面升级一个小版本。
 - WP-64：Playwright `addons.spec.ts` 覆盖安装/卸载与三个危险操作；tier1 页面安装/卸载 metrics-server。
 - WP-62：Playwright `wizard.spec.ts` 在 mock 后端走完 9 步并提交；tier1 真实创建。
@@ -177,10 +177,10 @@
 - WP-49：`just tier3-registry zot`、`docker-registry`、`external`（external 指向 zot）。
 - WP-63：tier1 真实 create 过程中刷新页面，确认日志从断点继续；`pnpm --dir web test:e2e`。
 - WP-77：无 registry 节点的离线安装（`[packages] delivery = "seed"`），镜像经控制机只读 registry + SSH -R 回环 pull；见 `docs/command-matrix.md` §registry。
-- WP-74：`just tier1-ubuntu2204` / `tier1-ubuntu2204-offline` / `tier1-alma` / `tier1-alma-offline` / `tier1-openeuler` / `tier1-openeuler-offline` / `tier1-kylin <qcow2>` / `tier1-kylin-offline <qcow2> <os-pkg>`（麒麟需本地镜像与 os 包）。
+- WP-74：`tier1-ubuntu2204` 已 PASS；`tier1-ubuntu2204-offline` / `tier1-alma` / `tier1-alma-offline` / `tier1-openeuler` / `tier1-openeuler-offline` / `tier1-kylin <qcow2>` / `tier1-kylin-offline <qcow2> <os-pkg>` 仍待人工。
 - WP-75：`just cis-check`（需安装 kube-bench 与 tier1），报告归档到 `docs/cis/`；阈值按 kube-bench 报告人工判定。
 - WP-76：`just conformance`（需安装 hydrophone 与 tier3 集群），报告归档到 `docs/conformance/`。
-- WP-66：tier1 已实跑 `lifecycle.spec.ts`（3.9m PASS）与「创建中关闭浏览器」（2.4m PASS）；`resilience.spec.ts` 的重启 retry、CLI 抢锁、密码扫描需 `KURIN_E2E_RESTART_CMD` / `KURIN_E2E_CLI` / `KURIN_E2E_SECRET`，待维护者执行。
+- WP-66：tier1 已实跑 lifecycle、关浏览器、服务重启 interrupted→retry、CLI 抢锁、密码明文扫描，全部 PASS。
 - WP-65：Playwright `packages.spec.ts` 覆盖包导入/校验/推送/制作 base、升级预览+执行、证书续期、TOML 编辑保存；tier2 页面升级一个小版本。
 - WP-64：Playwright `addons.spec.ts` 覆盖安装/卸载与三个危险操作；tier1 页面安装/卸载 metrics-server。
 - WP-62：Playwright `wizard.spec.ts` 在 mock 后端走完 9 步并提交；tier1 真实创建。

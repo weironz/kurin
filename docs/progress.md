@@ -1,3 +1,9 @@
+## WP-66/73/74 真实 tier1 验证（2026-10-28）
+
+- **WP-66**：tier1 上服务重启后活动 create 变为 `interrupted`（error「服务重启，操作被中断」），`POST /operations/{id}/retry` 生成新操作（`retry_of` 指向原操作、`resume: true`）并成功；CLI 在服务端 create 持锁时被拒绝（`cluster "tier1" is busy: held by pid …`）；密码认证集群创建后，`KurinE2ePass123` 未出现在服务端 DB、JSONL 日志、`/config`、操作详情与日志 API 中，`/config` 只返回 `{ env = "KURIN_E2E_SSH_PASSWORD" }` 引用。
+- **WP-73**：tier1 上 `kurin import --from-cluster` 重建 v1alpha2 配置，节点/CIDR/SSH 引用一致，`kurin status -f` 直接可用。
+- **WP-74**：`just tier1-ubuntu2204` **PASS**——Ubuntu 22.04.5 上 cluster-ready、node Ready、pods healthy、os-baseline 生效。脚本修复：jammy cloud image 的 root 账户锁定，改为经 `multipass exec` 写 authorized_keys；host 私钥权限 0664 导致 OpenSSH 拒绝，脚本内 `chmod 600`。
+
 ## WP-71/75 真实 tier1 验证（2026-10-28）
 
 - **WP-71**：tier1 上 `kurin certs schedule -f … --every 1h --warn-days 3650` 安装 `kurin-cert-renew.timer`；`status` 显示 `next auto-renewal 1h`；手动 `systemctl start kurin-cert-renew.service` 后日志显示 364d < 3650 → `kubeadm certs renew all` → 静态 pod 轮转 → `/readyz ok`。修复：`NextElapseUSecRealtime=infinity`（timer 未加载）被当成有效时间，现按未排期处理。
