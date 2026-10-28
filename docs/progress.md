@@ -23,7 +23,7 @@
 - **`[packages] delivery = "seed"`**（v1alpha2）：控制机内置只读 OCI registry（`127.0.0.1:0`，手写 HTTP/1.1，tokio 无新依赖），按 `mirror/<upstream host>/<path>` 提供 manifest/blob；每个节点用 `Session::forward_remote` 开 SSH `-R` 回环隧道；containerd/CRI-O/k3s 的 mirror 指向节点本地端口（http/insecure）。镜像走 pull，二进制载荷仍走 SSH preload；操作结束拆除，仅回环、无认证、只读（写请求 405）。
 - **校验**：seed 不得与 `[registry]` 或 `role = "registry"` 节点并存，且必须有离线载荷源（`packages.base` / `artifacts.offline-dir`）；v1alpha1 拒绝。
 - **测试**：1083 全绿（新增 15：配置校验 2 + seed 13，覆盖 HTTP ping/manifest/blob/HEAD/404/405/400/413、隧道、三种运行时 mirror、去重与拆除）；快照仅 capabilities 新增 `registry/seed` 行与 10 个 plan 的 `images/import` 描述文案。
-- **待人工 e2e**：无 registry 节点离线安装（见 `docs/command-matrix.md` §registry 的 seed 命令块）。
+- **待人工 e2e**：无 registry 节点离线安装（见 `docs/reference/command-matrix.md` §registry 的 seed 命令块）。
 
 ## WP-74：OS 扩展（2026-10-28）
 
@@ -195,7 +195,7 @@
 
 ## 命令 × 发行版矩阵审计（2026-10-26）✅
 
-修掉四个被主线验收绕开的矩阵缺口（命令 × k3s/crio/offline），新增 `docs/command-matrix.md`：
+修掉四个被主线验收绕开的矩阵缺口（命令 × k3s/crio/offline），新增 `docs/reference/command-matrix.md`：
 
 - **delete 对 k3s**：teardown 重写为发行版感知——k3s 停服务后清 `/etc/rancher`、`/var/lib/rancher`、k3s 二进制，**不跑 kubeadm reset**；crio 运行时补 `/etc/crio`、crio/pinns 二进制等残留路径；kubectl helper 按 kubeadm/k3s 分派（`k3s kubectl --kubeconfig /etc/rancher/k3s/k3s.yaml`）。
 - **status 对 k3s**：`kubectl_base` 按发行版分派（k3s kubeconfig + HA 本机 127.0.0.1）；etcd 健康 k3s 走 `/healthz/etcd`（内嵌 etcd 不在 pod 里，pod 计数会误报）；cert_min_days 委托 certs::check（单一事实源）。

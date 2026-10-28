@@ -17,6 +17,14 @@ for f in ../*.md; do
   esac
 done
 
+# 分类目录
+for d in getting-started guides reference operations docker development; do
+  mkdir -p "src/$d"
+  for f in ../"$d"/*.md; do
+    cp "$f" "src/$d/"
+  done
+done
+
 # 架构文档（PROGRESS.md / HANDOFF.md 是台账，不进站点）
 for f in ../architecture/*.md; do
   case "$f" in
@@ -27,5 +35,9 @@ done
 
 cp ../architecture/spikes/30-oci.md src/architecture/spikes/
 cp ../ui/*.md src/ui/
+
+# JSON Schema（文档里的相对链接）
+mkdir -p src/schema
+cp ../schema/*.json src/schema/
 
 echo "synced $(find src -name '*.md' ! -name SUMMARY.md | wc -l) pages into docs/site/src/"

@@ -14,7 +14,7 @@
 | [05-cli-quick-create.md](05-cli-quick-create.md) | 命令行直接传节点、角色、认证信息快速建集群 | 实现者、用户 |
 | [06-dev-plan.md](06-dev-plan.md) | **分阶段开发计划**：P0～P7，60 余个工作包，每个都有依赖、步骤、测试、验收 | 编码 AI、维护者 |
 | [../ui/ui-architecture-final.md](../ui/ui-architecture-final.md) | Web UI 方案（v1.1：表单优先、日志控制台） | 实现者 |
-| [HANDOFF.md](HANDOFF.md) | 交给编码 AI 一次性完成全部开发的提示词（含进度台账与断点续做机制） | 维护者 |
+| [HANDOFF.md](https://github.com/weironz/kurin/blob/main/docs/architecture/HANDOFF.md) | 交给编码 AI 一次性完成全部开发的提示词（含进度台账与断点续做机制） | 维护者 |
 
 阅读顺序：决策者读本页 + 01；实现者读 02 → 对应专题 → 06 里自己负责的 WP。
 
@@ -47,6 +47,6 @@
 
 ## 与既有文档的关系
 
-- `docs/plugins.md`：P1/P4 完成后改写为“如何写一个 Component / 如何写一个 addon”。在那之前，它仍然描述现有代码。
+- `docs/development/plugins.md`：P1/P4 完成后改写为“如何写一个 Component / 如何写一个 addon”。在那之前，它仍然描述现有代码。
 - `docs/ui/ui-architecture-final.md`：已更新到 v1.1，与本组文档一致；两份 UI 调研稿保留作为历史输入。
 - `docs/roadmap.md`、`docs/v1.0-gates.md`：本计划在 v1.0 门禁之前完成；门禁中的配置兼容和 `--json` 冻结规则，已体现在 06 §0.2 的 R4 中。

@@ -16,7 +16,7 @@
 | 使用 | `[artifacts] offline-dir` 或 `--offline <dir>`，路径在**控制机**上 | `model.rs` |
 | 下发 | 控制机整文件读入内存后经 SSH 推到每个节点；镜像在节点上 `ctr import` | `tasks/install.rs:193-219` |
 | OS 依赖 | 只有 deb 载荷；rpm 系离线无法安装内核依赖 | `tasks/kernel_deps.rs` |
-| 缺口 | flannel/cilium/kube-ovn 的镜像不在包里，离线被拒；addon 无法离线；包无法版本化、签名或用仓库分发 | `docs/command-matrix.md` |
+| 缺口 | flannel/cilium/kube-ovn 的镜像不在包里，离线被拒；addon 无法离线；包无法版本化、签名或用仓库分发 | `docs/reference/command-matrix.md` |
 
 ---
 

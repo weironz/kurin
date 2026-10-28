@@ -99,7 +99,7 @@ KURIN_REGISTRY_EXTERNAL=1 just tier3-registry external
 （v1alpha2）：控制机起只读 OCI registry（`registry/seed-serve@controller`），
 每个节点经 SSH 远程转发看到 `127.0.0.1:<port>`，运行时 mirror 指向该端点
 （`registry/seed-mirror@node`），镜像以 pull 语义到达；二进制仍走 SSH 流式
-上传。详见 `docs/configuration.md` §种子仓库。**需要人工 e2e**（无 registry
+上传。详见 `docs/reference/configuration.md` §种子仓库。**需要人工 e2e**（无 registry
 节点的离线安装，multipass 真机环境）：
 
 ```text

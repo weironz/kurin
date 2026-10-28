@@ -10,7 +10,7 @@
 
 ### 0.1 开工前必读
 
-1. 仓库根目录 `README.md`、`docs/plugins.md`、`docs/command-matrix.md`、`docs/v1.0-gates.md`。
+1. 仓库根目录 `README.md`、`docs/development/plugins.md`、`docs/reference/command-matrix.md`、`docs/v1.0-gates.md`。
 2. 本 WP 引用的设计文档章节（WP 内“设计”一行给出）。
 3. 本 WP 改动范围内的现有源码与测试（`kurin/tests/*.rs` 里已有 MockSession 写法，照着写）。
 
@@ -27,7 +27,7 @@
 | R7 | 新增或修改的公共函数、trait 要有 doc 注释；注释密度和风格与周边代码一致。 |
 | R8 | 秘密（密码、口令、token、join 命令）不得出现在日志、事件、错误文本、快照和测试输出里；测试中使用明显的假值并断言它们被脱敏。 |
 | R9 | 提交信息使用 Conventional Commits（`feat(scope): …` / `refactor(core): …`），不写模型名。 |
-| R10 | 每个 WP 完成后更新相关文档：用户可见行为改 `README.md` / `docs/configuration.md` / `docs/command-matrix.md`；设计偏离本计划时，在 PR 里说明原因，并同步修改对应的设计文档。 |
+| R10 | 每个 WP 完成后更新相关文档：用户可见行为改 `README.md` / `docs/reference/configuration.md` / `docs/reference/command-matrix.md`；设计偏离本计划时，在 PR 里说明原因，并同步修改对应的设计文档。 |
 
 ### 0.3 完成定义（DoD）检查表
 
@@ -360,7 +360,7 @@ flowchart LR
 - **依赖**：WP-15。
 - **步骤**：
   1. 迁移 `ha/kube-vip`、`ha/kurin-lb`、`ha/external`、`cni/*`、`registry/*`、`storage/*`（storage 在 WP-47 改为 addon，这里先作为第 1 层组件迁移）、`post/*`（kubeconfig、summary、labels）。
-  2. `capabilities()` 汇总生成：`kurin capabilities --json`（新的隐藏子命令，供 Web 与文档生成使用）；`just docs-matrix` 从它生成 `docs/command-matrix.md` 中的“create cluster”表（保留人工维护的“e2e 验证”列，生成器只负责“支持 / 拒绝”）。
+  2. `capabilities()` 汇总生成：`kurin capabilities --json`（新的隐藏子命令，供 Web 与文档生成使用）；`just docs-matrix` 从它生成 `docs/reference/command-matrix.md` 中的“create cluster”表（保留人工维护的“e2e 验证”列，生成器只负责“支持 / 拒绝”）。
   3. `artifacts(spec, arch)`：每个组件声明自己的制品（二进制、镜像、manifest）；`kurin artifact` 改为从注册表汇总（为 P3 打基础），离线镜像集合不再手工维护。
 - **测试**：快照零变化；能力表快照；`artifacts()` 汇总与现有 bundle 内容一致（以 WP-00 时的 `kurin artifact` 产物文件列表作为对照快照）。
 - **验收**：`just check`；人工 e2e：`just tier1-offline`、`just tier3-external-lb`。
@@ -436,7 +436,7 @@ flowchart LR
   2. 加载器按 `version` 分派；两种版本都转换为 `ClusterSpec`。
   3. `kurin config migrate -f old.toml [-o new.toml]`：用 toml_edit 保留注释与顺序；无法自动迁移的字段报错并给出人工步骤。
   4. `kurin create config` 默认输出 v1alpha2，`--schema-version v1alpha1` 输出旧版。
-  5. 更新 `docs/configuration.md`（两个版本的对照表）。
+  5. 更新 `docs/reference/configuration.md`（两个版本的对照表）。
 - **测试**：所有 v1alpha1 样例迁移后的快照；迁移后加载得到的 `ClusterSpec` 与直接加载 v1alpha1 的结果相等（属性测试或逐样例断言）；注释保留。
 - **验收**：`just check`；`kurin-config/tests/snapshots.rs` 中的历史样例全部继续通过（v1.0 门禁 §1）。
 

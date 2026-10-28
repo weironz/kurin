@@ -1511,7 +1511,7 @@ SSO/OIDC 可作为团队化阶段的增强，但基本认证与审计不能晚�
 
 [K01]: https://github.com/weironz/kurin/blob/cbee2f10eb708e46011a580586425378cb22c659/Cargo.toml
 [K02]: https://github.com/weironz/kurin/blob/cbee2f10eb708e46011a580586425378cb22c659/kurin/src/main.rs
-[K03]: https://github.com/weironz/kurin/blob/cbee2f10eb708e46011a580586425378cb22c659/docs/command-matrix.md
+[K03]: https://github.com/weironz/kurin/blob/cbee2f10eb708e46011a580586425378cb22c659/docs/reference/command-matrix.md
 [K04]: https://github.com/weironz/kurin/blob/cbee2f10eb708e46011a580586425378cb22c659/kurin/src/engine.rs
 [K05]: https://github.com/weironz/kurin/blob/cbee2f10eb708e46011a580586425378cb22c659/kurin/src/artifact.rs
 [K06]: https://github.com/weironz/kurin/blob/cbee2f10eb708e46011a580586425378cb22c659/kurin/src/executor.rs

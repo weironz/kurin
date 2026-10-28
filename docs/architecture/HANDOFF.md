@@ -17,7 +17,7 @@ P7（WP-70～78）只在 P0～P6 全部完成后才开始。
 2. docs/architecture/06-dev-plan.md：全文。第 0 节是硬性规则，必须遵守
 3. docs/architecture/02-core-architecture.md：目标架构与接口签名
 4. 每个 WP 开工前，再读它“设计”一栏引用的章节（03 addons / 04 OCI 包 / 05 CLI 快速创建 / docs/ui/ui-architecture-final.md v1.1）
-5. README.md、docs/plugins.md、docs/command-matrix.md、docs/v1.0-gates.md
+5. README.md、docs/development/plugins.md、docs/reference/command-matrix.md、docs/v1.0-gates.md
 
 设计文档是决策依据，不要重新论证已定的方案。实现时发现设计有错或有遗漏：选最保守、能自洽的做法，
 同步修改对应的设计文档，并在台账的“偏离记录”里写明原因。
@@ -53,7 +53,7 @@ WP | 状态（todo / doing / done / blocked）| 提交 | 快照变化 | 需人�
 3. WP-00 快照：没有变化，或者每一处变化都已在提交信息和台账里逐条解释。禁止不加解释地整批 `cargo insta accept`
 4. CLI 输出、`--json` v1 字段、v1alpha1 配置、退出码都没有被破坏（公开接口只增不删）
 5. 新依赖要说明 x86_64 musl 与 aarch64（zig）交叉编译情况；本机能验证的就实际跑 `just release-musl`
-6. 用户可见的行为变化，已更新 README / docs/configuration.md / docs/command-matrix.md / CHANGELOG.md
+6. 用户可见的行为变化，已更新 README / docs/reference/configuration.md / docs/reference/command-matrix.md / CHANGELOG.md
 7. 涉及远端执行语义的 WP：e2e 脚本已经写好或更新，人工执行命令已记入台账的「待人工 e2e」
 
 ## 六、e2e 的处理

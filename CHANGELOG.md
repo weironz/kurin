@@ -489,7 +489,7 @@ All notable changes to kurin. Format follows Keep a Changelog; semver.
   step. Without `-o` the document is printed to stdout.
 - `kurin create config` now prints the v1alpha2 example by default;
   `--schema-version v1alpha1` prints the old one.
-- `docs/configuration.md`: v1alpha1/v1alpha2 comparison table and the
+- `docs/reference/configuration.md`: v1alpha1/v1alpha2 comparison table and the
   v1alpha2 `[addons]` / `[packages]` reference.
 - Secret references (WP-20): every secret config field (`ssh.auth.password`,
   `ssh.auth.passphrase`, `ssh.become-password`, node overrides and
@@ -548,7 +548,7 @@ All notable changes to kurin. Format follows Keep a Changelog; semver.
   `artifacts()` declaration instead of hand-maintained lists (parity
   tests pin both to the previous content).
 - `just docs-matrix`: regenerates the `create cluster` table in
-  `docs/command-matrix.md` from `kurin capabilities --json`. The
+  `docs/reference/command-matrix.md` from `kurin capabilities --json`. The
   support/reject cells are generated; the e2e column stays manually
   maintained.
 
@@ -622,7 +622,7 @@ All notable changes to kurin. Format follows Keep a Changelog; semver.
   node-level override): `strict` refuses unknown hosts instead of trusting
   them, `accept-new` learns them non-interactively. All modes reject a key
   that disagrees with the recorded entry, with the known_hosts path in the
-  error. See `docs/configuration.md`.
+  error. See `docs/reference/configuration.md`.
 - SSH port forwarding primitives: `Session::forward_local` (`ssh -L`,
   binds `127.0.0.1:0`, one `direct-tcpip` channel per connection, stops on
   `Drop`) and `Session::forward_remote` (`ssh -R`, returns the assigned

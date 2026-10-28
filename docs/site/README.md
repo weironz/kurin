@@ -24,8 +24,8 @@ mdbook serve
 
 - `book.toml` — mdBook 配置（书名 / 语言 / src 目录）
 - `src/SUMMARY.md` — 目录（手写：章节顺序）
-- `sync.sh` — 把 `docs/*.md`、`docs/architecture/*.md`、
-  `docs/architecture/spikes/*.md`、`docs/ui/*.md` 拷进 `src/`，
+- `sync.sh` — 把 `docs/*.md`、`docs/{getting-started,guides,reference,operations,docker,development}/*.md`、
+  `docs/architecture/*.md`、`docs/architecture/spikes/*.md`、`docs/ui/*.md` 拷进 `src/`，
   排除工作台账（`progress.md`、`architecture/PROGRESS.md`、`architecture/HANDOFF.md`）
 - `src/`、`book/` — 生成物
 

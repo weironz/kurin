@@ -6,6 +6,13 @@ Declarative Kubernetes cluster installer written in Rust — a ground-up rewrite
 Status: **M1 + wave2 complete** — every roadmap batch landed and is verified by
 real end-to-end tests ([`docs/progress.md`](docs/progress.md)).
 
+## Documentation
+
+- [文档索引](docs/README.md) — 入门 / 指南 / 参考 / 运维 / Docker / 开发
+- [安装](docs/getting-started/install.md) · [快速上手](docs/getting-started/quickstart.md) · [Web UI](docs/getting-started/ui.md)
+- [CLI 参考](docs/reference/cli.md) · [配置参考](docs/reference/configuration.md)
+- [Docker：运行 CLI 与 UI](docs/docker/README.md)
+
 ## What it does
 
 - **Nodes**: Ubuntu 22.04/24.04, Debian 12, Rocky/RHEL/Alma 9, openEuler 24.03,
@@ -54,8 +61,8 @@ real end-to-end tests ([`docs/progress.md`](docs/progress.md)).
 
 ## Quick start
 
-详细手把手教程：[`docs/quickstart.md`](docs/quickstart.md)（单节点 / HA / 离线 / 国内镜像 / FAQ）。
-字段全表：[`docs/configuration.md`](docs/configuration.md)；集成插件见 [`docs/plugins.md`](docs/plugins.md)。
+详细手把手教程：[`docs/getting-started/quickstart.md`](docs/getting-started/quickstart.md)（单节点 / HA / 离线 / 国内镜像 / FAQ）。
+字段全表：[`docs/reference/configuration.md`](docs/reference/configuration.md)；集成插件见 [`docs/development/plugins.md`](docs/development/plugins.md)。
 
 ```bash
 # install (musl static, x86_64/aarch64)

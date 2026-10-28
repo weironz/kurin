@@ -465,7 +465,7 @@ CREATE TABLE snapshots (
 1. 向导状态是一个 DTO；每一步都调用 `POST /configs/render` 由 Rust 生成规范 TOML，再调用 `POST /configs/validate` 拿诊断，前端不复刻校验逻辑。
 2. 想手改 TOML 时，在第 9 步点击“高级：编辑 TOML”，从此以 TOML 为准，不再回填表单（避免双向同步丢失注释）。
 3. 集群创建后，详情页的“配置”Tab 默认显示**只读表单视图**，常用变更（加节点、启停 addon、改 addon 参数）走结构化动作，服务端用 toml_edit 生成新修订；TOML 编辑器作为“高级”入口保留。
-4. 表单字段的帮助文本来自 JSON Schema 的 `description`（由 `kurin-config` 的文档注释通过 schemars 导出），保证与 `docs/configuration.md` 一致。
+4. 表单字段的帮助文本来自 JSON Schema 的 `description`（由 `kurin-config` 的文档注释通过 schemars 导出），保证与 `docs/reference/configuration.md` 一致。
 
 ### 8.3 能力约束来自后端
 

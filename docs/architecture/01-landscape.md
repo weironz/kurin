@@ -37,7 +37,7 @@
 | RKE2 / K3s | 节点上跑发行版二进制，组件以 Helm Chart 形式由内置 **helm-controller** 在集群内调和 | 核心组件生命周期交给集群内控制器，不依赖外部工具持续运行 |
 | KubeOperator | Terraform（IaaS 建机）+ Ansible | Day0 规划能力强（含建机）；项目已归档 |
 
-**差异判断**：kurin 不应该走 KubeKey v4 那种通用 playbook 路线（这和 `docs/plugins.md` 的既定原则一致）。真正的短板是**生态组件扩展必须改 Rust 代码、动 6～7 处文件**。结论是“分层”：核心路径保持类型化 Rust，生态组件改成声明式数据（见 [03-addons](03-addons.md)，ADR-07/ADR-08）。
+**差异判断**：kurin 不应该走 KubeKey v4 那种通用 playbook 路线（这和 `docs/development/plugins.md` 的既定原则一致）。真正的短板是**生态组件扩展必须改 Rust 代码、动 6～7 处文件**。结论是“分层”：核心路径保持类型化 Rust，生态组件改成声明式数据（见 [03-addons](03-addons.md)，ADR-07/ADR-08）。
 
 ### 2.2 配置与快速上手
 
@@ -70,7 +70,7 @@
 
 | | 机制 |
 |---|---|
-| kurin | 编译期 enum 变体：CNI、HA、发行版、制品（`docs/plugins.md`）；存储与 registry 字段直接平铺在核心模型 `Cluster` 上（`registry_*`、`storage_*`） |
+| kurin | 编译期 enum 变体：CNI、HA、发行版、制品（`docs/development/plugins.md`）；存储与 registry 字段直接平铺在核心模型 `Cluster` 上（`registry_*`、`storage_*`） |
 | Kubespray | `roles/kubernetes-apps/*` + `addons.yml` 开关，组件很全（ingress、cert-manager、metallb、各类 CSI…） |
 | kubeasz | 内置 addon：DNS、headlamp、metrics-server、prometheus；生态工具：harbor、helm、argocd |
 | RKE2 / K3s | **manifests 目录自动部署**（文件即 AddOn CR）+ **HelmChart / HelmChartConfig CRD**（用户覆盖 values，不改原包） |
@@ -122,7 +122,7 @@
 2. **计划与执行分离 + 在线漂移探测**（`--dry-run --check`）。Ansible 的 `--check` 远没有这么可靠。
 3. **`Unknown ≠ failed` 的执行语义**：网络中断后先重新探测，不盲目重试。
 4. **全制品 sha256 / digest 固定**，国内镜像源有 CI 做 digest 一致性比对（`scripts/check-mirrors.sh`）。
-5. **诚实失败**：不支持的组合在校验期就拒绝（`docs/command-matrix.md`）。
+5. **诚实失败**：不支持的组合在校验期就拒绝（`docs/reference/command-matrix.md`）。
 6. **严格的配置 schema**：未知字段报错，诊断带源码位置。
 
 后续的重构与扩展都不能破坏这六点，这也是所有工作包验收的隐含前提。

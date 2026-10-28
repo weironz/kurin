@@ -37,7 +37,7 @@ schema:
 addon-schema:
     cargo run -q -p kurin-components --example addon_schema > docs/schema/addon.v1alpha1.json
 
-# regenerate the `create cluster` table in docs/command-matrix.md from
+# regenerate the `create cluster` table in docs/reference/command-matrix.md from
 # `kurin capabilities --json` (the e2e column stays hand-maintained)
 docs-matrix:
     cargo build -q -p kurin

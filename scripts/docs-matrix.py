@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate the `create cluster` table in docs/command-matrix.md.
+"""Generate the `create cluster` table in docs/reference/command-matrix.md.
 
 The support/reject cells come from `kurin capabilities --json` (the
 single source of truth, aggregated from the Component registry). The
@@ -18,7 +18,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-DOC = ROOT / "docs" / "command-matrix.md"
+DOC = ROOT / "docs" / "reference" / "command-matrix.md"
 BIN = ROOT / "target" / "debug" / "kurin"
 
 BEGIN = "<!-- docs-matrix:begin -->"

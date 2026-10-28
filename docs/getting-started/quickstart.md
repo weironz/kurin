@@ -238,5 +238,5 @@ kurin certs renew -f cluster.toml --force                  # 轮转控制面证�
   （`pod-cidr` / `service-cidr` 不得重叠），或检查 swap/SELinux（preflight 会明报）。
 - **k3s 找不到 pod**：k3s 集群没有独立 kubectl——`k3s kubectl`。
 
-更多字段与规则见 [`configuration.md`](configuration.md)，集成新 CNI/HA/发行版
-见 [`plugins.md`](plugins.md)。
+更多字段与规则见 [`configuration.md`](../reference/configuration.md)，集成新 CNI/HA/发行版
+见 [`plugins.md`](../development/plugins.md)。
