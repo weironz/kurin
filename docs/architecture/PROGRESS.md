@@ -15,7 +15,7 @@
 | WP-05 流式 exec 与上传 | done | 见提交 | 无 | `just tier1-offline`（记录控制机 RSS 峰值） | 行 8 KiB 截断、每流 16 MiB 捕获上限；上传 64 KiB 分块 + 远端 sha256 校验 |
 | WP-06 事件 v2 / tracing / 日志 | done | 见提交 | v1 事件仅新增 `ts`；新增 v2/终端快照 | `just tier1 && just tier1-test` 后 `kurin logs --last -vv` | EventBus + JSONL + `kurin logs`；默认终端输出不变 |
 | WP-07 RunContext 与 Blackboard | done | 见提交 | 无 | `just tier2`、`just tier1-zone`、`just tier1-k3s` | 删除 artifact OnceLock；join 材料/k3s token 走 Blackboard（0600） |
-| WP-08 SSH 安全与端口转发 | todo | | | `just tier0 tier0-test` | |
+| WP-08 SSH 安全与端口转发 | done | 见提交 | 无 | `just tier0 tier0-test` | host-key TOFU/known_hosts 模式；本地/远程转发（TunnelApi 复用）；TransportLost 映射 Unknown；凭据不回显 |
 | WP-09 集群锁与 RunState v2 | done | 见提交 | 无 | 双终端 `add nodes` 抢锁 | 标准库 `File::try_lock`；RunState v2 兼容 v1；`--resume` 校验计划指纹 |
 | WP-10 PlanBuilder / NodeSel | done | 见提交 | 无（快照零变化） | 无 | Phase/PlanBuilder/NodeSel/OpKind；移除 petgraph；保留既有阶段标签错位待 WP-11/12 修正 |
 | WP-11 DAG 执行器 | done | 见提交 | CLI sysctl-failure 快照新增 blocked skip 行 | tier1/tier2/tier3 全量 | 入度表 + 就绪队列；全局 32/节点 4；Strict/BestEffort；rolling；取消；计划指纹 |
@@ -49,7 +49,7 @@
 | WP-42 helm 执行器 | done | 见提交 | 无 | tier1 安装测试 chart | helm 3.19.0 制品（官方 sha256）；HelmRunner + manifests SSA；渲染镜像检查；返回对象列表 |
 | WP-43 addon-engine 组件 | done | 见提交 | 计划新增 addons 阶段（全部计划快照）；能力表新增 addon/engine | tier1 带 `[addons.x]` 创建并观察 hooks | requires/conflicts/环/compat 校验；check 读 kurin-state+helm；apply render→apply→track→hooks→record；remove |
 | WP-44 kurin addon 命令族 | done | 见提交 | 新增 8 个 addon CLI 快照（list/info/schema/install/upgrade/remove/dry-run） | tier1 metrics-server 生命周期（需 WP-46 目录或 `source`） | list/info/install/upgrade/remove；toml_edit 改写（注释保留、成功后写入、`--no-save`）；`--set`/`--values` 合并并预校验 values schema；`--dry-run` 只打印计划；`--keep-crds`；每次操作只收敛目标 addon 及其 requires |
-| WP-45 addon 打包与离线 | todo | | | 离线 tier1 ingress-nginx | |
+| WP-45 addon 打包与离线 | done | 见提交 | 新增 addon 包快照 | 离线 tier1 ingress-nginx | `package create addon` + `package create base --addons`；addon 载荷/渲染在节点侧；离线覆盖校验 |
 | WP-46 首批内置 addon | done | 见提交 | 无（catalog 是数据；嵌入目录不触发计划快照） | `e2e/tier1/addons.sh <bin> online|cn`（需人工） | 8 个 addon；chart 版本/镜像 digest 实抓（quay/ghcr OCI 与 GitHub release URL 两种 chart 来源，values 模板按 zone 换镜像源）；check-mirrors.sh 纳入 addon 镜像并修复 zone.rs 路径漂移 |
 | WP-47 存储迁移到 addon | done | 见提交 | storage 任务从 cni 移到 addons 阶段；能力表移除 storage/* | `e2e/tier1/storage.sh local-path/nfs` | `[storage]` 映射为 addons；StorageClass 名不变；已有集群 InSync；删除第 1 层 storage |
 | WP-48 CNI 改用 chart | done | 见提交 | cilium/kube-ovn 计划 describe 行变化 | `just tier1-cilium`、`e2e/tier1/kube-ovn.sh`、`just tier1-cni-takeover` | cilium/kube-ovn chart 实抓 pin；HelmRunner + tracker；`--take-ownership` 接管旧安装，失败不删除 |
@@ -59,13 +59,13 @@
 | WP-52 OpRunner/事件持久化/SSE | done | 见提交 | 无 | `scripts/api-smoke.sh <tier1.toml>` | SSE 先订阅后补读/seq 去重/心跳；JSONL 日志分页；取消/重试；重启标记 interrupted；并发上限 |
 | WP-53 Collector | done | 见提交 | 无 | 导入 3 集群（1 不可达）核对总览 | 抖动间隔/超时/并发/失败保留/证书 6h 降频/多 CP 回退/刷新去重/操作期间暂停；五态健康 |
 | WP-54 其余 API | done | 见提交 | 无（新增 25 个 kurin-server 集成测试，每端点成功+失败各一） | `scripts/api-smoke.sh` 扩展 plan/addons/packages（需人工） | /meta 组件表+能力表；/schema/cluster；render（不完整配置仍出 TOML+诊断）；validate span→labels；plan 只读操作（result=PlanView，?check 漂移）；nodes/probe 不回显凭据；nodes/parse；addons/catalog+集群 addons+addon 操作（remove 需 confirm）；packages 注册+verify/push/create-base 无集群操作；schema V4（operations.result/snapshots.addons/packages 表/索引豁免新只读 kind） |
-| WP-55 类型生成与静态资源 | todo | | | | |
+| WP-55 类型生成与静态资源 | done | 见提交 | 无 | `just release-musl` 后 `kurin serve` 打开页面；`just ts-bindings` 漂移测试 | 58 个 ts-rs 绑定；嵌入 gzip dist；SPA/`/api` 404 分离；二进制 +6.3MiB |
 | WP-60 前端脚手架 | done | 见提交 | 无 | 无 | 提前实施（先用手写 provisional DTO 对 mock 开发，WP-55 替换为 ts-rs 生成类型）；34 个 Vitest 用例通过 |
 | WP-61 集群总览与详情 | done | 见提交 | 无 | 无（WP-53 验收场景待后端） | 15s 轮询、五态徽标、详情四 Tab；46 个 Vitest 用例 |
 | WP-62 创建向导 | done | 见提交 | 无 | Playwright mock 走完 3 主 HA 模板；tier1 真实创建 | 9 步向导；每步 render→validate；23 个 Vitest + 1 个 Playwright |
 | WP-63 操作详情与日志控制台 | done | 见提交 | 无 | tier1 真实 create 中刷新页面，日志从断点继续 | 阶段×节点网格；资源表；日志控制台（筛选/搜索/跟随/虚拟滚动/下载）；取消/重试；91 Vitest + 1 Playwright |
-| WP-64 Addon 页面与危险操作 | todo | | | tier1 metrics-server | |
-| WP-65 包页面/升级/证书/TOML 编辑器 | todo | | | tier2 页面升级 | |
+| WP-64 Addon 页面与危险操作 | done | 见提交 | 无 | Playwright mock 覆盖安装/卸载/删除节点/销毁/移除纳管；tier1 页面安装卸载 metrics-server | Addon 页 + 危险区；156 个 Vitest + 4 个 Playwright；补齐 `POST /clusters/{name}/archive` 与 addon values 落修订 |
+| WP-65 包页面/升级/证书/TOML 编辑器 | done | 见提交 | 无 | Playwright mock 覆盖包/升级/证书/编辑器；tier2 页面升级一个小版本 | 包页 + 升级对话框 + 证书 Tab + CodeMirror 6 懒加载；179 个 Vitest + 7 个 Playwright |
 | WP-66 前端端到端验收 | done | 见提交 | 无 | tier1 实跑：lifecycle（创建→加/删 worker→销毁）PASS；关浏览器 PASS；重启/CLI/密码扫描待人工 | `web/e2e/` 5 个场景 + 加节点 UI；tier1 两次实跑通过 |
 | WP-70 etcd 备份/恢复 | done | 见提交 | 无 | `just tier1-etcd` PASS（tier1 单节点：备份 → 建 ns → 恢复 → ns 消失、`/readyz`+`/healthz/etcd` ok）| kubeadm：etcdctl 经 `crictl exec`（回退 `kubectl exec`）快照到 `/var/lib/etcd` 后移至 `/var/lib/kurin/etcd-backups`；恢复在节点 stage 上游 etcdctl 3.5.21 tarball（distroless etcd 镜像无 shell，不能从容器取）；多成员恢复用 etcd DR flags（`--name/--initial-cluster/--initial-advertise-peer-urls/--initial-cluster-token`）重建 quorum；k3s：`k3s etcd-snapshot save` + `k3s server --cluster-reset`（新 k3s 已移除 `etcd-snapshot restore` 子命令）；跨机传输分块 `dd|base64 -w 4096`（6 MiB/块）绕过 exec 捕获上限；旧数据一律 `…-pre-restore-<ts>` 保留不删 |
 | WP-71 证书自动续期 | done | 见提交 | 无 | tier2 手动模拟：`kurin certs schedule --every 1h --warn-days 3650` 后观察 timer 触发（步骤见 command-matrix「certs check / renew / schedule」）| 每控制面装 `kurin-cert-renew.{service,timer}` + `/usr/local/bin/kurin-cert-renew.sh`（幂等重装、`--every` 复用 WP-70 解析器、`WARN_DAYS` 固化进脚本）；kubeadm：`check-expiration` 最小剩余 < warn-days 才 `renew all` + 静态 pod 轮转 + `/readyz` 门控（CA 表不计入：renew all 无法续 CA）；k3s：`certificate check --output table` 门控 + `rotate` + `systemctl restart k3s`；`status`/`certs check` 显示下次续期（`NextElapseUSecRealtime`，`Monotonic` 回退）|
@@ -74,7 +74,7 @@
 | WP-74 OS 扩展 | done | 见提交 | 22 个新单测 + `kurin/tests/os_families.rs`（真实 discover 脚本往返 + 包行交叉校验） | 人工：`just tier1-ubuntu2204*` / `tier1-alma*` / `tier1-openeuler*` / `tier1-kylin*`（含离线；Kylin 需本地 qcow2） | facts 支持 Ubuntu 22.04/24.04、RHEL/Alma/Rocky 9、openEuler 24.03、Kylin V10（ID_LIKE 兜底、V10 归一）；kernel-deps 按族选包名/包管理器（Ubuntu/Rocky 命令逐字节不变）；OS 包新增 5 个目标；Kylin 无公共镜像时校验期拒绝 |
 | WP-75 CIS 加固 | done | 见提交 | `kurin/tests/plan_snapshots.rs` 的 cis 计划快照；default 档位全部既有快照不变 | 人工：`just cis-check`（需 kube-bench + tier1），报告存 `docs/cis/<ts>/` | `[kubernetes] profile = "cis"`（v1alpha2）：apiserver/kubelet CIS 参数、审计策略、PSA restricted（仅 default ns）、kubeconfig/kubelet 0600；default 渲染逐字节不变 |
 | WP-76 conformance 门禁 | done | 见提交 | 无 | 维护者：`just conformance`（需 hydrophone + tier3），报告存 `docs/conformance/<ts>/` | `scripts/conformance.sh`（复制 kubeconfig、改 server 地址、hydrophone run、归档）；本机未装 hydrophone 未执行 |
-| WP-77 种子仓库 | done | `crates/kurin-components/src/seed.rs`；`[packages] delivery = "seed"`（v1alpha2，加载期校验：不得与 [registry] 并存、需离线载荷源） | `just check` 全绿（1083 tests，新增 15：配置校验 2 + seed 13）；快照：capabilities +registry/seed 行、10 个 plan 快照 images/import 描述文案更新 | 人工 e2e 待跑：无 registry 节点离线安装（见 docs/command-matrix.md §registry 的 seed 命令块） | registry/seed-serve@controller + registry/seed-mirror@node（SSH -R）；containerd/CRI-O/k3s 回环 http mirror；镜像走 pull、二进制仍 preload；操作收尾拆除（仅回环、无认证、只读 405） |
+| WP-77 种子仓库 | done | 见提交 | `just check` 全绿（1083 tests，新增 15：配置校验 2 + seed 13）；快照：capabilities +registry/seed 行、10 个 plan 快照 images/import 描述文案更新 | 人工 e2e 待跑：无 registry 节点离线安装（见 docs/command-matrix.md §registry 的 seed 命令块） | `crates/kurin-components/src/seed.rs`；`[packages] delivery = "seed"`（v1alpha2，加载期校验：不得与 [registry] 并存、需离线载荷源）；registry/seed-serve@controller + registry/seed-mirror@node（SSH -R）；containerd/CRI-O/k3s 回环 http mirror；镜像走 pull、二进制仍 preload；操作收尾拆除（仅回环、无认证、只读 405） |
 | WP-78 英文文案与文档站 | done | 见提交 | 无 | `mdbook build`（docs/site，需安装 mdbook）| 593 键 en 字典（类型强制键集一致）、运行时语言切换（antd/dayjs 跟随、localStorage 持久化）、189 Vitest + 8 Playwright；mdBook 脚手架 + 同步脚本 |
 
 ## 偏离记录
