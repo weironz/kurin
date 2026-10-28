@@ -97,6 +97,12 @@ impl Timestamp {
         )
     }
 
+    /// `10:15:00` — compact wall-clock form for rich terminal progress.
+    pub fn format_hms(self) -> String {
+        let d = self.datetime();
+        format!("{:02}:{:02}:{:02}", d.hour(), d.minute(), d.second())
+    }
+
     /// Filename-safe form: `20261027T101500.123Z`.
     pub fn compact(self) -> String {
         let d = self.datetime();

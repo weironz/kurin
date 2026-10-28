@@ -134,6 +134,8 @@ pub fn format_envelope(envelope: &Envelope) -> String {
 pub struct TerminalRenderer {
     timestamps: bool,
     verbosity: u8,
+    rich: bool,
+    color: bool,
     out: Mutex<Box<dyn Write + Send>>,
 }
 
@@ -141,6 +143,11 @@ impl TerminalRenderer {
     /// Renderer writing to stderr.
     pub fn stderr(timestamps: bool, verbosity: u8) -> Self {
         Self::with_writer(io::stderr(), timestamps, verbosity)
+    }
+
+    /// Rich renderer (levels, compact timestamps, indented remote output).
+    pub fn stderr_rich(timestamps: bool, verbosity: u8, color: bool) -> Self {
+        Self::with_writer_rich(io::stderr(), timestamps, verbosity, color)
     }
 
     /// Renderer writing to an arbitrary sink (tests, Web).
@@ -152,6 +159,24 @@ impl TerminalRenderer {
         Self {
             timestamps,
             verbosity,
+            rich: false,
+            color: false,
+            out: Mutex::new(Box::new(writer)),
+        }
+    }
+
+    /// Rich renderer writing to an arbitrary sink.
+    pub fn with_writer_rich<W: Write + Send + 'static>(
+        writer: W,
+        timestamps: bool,
+        verbosity: u8,
+        color: bool,
+    ) -> Self {
+        Self {
+            timestamps,
+            verbosity,
+            rich: true,
+            color,
             out: Mutex::new(Box::new(writer)),
         }
     }
@@ -159,6 +184,9 @@ impl TerminalRenderer {
     /// Format `envelope` for the terminal, or `None` when it is filtered
     /// out for this verbosity.
     pub fn render(&self, envelope: &Envelope) -> Option<String> {
+        if self.rich {
+            return self.render_rich(envelope);
+        }
         let text = match &envelope.body {
             Body::Log {
                 level,
@@ -190,6 +218,82 @@ impl TerminalRenderer {
             Some(format!("{} {text}", envelope.ts.format_rfc3339()))
         } else {
             Some(text)
+        }
+    }
+}
+
+impl TerminalRenderer {
+    fn render_rich(&self, envelope: &Envelope) -> Option<String> {
+        let stamp = if self.timestamps {
+            envelope.ts.format_rfc3339()
+        } else {
+            envelope.ts.format_hms()
+        };
+        match &envelope.body {
+            Body::Log {
+                level,
+                node,
+                stream,
+                line,
+                ..
+            } => {
+                let visible = match stream {
+                    Stream::Kurin => *level >= Level::Info || self.verbosity >= 1,
+                    Stream::Stdout | Stream::Stderr => self.verbosity >= 2,
+                };
+                if !visible {
+                    return None;
+                }
+                let label = match level {
+                    Level::Trace => "TRACE",
+                    Level::Debug => "DEBUG",
+                    Level::Info => "INFO",
+                    Level::Warn => "WARN",
+                    Level::Error => "ERROR",
+                };
+                let code = match level {
+                    Level::Trace | Level::Debug => Some("2"),
+                    Level::Info => None,
+                    Level::Warn => Some("33"),
+                    Level::Error => Some("31"),
+                };
+                let label = match (self.color, code) {
+                    (true, Some(code)) => format!("\x1b[{code}m{label:<5}\x1b[0m"),
+                    _ => format!("{label:<5}"),
+                };
+                let node = node
+                    .as_deref()
+                    .map(|node| {
+                        let prefix = format!("[{node}]");
+                        if line.starts_with(&prefix) {
+                            String::new()
+                        } else {
+                            format!("{prefix} ")
+                        }
+                    })
+                    .unwrap_or_default();
+                let prefix = match stream {
+                    Stream::Kurin => "",
+                    Stream::Stdout | Stream::Stderr => "  │ ",
+                };
+                let text = if matches!(stream, Stream::Kurin) {
+                    line.strip_prefix("warn: ")
+                        .or_else(|| line.strip_prefix("error: "))
+                        .unwrap_or(line)
+                } else {
+                    line
+                };
+                Some(format!("[{stamp}] {label} {node}{prefix}{text}"))
+            }
+            Body::TaskWarn { key, message, .. } => {
+                let label = if self.color {
+                    "\x1b[33mWARN \x1b[0m".to_string()
+                } else {
+                    "WARN ".to_string()
+                };
+                Some(format!("[{stamp}] {label} {key}: {message}"))
+            }
+            _ => None,
         }
     }
 }
@@ -416,6 +520,29 @@ mod tests {
         assert!(renderer
             .render(&log(Level::Debug, Stream::Kurin, "debug"))
             .is_none());
+    }
+
+    #[test]
+    fn rich_terminal_renderer_prefixes_levels_and_indents_remote_output() {
+        let renderer = TerminalRenderer::with_writer_rich(Vec::new(), false, 2, false);
+        let info = renderer
+            .render(&log(Level::Info, Stream::Kurin, "hello"))
+            .expect("info visible");
+        assert!(info.contains("INFO"), "{info}");
+        assert!(info.contains("[n1] hello"), "{info}");
+        assert!(info.starts_with('['), "{info}");
+
+        let remote = renderer
+            .render(&log(Level::Debug, Stream::Stdout, "remote line"))
+            .expect("-vv shows remote output");
+        assert!(remote.contains("DEBUG"), "{remote}");
+        assert!(remote.contains("│ remote line"), "{remote}");
+
+        let colored = TerminalRenderer::with_writer_rich(Vec::new(), false, 2, true);
+        let line = colored
+            .render(&log(Level::Error, Stream::Kurin, "boom"))
+            .expect("error visible");
+        assert!(line.contains("\x1b[31m"), "{line}");
     }
 
     #[test]

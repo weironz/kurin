@@ -12,6 +12,7 @@
 | `--json [<VERSION>]` | 输出 JSONL 事件流。裸 `--json` / `--json=v1` 是冻结的 v1 事件（含 `ts`）；`--json=v2` 是完整信封 `{v, seq, ts, op, body}` |
 | `--timestamps` | 终端日志行加 UTC 时间戳 |
 | `-v`, `--verbose` | `-v` 显示 info 级进度与远端输出摘要；`-vv` 流式输出每条远端 stdout/stderr |
+| `--log-format <FORMAT>` | `auto`（默认，TTY 用 rich、管道用 plain）\| `plain`（历史 `skip/done/FAIL` 行）\| `rich`（阶段头、对齐列、CHECK/VERIFY、耗时、颜色） |
 | `--max-upload-parallel <N>` | 单次操作并发上传上限，默认 4 |
 | `-h`, `--help` | 帮助 |
 | `-V`, `--version` | 版本 |
@@ -143,7 +144,8 @@ kurin status -f cluster.toml [--json]
 ```
 
 节点、Pod、etcd、证书健康；首个控制面不可达时依次尝试其余控制面。
-退出码非 0 表示有异常。
+退出码非 0 表示有异常。表格列：`NODE / ROLE / INTERNAL-IP / STATUS /
+RUNTIME / KERNEL`，下方汇总 etcd、版本、证书与 overall。
 
 ## upgrade
 

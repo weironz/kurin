@@ -2,6 +2,7 @@
 //! per-operation event session (JSONL log + terminal/JSON sinks) and the
 //! result type the CLI maps to an exit code.
 
+use std::io::IsTerminal;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -20,12 +21,41 @@ pub enum JsonMode {
     V2,
 }
 
+/// Terminal progress format.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum LogFormat {
+    /// Rich on an interactive stderr, plain when piped (keeps e2e/CI output stable).
+    #[default]
+    Auto,
+    /// The historical `skip/done/ok/FAIL/-- stage` lines.
+    Plain,
+    /// Phase headers, aligned node/task columns, levels and colors.
+    Rich,
+}
+
+impl LogFormat {
+    /// Whether the rich renderer should be used.
+    pub fn rich(self) -> bool {
+        match self {
+            LogFormat::Rich => true,
+            LogFormat::Plain => false,
+            LogFormat::Auto => std::io::stderr().is_terminal(),
+        }
+    }
+
+    /// Whether ANSI colors should be emitted (`NO_COLOR` always wins).
+    pub fn color(self) -> bool {
+        self.rich() && std::env::var_os("NO_COLOR").is_none()
+    }
+}
+
 /// Output knobs shared by every operation.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct OutputOpts {
     pub json: Option<JsonMode>,
     pub timestamps: bool,
     pub verbose: u8,
+    pub log_format: LogFormat,
 }
 
 impl OutputOpts {
@@ -37,6 +67,16 @@ impl OutputOpts {
     /// True for any `--json` mode.
     pub fn json_enabled(self) -> bool {
         self.json.is_some()
+    }
+
+    /// Rich terminal progress (never in `--json` mode).
+    pub fn rich(self) -> bool {
+        !self.json_enabled() && self.log_format.rich()
+    }
+
+    /// ANSI colors for the rich renderer.
+    pub fn color(self) -> bool {
+        self.rich() && self.log_format.color()
     }
 }
 
@@ -86,10 +126,18 @@ impl OpSession {
             if out.v2() {
                 bus.add_sink(Arc::new(JsonSink::stdout()));
             } else {
-                bus.add_sink(Arc::new(TerminalRenderer::stderr(
-                    out.timestamps,
-                    out.verbose,
-                )));
+                if out.rich() {
+                    bus.add_sink(Arc::new(TerminalRenderer::stderr_rich(
+                        out.timestamps,
+                        out.verbose,
+                        out.color(),
+                    )));
+                } else {
+                    bus.add_sink(Arc::new(TerminalRenderer::stderr(
+                        out.timestamps,
+                        out.verbose,
+                    )));
+                }
             }
             events::install_tracing(Arc::clone(&bus));
             eprintln!("[logs] {}", path.display());

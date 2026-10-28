@@ -42,6 +42,10 @@ struct Cli {
     /// summary; `-vv` also streams every remote stdout/stderr line.
     #[arg(short = 'v', long = "verbose", global = true, action = ArgAction::Count)]
     verbose: u8,
+    /// Terminal progress format: `auto` (rich on a TTY, plain when piped),
+    /// `plain` (historical lines) or `rich` (phases, aligned columns, levels).
+    #[arg(long, global = true, value_name = "FORMAT", value_enum, default_value_t = LogFormatArg::Auto)]
+    log_format: LogFormatArg,
     /// Cap concurrent payload uploads per operation (default 4). Uploads
     /// share the control host's uplink, so they are gated independently
     /// of task concurrency.
@@ -58,6 +62,24 @@ enum JsonArg {
     V1,
     /// Full v2 envelopes (`v`, `seq`, `ts`, `op`, `body`).
     V2,
+}
+
+/// Terminal progress format (clap surface).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum LogFormatArg {
+    Auto,
+    Plain,
+    Rich,
+}
+
+impl From<LogFormatArg> for ops::LogFormat {
+    fn from(value: LogFormatArg) -> Self {
+        match value {
+            LogFormatArg::Auto => ops::LogFormat::Auto,
+            LogFormatArg::Plain => ops::LogFormat::Plain,
+            LogFormatArg::Rich => ops::LogFormat::Rich,
+        }
+    }
 }
 
 impl From<JsonArg> for JsonMode {
@@ -671,6 +693,7 @@ async fn run(cli: Cli) -> Result<()> {
         json: cli.json.map(JsonMode::from),
         timestamps: cli.timestamps,
         verbose: cli.verbose,
+        log_format: cli.log_format.into(),
     };
     let settings = kurin::run::RunSettings {
         max_upload_parallel: cli.max_upload_parallel,

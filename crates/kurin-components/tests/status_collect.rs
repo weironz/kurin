@@ -56,14 +56,23 @@ const NODES: &str = r#"{"items": [
   {"metadata": {"name": "master01",
       "labels": {"node-role.kubernetes.io/control-plane": ""}},
    "status": {"conditions": [{"type": "Ready", "status": "True"}],
-      "nodeInfo": {"kubeletVersion": "v1.33.1"}}},
+      "addresses": [{"type": "InternalIP", "address": "192.168.10.11"}],
+      "nodeInfo": {"kubeletVersion": "v1.33.1",
+        "containerRuntimeVersion": "containerd://1.7.22",
+        "kernelVersion": "6.8.0-45-generic"}}},
   {"metadata": {"name": "master02",
       "labels": {"node-role.kubernetes.io/control-plane": ""}},
    "status": {"conditions": [{"type": "Ready", "status": "True"}],
-      "nodeInfo": {"kubeletVersion": "v1.33.1"}}},
+      "addresses": [{"type": "InternalIP", "address": "192.168.10.12"}],
+      "nodeInfo": {"kubeletVersion": "v1.33.1",
+        "containerRuntimeVersion": "containerd://1.7.22",
+        "kernelVersion": "6.8.0-45-generic"}}},
   {"metadata": {"name": "worker01"},
    "status": {"conditions": [{"type": "Ready", "status": "True"}],
-      "nodeInfo": {"kubeletVersion": "v1.33.1"}}}
+      "addresses": [{"type": "InternalIP", "address": "192.168.10.21"}],
+      "nodeInfo": {"kubeletVersion": "v1.33.1",
+        "containerRuntimeVersion": "containerd://1.7.22",
+        "kernelVersion": "6.8.0-45-generic"}}}
 ]}"#;
 
 /// Two ready etcd pods (`component=etcd`), matching the control-plane
@@ -175,7 +184,10 @@ async fn the_second_control_plane_takes_over_when_the_first_is_unreachable() {
             name: "master01".into(),
             ready: true,
             kubelet_version: "v1.33.1".into(),
-            roles: "control-plane".into()
+            roles: "control-plane".into(),
+            internal_ip: "192.168.10.11".into(),
+            container_runtime: "containerd://1.7.22".into(),
+            kernel_version: "6.8.0-45-generic".into()
         }
     );
     assert!(report.etcd_ok);

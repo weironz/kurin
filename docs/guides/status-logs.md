@@ -7,6 +7,16 @@ kurin status -f cluster.toml
 kurin status -f cluster.toml --json
 ```
 
+表格列：
+
+```text
+NODE       ROLE            INTERNAL-IP    STATUS   RUNTIME               KERNEL
+master01   control-plane   192.168.1.11   Ready    containerd://1.7.22   6.8.0-45-generic
+worker01   worker          192.168.1.21   Ready    containerd://1.7.22   6.8.0-45-generic
+```
+
+`Ready` 绿色、`NotReady` 红色（TTY 且未设置 `NO_COLOR`）。
+
 检查项：
 
 - 节点 Ready 与版本；
@@ -17,6 +27,29 @@ kurin status -f cluster.toml --json
 
 首个控制面不可达时依次尝试其余控制面。**退出码可用于门禁**：非 0 表示
 有异常。
+
+## 进度输出格式
+
+`create cluster` / `add nodes` 默认在 TTY 上使用 rich 格式，管道/CI 保持
+历史 plain 行（脚本兼容）。强制选择：
+
+```bash
+kurin create cluster -f cluster.toml --log-format rich
+kurin create cluster -f cluster.toml --log-format plain
+```
+
+rich 格式示例：
+
+```text
+[09:42:10] 🚀 Starting cluster execution for [prod] (op 20261028T...)
+
+━━▶ Phase 1/9: Preflight ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[09:42:11] [master01] [CHECK ] preflight  ✔ satisfied -> skipped
+[09:42:11] [master02] [CHECK ] preflight  checking…
+[09:42:12] [master02] [VERIFY] preflight  ✔ passed (0.31s)
+```
+
+颜色可通过 `NO_COLOR=1` 关闭。`--json` 始终输出机器可读事件，不受该选项影响。
 
 ## 操作日志
 

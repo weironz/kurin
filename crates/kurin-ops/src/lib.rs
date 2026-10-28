@@ -34,6 +34,7 @@ mod packages;
 mod plan_only;
 mod plan_view;
 mod precheck;
+mod progress;
 mod status;
 mod upgrade;
 
@@ -60,7 +61,7 @@ pub use kurin_components::status::StatusOpts;
 pub use kurin_components::status::StatusReport;
 pub use kurin_components::tasks::post::ClusterStateRecord;
 pub use logs::LogsRequest;
-pub use output::{JsonMode, OpOutcome, OpResult, OutputOpts};
+pub use output::{JsonMode, LogFormat, OpOutcome, OpResult, OutputOpts};
 pub use plan_only::plan_only;
 pub use plan_view::{plan_view, DriftView, PhaseView, PlanView, TaskView};
 pub use precheck::precheck_with_handle;

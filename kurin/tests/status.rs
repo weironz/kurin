@@ -231,6 +231,9 @@ fn expected_nodes_healthy() -> Vec<status::NodeStatus> {
         ready: true,
         kubelet_version: "v1.33.2".into(),
         roles: "control-plane".into(),
+        internal_ip: "?".into(),
+        container_runtime: "?".into(),
+        kernel_version: "?".into(),
     }]
 }
 

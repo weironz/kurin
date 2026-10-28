@@ -11,6 +11,7 @@ use kurin_core::run::RunContext;
 use miette::{IntoDiagnostic, Result};
 
 use crate::output::{OpOutcome, OpResult, OutputOpts};
+use crate::progress::ProgressRenderer;
 use crate::{Params, Prepared};
 
 /// Which terminal lines the executor's v1 event adapter prints.
@@ -76,7 +77,7 @@ async fn run_op(
             let mut opts = RunOptions::default().with_default_state(&spec.name);
             opts.resume = *resume;
             run_plan(plan, pool, run, out, Emit::Progress, opts).await?;
-            if !out.json_enabled() {
+            if !out.json_enabled() && !out.rich() {
                 eprintln!("cluster {} ready", spec.name);
             }
             Ok(OpOutcome::Completed)
@@ -172,6 +173,22 @@ async fn run_plan(
     if opts.plan_fingerprint.is_empty() {
         opts.plan_fingerprint = plan.fingerprint();
     }
+    if emit == Emit::Progress && out.rich() {
+        let mut renderer = ProgressRenderer::with_writer(
+            std::io::stderr(),
+            plan,
+            &run.cluster,
+            &run.op_id,
+            out.color(),
+            out.timestamps,
+        );
+        renderer.start();
+        let mut sink = |event: Event| renderer.handle(event);
+        let result = executor::run_with_bus(plan, pool, run, &run.events, &mut sink, opts).await;
+        renderer.finish();
+        return result;
+    }
+
     let mut sink = |event: Event| {
         if out.v2() {
             return;

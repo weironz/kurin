@@ -155,12 +155,18 @@ fn report(healthy: bool, cert_min_days: Option<i64>) -> StatusReport {
                 ready: true,
                 kubelet_version: "v1.33.1".into(),
                 roles: "control-plane".into(),
+                internal_ip: "192.168.10.11".into(),
+                container_runtime: "containerd://1.7.22".into(),
+                kernel_version: "6.8.0-45-generic".into(),
             },
             NodeStatus {
                 name: "worker01".into(),
                 ready: healthy,
                 kubelet_version: "v1.33.1".into(),
                 roles: "worker".into(),
+                internal_ip: "192.168.10.21".into(),
+                container_runtime: "containerd://1.7.22".into(),
+                kernel_version: "6.8.0-45-generic".into(),
             },
         ],
         pods_not_running: if healthy {

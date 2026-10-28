@@ -7,6 +7,7 @@
 //! VIP cannot blind the probe. etcd health: kubeadm counts ready etcd pods,
 //! k3s runs its etcd outside pods and is checked via `/healthz/etcd`.
 
+use std::io::IsTerminal;
 use std::sync::Arc;
 
 use kurin_config::{Cluster, Distribution};
@@ -24,6 +25,9 @@ pub struct NodeStatus {
     pub ready: bool,
     pub kubelet_version: String,
     pub roles: String,
+    pub internal_ip: String,
+    pub container_runtime: String,
+    pub kernel_version: String,
 }
 
 /// Aggregated probe result; `healthy` gates the CLI exit code.
@@ -72,6 +76,26 @@ fn parse_nodes(items: &[Value]) -> Vec<NodeStatus> {
                 .and_then(Value::as_str)
                 .unwrap_or("?")
                 .to_string();
+            let internal_ip = item
+                .pointer("/status/addresses")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .find(|a| a.get("type").and_then(Value::as_str) == Some("InternalIP"))
+                .and_then(|a| a.get("address"))
+                .and_then(Value::as_str)
+                .unwrap_or("?")
+                .to_string();
+            let container_runtime = item
+                .pointer("/status/nodeInfo/containerRuntimeVersion")
+                .and_then(Value::as_str)
+                .unwrap_or("?")
+                .to_string();
+            let kernel_version = item
+                .pointer("/status/nodeInfo/kernelVersion")
+                .and_then(Value::as_str)
+                .unwrap_or("?")
+                .to_string();
             let empty = serde_json::Map::new();
             let labels = item
                 .pointer("/metadata/labels")
@@ -93,6 +117,9 @@ fn parse_nodes(items: &[Value]) -> Vec<NodeStatus> {
                 ready,
                 kubelet_version,
                 roles,
+                internal_ip,
+                container_runtime,
+                kernel_version,
             }
         })
         .collect()
@@ -303,16 +330,77 @@ fn parse_git_version(body: &str) -> Option<String> {
 
 /// Human-readable summary to stderr (stdout stays machine-clean).
 pub fn render(r: &StatusReport) {
-    eprintln!("CLUSTER STATUS");
-    eprintln!("{:<24} {:<6} {:<14} ROLES", "NAME", "READY", "VERSION");
+    let color = std::io::stderr().is_terminal() && std::env::var_os("NO_COLOR").is_none();
+    render_with_color(r, color);
+}
+
+fn paint(color: bool, code: &str, text: &str) -> String {
+    if color {
+        format!("\x1b[{code}m{text}\x1b[0m")
+    } else {
+        text.to_string()
+    }
+}
+
+/// The node table, one string per line (header first).
+fn table_lines(r: &StatusReport, color: bool) -> Vec<String> {
+    let name_w = r
+        .nodes
+        .iter()
+        .map(|n| n.name.len())
+        .max()
+        .unwrap_or(4)
+        .max(4);
+    let role_w = r
+        .nodes
+        .iter()
+        .map(|n| n.roles.len())
+        .max()
+        .unwrap_or(4)
+        .max(4);
+    let ip_w = r
+        .nodes
+        .iter()
+        .map(|n| n.internal_ip.len())
+        .max()
+        .unwrap_or(11)
+        .max(11);
+    let runtime_w = r
+        .nodes
+        .iter()
+        .map(|n| n.container_runtime.len())
+        .max()
+        .unwrap_or(7)
+        .max(7);
+    let mut out = vec![
+        "CLUSTER STATUS".to_string(),
+        format!(
+            "{:<name_w$} {:<role_w$} {:<ip_w$} {:<8} {:<runtime_w$} KERNEL",
+            "NODE", "ROLE", "INTERNAL-IP", "STATUS", "RUNTIME"
+        ),
+    ];
     for n in &r.nodes {
-        eprintln!(
-            "{:<24} {:<6} {:<14} {}",
-            n.name,
-            if n.ready { "True" } else { "False" },
-            n.kubelet_version,
-            n.roles
-        );
+        let status = if n.ready { "Ready" } else { "NotReady" };
+        let status = format!("{status:<8}");
+        let status = if n.ready {
+            paint(color, "32", &status)
+        } else {
+            paint(color, "31", &status)
+        };
+        let role = format!("{:<role_w$}", n.roles);
+        let role = paint(color, "2", &role);
+        out.push(format!(
+            "{:<name_w$} {role} {:<ip_w$} {status} {:<runtime_w$} {}",
+            n.name, n.internal_ip, n.container_runtime, n.kernel_version
+        ));
+    }
+    out
+}
+
+/// Testable/color-controlled variant of [`render`].
+pub fn render_with_color(r: &StatusReport, color: bool) {
+    for line in table_lines(r, color) {
+        eprintln!("{line}");
     }
     if !r.pods_not_running.is_empty() {
         eprintln!("\nPODS NOT RUNNING");
@@ -415,5 +503,49 @@ role = "control-plane"
         assert_eq!(nodes.len(), 1);
         assert!(nodes[0].ready);
         assert_eq!(nodes[0].roles, "control-plane");
+    }
+
+    #[test]
+    fn table_lists_runtime_kernel_and_internal_ip() {
+        let report = StatusReport {
+            healthy: true,
+            nodes: vec![
+                NodeStatus {
+                    name: "master01".into(),
+                    ready: true,
+                    kubelet_version: "v1.33.1".into(),
+                    roles: "control-plane".into(),
+                    internal_ip: "192.168.1.11".into(),
+                    container_runtime: "containerd://1.7.22".into(),
+                    kernel_version: "6.8.0-45-generic".into(),
+                },
+                NodeStatus {
+                    name: "worker01".into(),
+                    ready: false,
+                    kubelet_version: "v1.33.1".into(),
+                    roles: "worker".into(),
+                    internal_ip: "192.168.1.21".into(),
+                    container_runtime: "containerd://1.7.22".into(),
+                    kernel_version: "6.8.0-45-generic".into(),
+                },
+            ],
+            pods_not_running: vec![],
+            etcd_ok: true,
+            cert_min_days: None,
+            cert_next_renewal: None,
+            expected_version: None,
+            observed_version: None,
+        };
+        let lines = table_lines(&report, false);
+        assert_eq!(lines[0], "CLUSTER STATUS");
+        assert!(lines[1].contains("NODE"), "{}", lines[1]);
+        assert!(lines[1].contains("INTERNAL-IP"), "{}", lines[1]);
+        assert!(lines[1].contains("RUNTIME"), "{}", lines[1]);
+        assert!(lines[1].contains("KERNEL"), "{}", lines[1]);
+        assert!(lines[2].contains("master01"), "{}", lines[2]);
+        assert!(lines[2].contains("192.168.1.11"), "{}", lines[2]);
+        assert!(lines[2].contains("containerd://1.7.22"), "{}", lines[2]);
+        assert!(lines[2].contains("6.8.0-45-generic"), "{}", lines[2]);
+        assert!(lines[3].contains("NotReady"), "{}", lines[3]);
     }
 }
