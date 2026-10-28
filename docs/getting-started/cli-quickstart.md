@@ -70,6 +70,7 @@ kurin create cluster --name prod \
   --control-plane 192.168.10.11-13 \
   --worker 192.168.10.21-23 \
   --vip 192.168.10.100 \
+  --ssh-key ~/.ssh/id_ed25519 \
   --kubernetes 1.33.1 \
   --cni cilium \
   --addon metrics-server \
@@ -87,6 +88,7 @@ kurin create cluster --name prod \
 
 ```bash
 kurin create cluster --name prod \
+  --ssh-key ~/.ssh/id_ed25519 \
   --node name=cp1,address=192.168.10.11,role=control-plane \
   --node name=w1,address=192.168.10.21,role=worker,labels=disk=ssd
 ```
@@ -97,6 +99,7 @@ kurin create cluster --name prod \
 kurin create cluster --name edge \
   --control-plane 192.168.10.11-13 \
   --vip 192.168.10.100 \
+  --ssh-key ~/.ssh/id_ed25519 \
   --distribution k3s \
   --cni flannel
 ```
@@ -109,6 +112,7 @@ k3s 只支持 `flannel` / `none`，HA 只支持 kube-vip 模式。
 kurin create cluster --name prod \
   --control-plane 192.168.10.11-13 \
   --worker 192.168.10.21-23 \
+  --ssh-key ~/.ssh/id_ed25519 \
   --runtime crio \
   --cni calico \
   --pod-cidr 10.233.64.0/18 \
@@ -123,6 +127,7 @@ kurin create cluster --name prod \
 ```bash
 kurin create cluster --name airgap \
   --control-plane 192.168.10.11 \
+  --ssh-key ~/.ssh/id_ed25519 \
   --package file:///srv/kurin-base.tar.zst \
   --package file:///srv/os-ubuntu-24.04.tar.zst \
   --yes
@@ -138,13 +143,16 @@ kurin create cluster --name airgap \
 ```bash
 # 打印合并后的 v1alpha2 配置（不安装）
 kurin create config --name prod --control-plane 192.168.10.11-13 \
-  --worker 192.168.10.21-23 --vip 192.168.10.100 > prod.toml
+  --worker 192.168.10.21-23 --vip 192.168.10.100 \
+  --ssh-key ~/.ssh/id_ed25519 > prod.toml
 
 # 只打印摘要与计划，不确认、不落盘
-kurin create cluster --name prod --control-plane 192.168.10.11 --dry-run
+kurin create cluster --name prod --control-plane 192.168.10.11 \
+  --ssh-key ~/.ssh/id_ed25519 --dry-run
 
 # 真 SSH 探测漂移
-kurin create cluster --name prod --control-plane 192.168.10.11 --dry-run --check
+kurin create cluster --name prod --control-plane 192.168.10.11 \
+  --ssh-key ~/.ssh/id_ed25519 --dry-run --check
 ```
 
 `create config` 也支持 `--save <PATH>`；`--print-versions` 打印当前构建
@@ -154,6 +162,7 @@ pin 的组件版本。
 
 ```bash
 kurin create cluster --name prod --control-plane 192.168.10.11 \
+  --ssh-key ~/.ssh/id_ed25519 \
   --set network.pod-cidr=10.244.0.0/16 \
   --set kubernetes.profile=cis
 ```
@@ -187,5 +196,7 @@ kurin add nodes -f prod.kurin.toml --worker 192.168.10.24
 - 快速参数与 YAML 文件混用会被拒绝（合并用 `toml_edit`，先转成 TOML）。
 - `-p/--ssh-password` 会进入 shell 历史与 `ps`，只建议交互环境临时使用。
 - 明文密码永远不会写进配置文件；文件里只有 env/file 引用。
+- 完全不给认证参数时，配置会引用 `KURIN_SSH_PASSWORD` 并打印告警；安装前
+  需要导出该变量，或改用 `--ssh-key` / `--ask-pass`。
 - 完整字段与校验规则见 [配置参考](../reference/configuration.md)；
   全部参数见 [CLI 参考](../reference/cli.md#create-cluster)。
