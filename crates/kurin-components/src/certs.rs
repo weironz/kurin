@@ -952,7 +952,9 @@ fn parse_next_renewal(stdout: &str) -> Option<String> {
             continue;
         };
         let value = value.trim();
-        if value.is_empty() {
+        // An unloaded/inactive timer reports `infinity` (or `0`) instead of
+        // an empty value; neither is a scheduled renewal.
+        if value.is_empty() || value == "infinity" || value == "0" {
             continue;
         }
         match key {
@@ -1187,6 +1189,12 @@ client-k3s-controller.crt   system:k3s-controller       ClientAuth   Jun 09, 202
     #[test]
     fn next_renewal_is_none_when_the_timer_is_not_installed() {
         assert_eq!(parse_next_renewal(""), None);
+        assert_eq!(
+            parse_next_renewal(
+                "NextElapseUSecRealtime=infinity\nNextElapseUSecMonotonic=infinity\n"
+            ),
+            None
+        );
         assert_eq!(parse_next_renewal("NextElapseUSecRealtime=\n"), None);
         assert_eq!(parse_next_renewal("LoadState=not-found\n"), None);
         assert_eq!(parse_next_renewal("garbage without a property\n"), None);

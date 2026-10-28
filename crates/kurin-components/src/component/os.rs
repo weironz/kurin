@@ -195,7 +195,7 @@ impl Component for Sysctl {
         for node in b.nodes().k8s().collect::<Vec<_>>() {
             b.add_track(
                 prepare,
-                Arc::new(tasks::prepare::Sysctl::new(node)),
+                Arc::new(tasks::prepare::Sysctl::new(node, b.cluster().is_cis())),
                 tracks::OS_K8S_MEMBER,
             );
         }

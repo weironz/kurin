@@ -1,3 +1,9 @@
+## WP-71/75 真实 tier1 验证（2026-10-28）
+
+- **WP-71**：tier1 上 `kurin certs schedule -f … --every 1h --warn-days 3650` 安装 `kurin-cert-renew.timer`；`status` 显示 `next auto-renewal 1h`；手动 `systemctl start kurin-cert-renew.service` 后日志显示 364d < 3650 → `kubeadm certs renew all` → 静态 pod 轮转 → `/readyz ok`。修复：`NextElapseUSecRealtime=infinity`（timer 未加载）被当成有效时间，现按未排期处理。
+- **WP-75**：tier1 上以 `profile = "cis"` 创建集群成功。真实环境暴露并修复两个 bug：(1) kubeadm v1beta4 的 `apiServer.extraArgs` 必须是 `{name,value}` 列表，原模板的 `- --flag=value` 形式直接 unmarshal 失败；(2) `protectKernelDefaults: true` 要求 `vm.overcommit_memory=1`、`kernel.panic=10`、`kernel.panic_on_oops=1`，CIS 档位现随 sysctl 任务一起落盘并加载。kube-bench v0.10.7 对比：default 64 pass/15 fail/51 warn，CIS 70 pass/11 fail/49 warn（CIS 档位改善，剩余项为环境/策略类）。
+- **WP-73**：tier1 上 `kurin import --from-cluster` 重建 v1alpha2 配置（节点/CIDR/SSH 引用一致），`kurin status -f` 直接可用。
+
 ## WP-77：种子仓库（2026-10-28）
 
 - **`[packages] delivery = "seed"`**（v1alpha2）：控制机内置只读 OCI registry（`127.0.0.1:0`，手写 HTTP/1.1，tokio 无新依赖），按 `mirror/<upstream host>/<path>` 提供 manifest/blob；每个节点用 `Session::forward_remote` 开 SSH `-R` 回环隧道；containerd/CRI-O/k3s 的 mirror 指向节点本地端口（http/insecure）。镜像走 pull，二进制载荷仍走 SSH preload；操作结束拆除，仅回环、无认证、只读（写请求 405）。

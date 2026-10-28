@@ -14,13 +14,13 @@ expression: render_tree(&plan)
 │   └── artifacts/install@w1 :: fetch+install pinned binaries (amd64)
 ├── stage: prepare (12 tasks)
 │   ├── prepare/os-baseline@cp1 :: disable swap / firewalld, SELinux permissive
-│   ├── prepare/sysctl@cp1 :: modprobe br_netfilter; persist net.bridge.bridge-nf-call-iptables net.bridge.bridge-nf-call-ip6tables net.ipv4.ip_forward
+│   ├── prepare/sysctl@cp1 :: modprobe br_netfilter; persist net.bridge.bridge-nf-call-iptables net.bridge.bridge-nf-call-ip6tables net.ipv4.ip_forward vm.overcommit_memory kernel.panic kernel.panic_on_oops
 │   ├── prepare/kernel-deps@cp1 :: ensure conntrack/socat (+recommended ebtables ipset ipvsadm)
 │   ├── prepare/containerd-config@cp1 :: render + install /etc/containerd/config.toml
 │   ├── prepare/containerd-unit@cp1 :: render + install /etc/systemd/system/containerd.service, enable --now
 │   ├── prepare/kubelet-unit@cp1 :: render + install /etc/systemd/system/kubelet.service, enable (start deferred to kubeadm)
 │   ├── prepare/os-baseline@w1 :: disable swap / firewalld, SELinux permissive
-│   ├── prepare/sysctl@w1 :: modprobe br_netfilter; persist net.bridge.bridge-nf-call-iptables net.bridge.bridge-nf-call-ip6tables net.ipv4.ip_forward
+│   ├── prepare/sysctl@w1 :: modprobe br_netfilter; persist net.bridge.bridge-nf-call-iptables net.bridge.bridge-nf-call-ip6tables net.ipv4.ip_forward vm.overcommit_memory kernel.panic kernel.panic_on_oops
 │   ├── prepare/kernel-deps@w1 :: ensure conntrack/socat (+recommended ebtables ipset ipvsadm)
 │   ├── prepare/containerd-config@w1 :: render + install /etc/containerd/config.toml
 │   ├── prepare/containerd-unit@w1 :: render + install /etc/systemd/system/containerd.service, enable --now

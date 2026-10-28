@@ -18,20 +18,28 @@ apiServer:
   certSANs:
   - "127.0.0.1"
 {%- if cis %}
+  # kubeadm v1beta4 models extraArgs as a list of {name, value} pairs.
   extraArgs:
   # CIS 1.2.x: audit to a dedicated file (the audit policy itself is
   # rendered by the bootstrap task at /etc/kubernetes/audit-policy.yaml).
-  - --audit-log-path=/var/log/kubernetes/audit.log
-  - --audit-log-maxage=30
-  - --audit-policy-file=/etc/kubernetes/audit-policy.yaml
+  - name: audit-log-path
+    value: /var/log/kubernetes/audit.log
+  - name: audit-log-maxage
+    value: "30"
+  - name: audit-policy-file
+    value: /etc/kubernetes/audit-policy.yaml
   # CIS 1.2.1 / 1.2.4: disable profiling endpoints; NodeRestriction +
   # PodSecurity admission.
-  - --profiling=false
-  - --enable-admission-plugins=NodeRestriction,PodSecurity
+  - name: profiling
+    value: "false"
+  - name: enable-admission-plugins
+    value: NodeRestriction,PodSecurity
   # CIS 1.2.5: Node,RBAC authorization (no always-allow).
-  - --authorization-mode=Node,RBAC
+  - name: authorization-mode
+    value: Node,RBAC
   # CIS 1.2.30-ish: modern TLS ciphers only (Go names, Go 1.22+).
-  - --tls-cipher-suites=TLS_AES_128_GCM_SHA256,TLS_AES_256_GCM_SHA384,TLS_CHACHA20_POLY1305_SHA256,TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305,TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305
+  - name: tls-cipher-suites
+    value: TLS_AES_128_GCM_SHA256,TLS_AES_256_GCM_SHA384,TLS_CHACHA20_POLY1305_SHA256,TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305,TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305
   extraVolumes:
   - name: audit-policy
     hostPath: /etc/kubernetes/audit-policy.yaml

@@ -82,7 +82,7 @@ expression: plan_matrix(&plan)
           "id": "prepare/os-baseline@cp1"
         },
         {
-          "describe": "modprobe br_netfilter; persist net.bridge.bridge-nf-call-iptables net.bridge.bridge-nf-call-ip6tables net.ipv4.ip_forward",
+          "describe": "modprobe br_netfilter; persist net.bridge.bridge-nf-call-iptables net.bridge.bridge-nf-call-ip6tables net.ipv4.ip_forward vm.overcommit_memory kernel.panic kernel.panic_on_oops",
           "id": "prepare/sysctl@cp1"
         },
         {
@@ -106,7 +106,7 @@ expression: plan_matrix(&plan)
           "id": "prepare/os-baseline@w1"
         },
         {
-          "describe": "modprobe br_netfilter; persist net.bridge.bridge-nf-call-iptables net.bridge.bridge-nf-call-ip6tables net.ipv4.ip_forward",
+          "describe": "modprobe br_netfilter; persist net.bridge.bridge-nf-call-iptables net.bridge.bridge-nf-call-ip6tables net.ipv4.ip_forward vm.overcommit_memory kernel.panic kernel.panic_on_oops",
           "id": "prepare/sysctl@w1"
         },
         {

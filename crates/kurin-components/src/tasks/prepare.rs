@@ -9,6 +9,7 @@ use kurin_core::engine::{Drift, Outcome, Session, Stage, Task};
 
 pub struct Sysctl {
     node: Node,
+    cis: bool,
 }
 
 pub const K8S_SYSCTL: &[(&str, &str)] = &[
@@ -17,9 +18,28 @@ pub const K8S_SYSCTL: &[(&str, &str)] = &[
     ("net.ipv4.ip_forward", "1"),
 ];
 
+/// Kernel defaults `protectKernelDefaults: true` requires (CIS 4.2.x).
+pub const CIS_SYSCTL: &[(&str, &str)] = &[
+    ("vm.overcommit_memory", "1"),
+    ("kernel.panic", "10"),
+    ("kernel.panic_on_oops", "1"),
+];
+
 impl Sysctl {
-    pub fn new(node: &Node) -> Self {
-        Self { node: node.clone() }
+    pub fn new(node: &Node, cis: bool) -> Self {
+        Self {
+            node: node.clone(),
+            cis,
+        }
+    }
+
+    /// The persisted/checked key set for this cluster's profile.
+    fn pairs(&self) -> Vec<(&'static str, &'static str)> {
+        let mut pairs = K8S_SYSCTL.to_vec();
+        if self.cis {
+            pairs.extend_from_slice(CIS_SYSCTL);
+        }
+        pairs
     }
 }
 
@@ -36,16 +56,16 @@ impl Task for Sysctl {
     }
     fn describe(&self) -> String {
         format!("modprobe br_netfilter; persist {}", {
-            let keys: Vec<_> = K8S_SYSCTL.iter().map(|(k, _)| *k).collect();
+            let keys: Vec<_> = self.pairs().iter().map(|(k, _)| *k).collect();
             keys.join(" ")
         })
     }
 
     async fn check(&self, session: &dyn Session) -> Result<Drift> {
         let mut drift = None;
-        for (key, want) in K8S_SYSCTL {
+        for (key, want) in self.pairs() {
             let out = session.exec(&format!("sysctl -n {key}")).await?;
-            if out.stdout.trim() != *want {
+            if out.stdout.trim() != want {
                 drift = Some(format!("{key} = {} (want {want})", out.stdout.trim()));
                 break;
             }
@@ -54,7 +74,7 @@ impl Task for Sysctl {
         let out = session
             .exec("cat /etc/sysctl.d/99-kurin.conf 2>/dev/null || true")
             .await?;
-        let expected = sysctl_unit(K8S_SYSCTL);
+        let expected = sysctl_unit(&self.pairs());
         if out.stdout.trim() != expected.trim() {
             drift = drift.or_else(|| Some("/etc/sysctl.d/99-kurin.conf out of date".into()));
         }
@@ -68,7 +88,7 @@ impl Task for Sysctl {
         let mut script = String::from("set -e\nmodprobe br_netfilter 2>/dev/null || true\n");
         script.push_str(&format!(
             "cat > /etc/sysctl.d/99-kurin.conf <<'EOF'\n{}EOF\n",
-            sysctl_unit(K8S_SYSCTL)
+            sysctl_unit(&self.pairs())
         ));
         // Persist + load the modules these sysctls need; the bridge key only
         // exists after br_netfilter loads. (OsBaseline handles the OS
@@ -372,6 +392,19 @@ mod tests {
         assert!(unit.contains("Restart=always"));
         assert!(unit.contains("EnvironmentFile=-/var/lib/kubelet/kubeadm-flags.env"));
         assert!(unit.contains(kurin_artifact::version::KUBERNETES_VERSION));
+    }
+
+    #[test]
+    fn cis_sysctl_adds_the_kernel_defaults() {
+        let default = Sysctl::new(&node("m1"), false);
+        assert_eq!(default.pairs(), K8S_SYSCTL.to_vec());
+        let cis = Sysctl::new(&node("m1"), true);
+        for (key, value) in CIS_SYSCTL {
+            assert!(
+                cis.pairs().contains(&(*key, *value)),
+                "cis sysctl missing {key}={value}"
+            );
+        }
     }
 
     #[test]
