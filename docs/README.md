@@ -12,6 +12,7 @@ Cilium/Kube-OVN、私有 registry 与 Web UI。
 |---|---|
 | [安装 kurin](getting-started/install.md) | 二进制安装、源码构建、Docker 镜像、支持的节点操作系统 |
 | [快速上手](getting-started/quickstart.md) | 3 分钟单节点、HA、离线、国内镜像、常见问题 |
+| [纯命令行快速部署](getting-started/cli-quickstart.md) | 不写配置文件，直接用参数创建单节点/HA/k3s/离线集群 |
 | [Web UI](getting-started/ui.md) | `kurin serve` 启动、登录链接、远程访问、TLS、数据目录 |
 
 ## 指南

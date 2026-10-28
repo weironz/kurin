@@ -9,7 +9,7 @@ real end-to-end tests ([`docs/project/progress.md`](docs/project/progress.md)).
 ## Documentation
 
 - [文档索引](docs/README.md) — 入门 / 指南 / 参考 / 运维 / Docker / 开发
-- [安装](docs/getting-started/install.md) · [快速上手](docs/getting-started/quickstart.md) · [Web UI](docs/getting-started/ui.md)
+- [安装](docs/getting-started/install.md) · [快速上手](docs/getting-started/quickstart.md) · [纯命令行快速部署](docs/getting-started/cli-quickstart.md) · [Web UI](docs/getting-started/ui.md)
 - [CLI 参考](docs/reference/cli.md) · [配置参考](docs/reference/configuration.md)
 - [Docker：运行 CLI 与 UI](docs/docker/README.md)
 

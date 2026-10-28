@@ -27,6 +27,8 @@ kurin config migrate -f old.toml -o new.toml
 
 ## 从命令行快速创建
 
+完整示例见 [纯命令行快速部署](../getting-started/cli-quickstart.md)。
+
 `kurin create cluster` 与 `kurin create config` 可以完全不带配置文件：命令行
 参数先被解析成一份**结构化补丁**，合并进 v1alpha2 文档，再走与文件完全相同的
 加载、默认值与校验流程（同一个 `ClusterSpec`、同一条执行路径）。因此快速创建

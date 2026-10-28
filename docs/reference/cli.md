@@ -63,6 +63,8 @@ kurin
 
 ## create cluster
 
+不写配置文件的完整示例见 [纯命令行快速部署](../getting-started/cli-quickstart.md)。
+
 ```bash
 kurin create cluster -f cluster.toml
 kurin create cluster -f cluster.toml --dry-run [--check]

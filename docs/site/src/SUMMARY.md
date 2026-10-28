@@ -6,6 +6,7 @@
 
 - [安装](getting-started/install.md)
 - [快速上手](getting-started/quickstart.md)
+- [纯命令行快速部署](getting-started/cli-quickstart.md)
 - [Web UI](getting-started/ui.md)
 
 # 指南
