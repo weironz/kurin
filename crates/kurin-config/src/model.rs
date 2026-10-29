@@ -550,6 +550,17 @@ impl ClusterSpec {
     pub fn validate(&self) -> Result<()> {
         let invalid = |hint: String| ConfigError::invalid(self.source.clone(), hint);
 
+        // KubeKey's `kube_version_min_required`: reject versions this build
+        // does not support before any plan/SSH work.
+        let min_kubernetes = Version::parse("1.30.0").expect("valid semver");
+        if self.kubernetes_version < min_kubernetes {
+            return Err(invalid(format!(
+                "kubernetes.version {} is below the minimum supported version {} \
+                 (see docs/reference/kubernetes-versions.md)",
+                self.kubernetes_version, min_kubernetes
+            )));
+        }
+
         // Component-owned rules (distributions, runtime, CNI, HA, the
         // registries, storage) live in the `Component` implementations
         // in `kurin-components` (WP-15/16); the CLI runs them right
@@ -1124,5 +1135,45 @@ role = "control-plane"
         let json = serde_json::to_string(&cluster).expect("serialize");
         assert!(json.contains("KURIN_TEST_SERIALIZE_SECRET"), "json: {json}");
         assert!(!json.contains("source"), "source must be skipped: {json}");
+    }
+}
+
+#[cfg(test)]
+mod version_gate_tests {
+    use crate::parse_str;
+    use std::path::Path;
+
+    fn config(version: &str) -> String {
+        format!(
+            r#"version = "v1alpha1"
+name = "gate"
+[kubernetes]
+version = "{version}"
+[ssh]
+user = "root"
+[ssh.auth]
+method = "private_key"
+key-path = "/root/.ssh/id_ed25519"
+[nodes.n1]
+address = "10.0.0.11"
+role = "control-plane""#
+        )
+    }
+
+    #[test]
+    fn rejects_kubernetes_below_the_minimum() {
+        let err =
+            parse_str(Path::new("gate.toml"), &config("1.29.3")).expect_err("1.29 is too old");
+        let text = format!("{err:#}");
+        assert!(
+            text.contains("below the minimum supported version 1.30.0"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn accepts_the_minimum_and_newer() {
+        parse_str(Path::new("gate.toml"), &config("1.30.0")).expect("1.30 is supported");
+        parse_str(Path::new("gate.toml"), &config("1.33.1")).expect("1.33 is supported");
     }
 }

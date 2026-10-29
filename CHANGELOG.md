@@ -18,7 +18,8 @@ All notable changes to kurin. Format follows Keep a Changelog; semver.
   release) as text or `--json`. Online `create cluster` now rejects a
   Kubernetes version other than the embedded pin before any SSH work and
   points at `package create base --kubernetes <ver>`; package/legacy
-  payloads keep their coverage-based validation.
+  payloads keep their coverage-based validation. Configs below Kubernetes
+  1.30 are rejected at load time (the `kube_version_min_required` gate).
 
 ## 0.5.0 - 2026-10-28
 

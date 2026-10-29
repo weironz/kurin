@@ -15,8 +15,9 @@ versions 表一致：**默认 pin 一个版本，其他版本必须由制品清�
 | k3s（embedded） | `v1.33.1+k3s1` | k3s 包/离线 bundle 可携带其他 release |
 | k3s 升级 | `v1.34.1+k3s1` | 已验证 1.33.1 → 1.34.1（离线 bundle） |
 
-支持策略：Kubernetes **≥ 1.30**；跨 minor 升级一次只允许 +1（kubeadm 的
-限制）。实际可部署的版本由 embedded manifest 或你提供的包决定。
+支持策略：Kubernetes **≥ 1.30**；低于 1.30 的配置在加载期直接拒绝
+（对应 KubeKey 的 `kube_version_min_required`）。跨 minor 升级一次只允许
++1（kubeadm 的限制）。实际可部署的版本由 embedded manifest 或你提供的包决定。
 
 ## 命令行查看
 
