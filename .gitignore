@@ -4,3 +4,6 @@ target/tier0/
 release-dist/
 e2e/tier*/config*-*.toml
 e2e/tier*/config.toml
+
+# conformance reports contain a live kubeconfig
+docs/conformance/**/kubeconfig
