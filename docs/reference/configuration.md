@@ -85,7 +85,7 @@ kurin create cluster -f prod.kurin.toml --set network.pod-cidr=10.244.0.0/16 --c
 | 参数 | 对应配置 |
 |---|---|
 | `--name <N>` | `name`（无 `-f` 时必填） |
-| `--kubernetes <V>` | `kubernetes.version`（前导 `v` 可省略） |
+| `--kubernetes <V>` | `kubernetes.version`（前导 `v` 可省略）；在线 create 只接受 embedded 版本（当前 1.33.1），其他版本需 base 包 |
 | `--distribution kubeadm\|k3s` | `kubernetes.distribution` |
 | `--runtime containerd\|crio` | `runtime.kind` |
 | `--cni calico\|flannel\|cilium\|kube-ovn\|none` | `network.cni.kind` |

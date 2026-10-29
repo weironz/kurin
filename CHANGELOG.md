@@ -13,6 +13,12 @@ All notable changes to kurin. Format follows Keep a Changelog; semver.
   reasons and indented remote stdout/stderr. `kurin status` now renders
   `NODE / ROLE / INTERNAL-IP / STATUS / RUNTIME / KERNEL` with colored
   readiness; `--json` carries the new fields unchanged in shape.
+- `kurin versions` prints the supported Kubernetes matrix (embedded pin,
+  online-create version, package-pinned versions, upgrade policy, k3s
+  release) as text or `--json`. Online `create cluster` now rejects a
+  Kubernetes version other than the embedded pin before any SSH work and
+  points at `package create base --kubernetes <ver>`; package/legacy
+  payloads keep their coverage-based validation.
 
 ## 0.5.0 - 2026-10-28
 

@@ -32,6 +32,7 @@
 
 - [参考索引](reference/README.md)
 - [CLI](reference/cli.md)
+- [Kubernetes 版本支持](reference/kubernetes-versions.md)
 - [配置](reference/configuration.md)
 - [命令 × 形态矩阵](reference/command-matrix.md)
 - [Registry 契约](reference/registry-contracts.md)

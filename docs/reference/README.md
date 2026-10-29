@@ -1,6 +1,7 @@
 # 参考
 
 - [CLI 参考](cli.md) —— 全部命令、参数、示例、退出码
+- [Kubernetes 版本支持](kubernetes-versions.md) —— 默认 pin、包版本、升级策略、`kurin versions`
 - [配置参考](configuration.md) —— v1alpha1/v1alpha2 字段与校验
 - [命令 × 形态矩阵](command-matrix.md) —— 组合支持状态
 - [Registry 契约](registry-contracts.md) —— registry 模式与任务

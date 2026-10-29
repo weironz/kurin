@@ -59,6 +59,7 @@ kurin
 ├── artifact            # 弃用别名
 ├── logs
 ├── import
+├── versions            # 支持的 Kubernetes 版本矩阵
 └── serve               # 需要 --features ui
 ```
 
@@ -269,6 +270,17 @@ kurin import --from-cluster --host <CP-IP> \
 ```
 
 从 `kube-system/kurin-state` 重建配置；`--json` 必须配 `-o`。
+
+## versions
+
+```bash
+kurin versions
+kurin versions --json
+```
+
+打印当前构建的 Kubernetes 版本矩阵：embedded 默认版本、在线 create 可用版本、
+带包 create 的版本来源、升级策略、k3s embedded 版本。详见
+[Kubernetes 版本支持](kubernetes-versions.md)。
 
 ## serve
 

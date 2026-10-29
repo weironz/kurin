@@ -17,7 +17,7 @@ version = "v1alpha1"
 name = "demo"
 
 [kubernetes]
-version = "1.33.1"
+version = "1.33.1"   # 在线 create 只接受 embedded 版本；其他版本见下方说明
 
 [network]
 pod-cidr = "10.233.64.0/18"
@@ -48,6 +48,10 @@ password = { env = "KURIN_SSH_PASSWORD" }
 
 秘密引用的完整写法（env/file/字面值、节点级覆盖）见
 [配置参考 §秘密引用](../reference/configuration.md#秘密引用secretref)。
+
+在线 create 的 embedded manifest 只 pin 1.33.1；要装其他版本，先用
+`kurin package create base --kubernetes <ver>` 制作 base 包并通过
+`--package` 传入。`kurin versions` 会打印当前构建的版本矩阵。
 
 ## 3. 预检
 

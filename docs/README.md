@@ -40,6 +40,7 @@ Cilium/Kube-OVN、私有 registry 与 Web UI。
 | 文档 | 内容 |
 |---|---|
 | [CLI 参考](reference/cli.md) | 全部命令、参数、示例、退出码 |
+| [Kubernetes 版本支持](reference/kubernetes-versions.md) | 默认 pin、可部署版本、`kurin versions`、不支持时的报错 |
 | [配置参考](reference/configuration.md) | v1alpha1/v1alpha2 字段、校验规则、秘密引用 |
 | [命令 × 形态矩阵](reference/command-matrix.md) | 每种 CNI/运行时/发行版/离线组合的支持状态 |
 | [Registry 契约](reference/registry-contracts.md) | registry 模式、TLS、阶段与任务 |

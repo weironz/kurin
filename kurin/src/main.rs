@@ -191,6 +191,8 @@ enum Commands {
     /// Reconstruct a cluster config from a running cluster's state
     /// record (WP-73).
     Import(ImportArgs),
+    /// Print the supported Kubernetes version matrix for this build.
+    Versions,
     /// Run the web UI server (built with `--features ui`).
     Serve(ServeArgs),
 }
@@ -1142,8 +1144,36 @@ async fn run(cli: Cli) -> Result<()> {
             }
         },
         Commands::Import(args) => run_import(args, out).await,
+        Commands::Versions => versions(out),
         Commands::Serve(args) => serve(args).await,
     }
+}
+
+/// `kurin versions`: the supported Kubernetes matrix for this build.
+fn versions(out: OutputOpts) -> Result<()> {
+    let kubernetes = kurin_artifact::version::KUBERNETES_VERSION;
+    let k3s = format!("v{kubernetes}+k3s1");
+    if out.json_enabled() {
+        let doc = serde_json::json!({
+            "kurin": env!("CARGO_PKG_VERSION"),
+            "kubernetes": {
+                "embedded": kubernetes,
+                "create_online": [kubernetes],
+                "create_package": "version pinned by the base package",
+                "upgrade": "current + 1 minor (dynamic manifest; tested 1.33.1 -> 1.34.1)",
+                "k3s_embedded": k3s,
+            }
+        });
+        println!("{}", serde_json::to_string_pretty(&doc).into_diagnostic()?);
+    } else {
+        println!("kurin {}", env!("CARGO_PKG_VERSION"));
+        println!("kubernetes (embedded): {kubernetes}");
+        println!("create online: {kubernetes}");
+        println!("create with package: version pinned by the base package");
+        println!("upgrade: current + 1 minor (dynamic manifest; tested 1.33.1 -> 1.34.1)");
+        println!("k3s: {k3s} (embedded)");
+    }
+    Ok(())
 }
 
 /// Wire the parsed `serve` arguments into `kurin_server` (UI §3.1). Built
