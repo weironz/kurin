@@ -2,6 +2,15 @@
 
 All notable changes to kurin. Format follows Keep a Changelog; semver.
 
+## 0.5.3 - 2026-10-29
+
+### Fixed
+- openEuler/Kylin offline installs: `dnf --repofrompath` now sets
+  `kurin-os.gpgcheck=0` for the unsigned local repository (the deb path
+  already used `[trusted=yes]`). Without it dnf refused the repository
+  with a GPG-key error. Package integrity is still enforced by the OCI
+  package's sha256 closure.
+
 ## 0.5.2 - 2026-10-29
 
 ### Fixed
