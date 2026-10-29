@@ -417,10 +417,47 @@ enum PackageCreateWhat {
         /// Package version (default: the current month, e.g. 2026.10).
         #[arg(long)]
         version: Option<String>,
+        /// Also write an ISO9660 image of the repository (a file path, or
+        /// a directory to write `<target>-<arch>.iso` into).
+        #[arg(long, value_name = "PATH")]
+        iso: Option<PathBuf>,
         /// Output target: `oci-layout://DIR`, `file://X.tar` or
         /// `file://X.tar.zst`.
         #[arg(short, long)]
         output: String,
+    },
+    /// Build a complete offline directory: base package, OS packages,
+    /// optional ISOs, SHA256SUMS, an index and an example config.
+    Offline {
+        /// Kubernetes version (default: the embedded pin).
+        #[arg(long)]
+        kubernetes: Option<String>,
+        /// Kubernetes distribution: `kubeadm` (default) or `k3s`.
+        #[arg(long)]
+        distribution: Option<String>,
+        /// Architecture(s), comma-separated (default: this machine's).
+        #[arg(long)]
+        arch: Option<String>,
+        /// CNI payloads for the base package: `all` (default), `none`, or
+        /// a comma-separated list.
+        #[arg(long)]
+        cni: Option<String>,
+        /// Addons to embed in the base package (comma-separated).
+        #[arg(long)]
+        addons: Option<String>,
+        /// OS targets to include (repeatable or comma-separated), e.g.
+        /// `--target ubuntu-24.04 --target rocky-9`.
+        #[arg(long = "target", value_name = "OS", action = ArgAction::Append)]
+        targets: Vec<String>,
+        /// OS package version (default: the current month).
+        #[arg(long)]
+        os_version: Option<String>,
+        /// Also write an ISO9660 image for every OS package.
+        #[arg(long)]
+        iso: bool,
+        /// Output directory (created if missing).
+        #[arg(short, long)]
+        output: PathBuf,
     },
 }
 
@@ -782,8 +819,33 @@ async fn run(cli: Cli) -> Result<()> {
                     target,
                     arch,
                     version,
+                    iso,
                     output,
-                } => package_create_os(target, arch, version, output).await,
+                } => package_create_os(target, arch, version, iso, output).await,
+                PackageCreateWhat::Offline {
+                    kubernetes,
+                    distribution,
+                    arch,
+                    cni,
+                    addons,
+                    targets,
+                    os_version,
+                    iso,
+                    output,
+                } => {
+                    package_create_offline(
+                        kubernetes,
+                        distribution,
+                        arch,
+                        cni,
+                        addons,
+                        targets,
+                        os_version,
+                        iso,
+                        output,
+                    )
+                    .await
+                }
                 PackageCreateWhat::Addon { file, arch, output } => {
                     package_create_addon(file, arch, output).await
                 }
@@ -1503,6 +1565,7 @@ async fn package_create_os(
     target: String,
     arch: Option<String>,
     version: Option<String>,
+    iso: Option<PathBuf>,
     output: String,
 ) -> Result<()> {
     use kurin::os as os_pkg;
@@ -1529,6 +1592,7 @@ async fn package_create_os(
         target,
         arches,
         version: version.unwrap_or_else(os_pkg::calver),
+        iso,
     };
     let engine = os_pkg::detect_container_engine()
         .await
@@ -1546,6 +1610,296 @@ async fn package_create_os(
     eprintln!("index: {}", report.index);
     eprintln!("sbom:  {}", report.sbom.display());
     Ok(())
+}
+
+/// The CNI kind the generated example config should select: the first
+/// listed CNI, `none` for none, or the distribution default for `all`.
+fn example_cni_kind(
+    selection: &kurin::components::CniSelection,
+    distribution: &str,
+) -> &'static str {
+    use kurin::components::CniSelection;
+    match selection {
+        CniSelection::None => "none",
+        CniSelection::List(list) => match list.first() {
+            Some(kurin_config::CniConfig::Calico) => "calico",
+            Some(kurin_config::CniConfig::Flannel) => "flannel",
+            Some(kurin_config::CniConfig::Cilium) => "cilium",
+            Some(kurin_config::CniConfig::KubeOvn) => "kube-ovn",
+            Some(kurin_config::CniConfig::None) | None => "none",
+        },
+        CniSelection::All if distribution == "k3s" => "flannel",
+        CniSelection::All => "calico",
+    }
+}
+
+/// `kurin package create offline`: one directory with base + OS packages,
+/// optional ISOs, an index, checksums and an example config.
+#[allow(clippy::too_many_arguments)]
+async fn package_create_offline(
+    kubernetes: Option<String>,
+    distribution: Option<String>,
+    arch: Option<String>,
+    cni: Option<String>,
+    addons: Option<String>,
+    targets: Vec<String>,
+    os_version: Option<String>,
+    iso: bool,
+    output: PathBuf,
+) -> Result<()> {
+    let zone = resolve_zone(None)?;
+    let distribution = match distribution.as_deref() {
+        None | Some("kubeadm") => "kubeadm",
+        Some("k3s") => "k3s",
+        Some(other) => {
+            return Err(miette::miette!(
+                "unknown distribution {other:?} (kubeadm|k3s)"
+            ))
+        }
+    };
+    let config_distribution = match distribution {
+        "k3s" => kurin_config::Distribution::K3s,
+        _ => kurin_config::Distribution::K8s,
+    };
+    let cni_selection = match cni.as_deref() {
+        None => kurin::components::CniSelection::All,
+        Some(value) => kurin::components::CniSelection::parse(value).ok_or_else(|| {
+            miette::miette!("invalid --cni {value:?} (all | none | calico,flannel,cilium,kube-ovn)")
+        })?,
+    };
+    let mut arches = parse_arch_list(arch.as_deref())?;
+    if arches.is_empty() {
+        arches.push(kurin::arch::Arch::host()?);
+    }
+    let arch_label = arches
+        .iter()
+        .map(|a| a.as_str())
+        .collect::<Vec<_>>()
+        .join("-");
+    std::fs::create_dir_all(&output).into_diagnostic()?;
+    let store = kurin::artifact::ArtifactStore::open_default()?;
+    let kubernetes_version = kubernetes
+        .clone()
+        .unwrap_or_else(|| kurin::version::KUBERNETES_VERSION.to_string());
+
+    let extras = match addons.as_deref() {
+        Some(list) => addon_extras_for(list, &store, zone, &arches).await?,
+        None => Vec::new(),
+    };
+    let base_name = format!("kurin-base-{kubernetes_version}-{arch_label}.tar.zst");
+    let base_path = output.join(&base_name);
+    let base_out = kurin::package::PackageOutput::TarZstd(base_path.clone());
+    let base_opts = kurin::package::BasePackage {
+        kubernetes,
+        distribution: distribution.to_string(),
+        arches: arches.clone(),
+        components: kurin::components::base_components(config_distribution, &cni_selection)
+            .into_iter()
+            .map(|c| kurin::package::ComponentSpec {
+                id: c.id,
+                artifacts: c.artifacts,
+            })
+            .collect(),
+        extras,
+    };
+    let base_report = kurin::package::create_base(&store, &base_opts, zone, &base_out)
+        .await
+        .map_err(|e| miette::miette!("{e:?}"))?;
+    eprintln!(
+        "[offline] base {} -> {}",
+        base_report.tag,
+        base_path.display()
+    );
+
+    let mut files: Vec<PathBuf> = vec![base_path.clone()];
+    if base_report.sbom.is_file() {
+        files.push(base_report.sbom.clone());
+    }
+    let mut os_entries = Vec::new();
+    for raw in &targets {
+        for target in raw.split(',').map(str::trim).filter(|t| !t.is_empty()) {
+            let target =
+                kurin::os::OsTarget::parse(target).map_err(|e| miette::miette!("{e:?}"))?;
+            let os_name = format!("kurin-os-{}-{arch_label}.tar.zst", target.label());
+            let os_path = output.join(&os_name);
+            let os_out = kurin::package::PackageOutput::TarZstd(os_path.clone());
+            let os_opts = kurin::os::OsPackage {
+                target: target.clone(),
+                arches: arches.clone(),
+                version: os_version.clone().unwrap_or_else(kurin::os::calver),
+                iso: if iso { Some(output.clone()) } else { None },
+            };
+            let report = kurin::os::create_os(&store, &os_opts, &os_out)
+                .await
+                .map_err(|e| miette::miette!("{e:?}"))?;
+            files.push(os_path.clone());
+            if report.sbom.is_file() {
+                files.push(report.sbom.clone());
+            }
+            let mut isos = Vec::new();
+            if iso {
+                for arch in &arches {
+                    let iso_path = output.join(format!("{}-{}.iso", target.label(), arch.as_str()));
+                    if iso_path.is_file() {
+                        files.push(iso_path.clone());
+                        isos.push(
+                            iso_path
+                                .file_name()
+                                .unwrap_or_default()
+                                .to_string_lossy()
+                                .to_string(),
+                        );
+                    }
+                }
+            }
+            eprintln!("[offline] os {} -> {}", report.tag, os_path.display());
+            os_entries.push(serde_json::json!({
+                "target": target.label(),
+                "version": os_opts.version,
+                "package": os_name,
+                "sbom": report.sbom.file_name().map(|n| n.to_string_lossy().to_string()),
+                "iso": isos,
+            }));
+        }
+    }
+
+    files.sort();
+    files.dedup();
+    let mut sums = String::new();
+    for path in &files {
+        let digest = sha256_file(path)?;
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
+        sums.push_str(&format!("{digest}  {name}\n"));
+    }
+    std::fs::write(output.join("SHA256SUMS"), sums).into_diagnostic()?;
+
+    let base_digest = sha256_file(&base_path)?;
+    let mut entries = vec![serde_json::json!({
+        "kind": "base",
+        "path": base_name,
+        "sha256": base_digest,
+        "size": std::fs::metadata(&base_path).into_diagnostic()?.len(),
+        "kubernetes": kubernetes_version,
+        "distribution": distribution,
+        "arches": arches.iter().map(|a| a.as_str()).collect::<Vec<_>>(),
+        "sbom": base_report.sbom.file_name().map(|n| n.to_string_lossy().to_string()),
+    })];
+    for entry in &os_entries {
+        let name = entry["package"].as_str().unwrap_or_default();
+        let path = output.join(name);
+        let mut entry = entry.clone();
+        entry["sha256"] = serde_json::Value::String(sha256_file(&path)?);
+        entry["size"] =
+            serde_json::Value::Number(std::fs::metadata(&path).into_diagnostic()?.len().into());
+        entries.push(serde_json::json!({
+            "kind": "os",
+            "path": name,
+            "sha256": entry["sha256"],
+            "size": entry["size"],
+            "target": entry["target"],
+            "version": entry["version"],
+            "sbom": entry["sbom"],
+            "iso": entry["iso"],
+        }));
+    }
+    let index = serde_json::json!({
+        "version": 1,
+        "kubernetes": kubernetes_version,
+        "distribution": distribution,
+        "arches": arches.iter().map(|a| a.as_str()).collect::<Vec<_>>(),
+        "entries": entries,
+    });
+    std::fs::write(
+        output.join("offline.json"),
+        serde_json::to_string_pretty(&index).into_diagnostic()?,
+    )
+    .into_diagnostic()?;
+
+    let mut config = format!(
+        "# Generated by `kurin package create offline`.\n\
+         version = \"v1alpha2\"\n\
+         name = \"offline\"\n\n\
+         [kubernetes]\n\
+         version = \"{kubernetes_version}\"\n\
+         distribution = \"{distribution}\"\n\n\
+         [network.cni]\n\
+         kind = \"{cni_kind}\"\n\n\
+         [packages]\n\
+         base = \"file://{}\"\n\
+         delivery = \"preload\"\n",
+        base_path.display(),
+        cni_kind = example_cni_kind(&cni_selection, distribution)
+    );
+    if !os_entries.is_empty() {
+        config.push_str("os = [\n");
+        for entry in &os_entries {
+            let name = entry["package"].as_str().unwrap_or_default();
+            config.push_str(&format!("  \"file://{}\"\n", output.join(name).display()));
+        }
+        config.push_str("]\n");
+    }
+    if let Some(list) = addons.as_deref() {
+        for addon in list.split(',').map(str::trim).filter(|a| !a.is_empty()) {
+            config.push_str(&format!("\n[addons.{addon}]\nenabled = true\n"));
+        }
+    }
+    config.push_str(
+        "\n# Edit the SSH credentials and node addresses before running.\n\
+         [ssh]\n\
+         user = \"root\"\n\n\
+         [ssh.auth]\n\
+         method = \"private_key\"\n\
+         key-path = \"/root/.ssh/id_ed25519\"\n\n\
+         [nodes.node01]\n\
+         address = \"192.168.10.11\"\n\
+         role = \"control-plane\"\n",
+    );
+    std::fs::write(output.join("cluster.example.toml"), config).into_diagnostic()?;
+
+    let mut readme = "# kurin offline media\n\n\
+         This directory was produced by `kurin package create offline`.\n\n\
+         - `offline.json`: package index (paths, digests, sizes).\n\
+         - `SHA256SUMS`: checksums for every file.\n\
+         - `cluster.example.toml`: a starting config pointing at these files.\n\n\
+         ```bash\n\
+         kurin create cluster -f cluster.example.toml\n\
+         ```\n\n\
+         Copy the whole directory to the air-gapped control machine; edit the\n\
+         SSH credentials and node addresses in `cluster.example.toml`, and adjust\n\
+         the absolute package paths if the directory moves.\n"
+        .to_string();
+    if iso {
+        readme.push_str(
+            "\nOS packages also have ISO9660 images for mounting as a local apt/dnf repository.\n",
+        );
+    }
+    std::fs::write(output.join("README.md"), readme).into_diagnostic()?;
+
+    eprintln!(
+        "[offline] {} file(s) written to {} (index: offline.json)",
+        files.len(),
+        output.display()
+    );
+    Ok(())
+}
+
+fn sha256_file(path: &Path) -> Result<String> {
+    use sha2::{Digest, Sha256};
+    use std::io::Read;
+    let mut file = std::fs::File::open(path).into_diagnostic()?;
+    let mut hasher = Sha256::new();
+    let mut buf = [0u8; 8192];
+    loop {
+        let n = file.read(&mut buf).into_diagnostic()?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    Ok(format!("{:x}", hasher.finalize()))
 }
 
 /// Resolve `--addons` entries and build their package payloads.

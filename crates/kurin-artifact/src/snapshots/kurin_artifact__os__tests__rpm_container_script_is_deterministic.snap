@@ -7,3 +7,4 @@ dnf install -y -q dnf-plugins-core createrepo_c
 dnf --setopt=install_weak_deps=False download --resolve --alldeps \
 --destdir /work/repo conntrack-tools socat iptables-nft ipset ipvsadm haproxy keepalived nfs-utils
 createrepo_c /work/repo
+chmod -R a+rX /work

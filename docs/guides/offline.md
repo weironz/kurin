@@ -10,6 +10,44 @@
 包可以放在 `file://`（tar/tar.zst）、`oci-layout://`（目录）或
 `oci://`（registry）。安装时节点不需要访问公网。
 
+## 0. 一条命令生成完整离线介质（推荐）
+
+```bash
+kurin package create offline \
+  --kubernetes 1.33.1 \
+  --arch amd64 \
+  --cni calico \
+  --target ubuntu-24.04 --target rocky-9 \
+  --addons ingress-nginx,metrics-server \
+  --iso \
+  -o /srv/kurin-offline
+```
+
+产出：
+
+```text
+kurin-offline/
+  kurin-base-1.33.1-amd64.tar.zst
+  kurin-os-ubuntu-24.04-amd64.tar.zst
+  kurin-os-ubuntu-24.04-amd64.iso
+  kurin-os-rocky-9-amd64.tar.zst
+  kurin-os-rocky-9-amd64.iso
+  kurin-base-1.33.1-amd64.spdx.json
+  kurin-os-*.spdx.json
+  offline.json          # 包索引：路径、sha256、size、target、ISO、SBOM
+  SHA256SUMS            # 所有文件的校验和
+  cluster.example.toml  # 可直接使用的 [packages] 配置
+  README.md
+```
+
+- `--target` 可重复或逗号分隔；不写则不生成 os 包。
+- `--iso` 为每个 os 包额外生成 ISO9660 镜像（容器内 `genisoimage`，与
+  KubeKey 的仓库 ISO 布局一致）。
+- `--addons` 把 addon 文件/镜像嵌入 base 包；示例配置会同时生成
+  `[addons.<name>] enabled = true`。
+- `offline.json` 是机器可读索引；`cluster.example.toml` 使用绝对路径，
+  移动目录后需要调整。
+
 ## 1. 在联网机器上制作 base 包
 
 ```bash
@@ -48,7 +86,16 @@ kurin package create os --target ubuntu-24.04 --arch amd64 \
 
 kurin package create os --target rocky-9 --arch amd64 \
   -o file:///srv/os-rocky-9.tar.zst
+
+# 同时生成可挂载的 ISO（容器内 genisoimage）
+kurin package create os --target rocky-9 --arch amd64 \
+  --iso /srv/rocky-9.iso \
+  -o file:///srv/os-rocky-9.tar.zst
 ```
+
+`--iso` 可以给文件路径（单架构）或目录（多架构写
+`<target>-<arch>.iso`）。ISO 内容与 os 包里的仓库目录一致，可挂载后作为
+apt/dnf 本地源。
 
 目标列表：`ubuntu-24.04`、`ubuntu-22.04`、`debian-12`、`rocky-9`、`rhel-9`、
 `almalinux-9`、`openeuler-24.03`、`kylin-10`（Kylin 需要本地固定容器镜像）。

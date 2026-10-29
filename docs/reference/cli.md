@@ -49,7 +49,7 @@ kurin
 │   ├── upgrade
 │   └── remove
 ├── package
-│   ├── create base|os|addon
+│   ├── create base|os|addon|offline
 │   ├── inspect
 │   ├── verify
 │   ├── push
@@ -223,7 +223,12 @@ kurin addon remove  <NAME> -f cluster.toml [--keep-crds] [--no-save]
 # 制作
 kurin package create base  --kubernetes 1.33.1 --arch amd64 --cni all --addons ingress-nginx -o file:///srv/base.tar.zst
 kurin package create os    --target ubuntu-24.04 --arch amd64 -o file:///srv/os.tar.zst
+kurin package create os    --target ubuntu-24.04 --arch amd64 --iso /srv/ubuntu.iso -o file:///srv/os.tar.zst
 kurin package create addon -f addons/ingress-nginx/addon.yaml -o file:///srv/addon.tar.zst
+
+# 完整离线介质：base + 多个 os 包 + 可选 ISO + offline.json + SHA256SUMS
+kurin package create offline --kubernetes 1.33.1 --arch amd64 \
+  --target ubuntu-24.04 --target rocky-9 --iso -o /srv/kurin-offline
 
 # 检查
 kurin package inspect <SOURCE> [--manifest] [--sbom]

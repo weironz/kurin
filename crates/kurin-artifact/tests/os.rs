@@ -172,6 +172,7 @@ fn create_os_validates_inputs() {
         target: OsTarget::parse("ubuntu-24.04").unwrap(),
         arches: vec![],
         version: "2026.10".into(),
+        iso: None,
     };
     let out = PackageOutput::Layout(dir.path().join("x"));
     let err = create_os(&store, &opts, &out);

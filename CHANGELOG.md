@@ -21,6 +21,14 @@ All notable changes to kurin. Format follows Keep a Changelog; semver.
   payloads keep their coverage-based validation. Configs below Kubernetes
   1.30 are rejected at load time (the `kube_version_min_required` gate).
 
+### Added
+- `kurin package create offline`: one directory with the base package,
+  multiple OS packages, optional ISO9660 images (`--iso`), SPDX SBOMs,
+  `offline.json`, `SHA256SUMS`, `cluster.example.toml` and a README.
+  `package create os --iso` writes a mountable repository ISO (KubeKey's
+  `genisoimage` layout) alongside the OCI package; container outputs are
+  chmod'ed so root-owned docker files are readable by the build user.
+
 ### Changed
 - Artifact installs now serialize only the local cache fetch; per-node
   uploads and installs run concurrently (tier0 3-node artifacts stage:

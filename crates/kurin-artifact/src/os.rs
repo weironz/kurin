@@ -387,6 +387,10 @@ pub struct OsPackage {
     pub arches: Vec<Arch>,
     /// Package version; the CLI default is the current month (`2026.10`).
     pub version: String,
+    /// Optional ISO output: a file path, or a directory to write
+    /// `<target>-<arch>.iso` into. The ISO contains the same repository
+    /// directory as the OCI package (KubeKey's `genisoimage` layout).
+    pub iso: Option<PathBuf>,
 }
 
 /// The default package version: the current month as `YYYY.MM` (04 §3.4
@@ -400,8 +404,27 @@ pub fn calver() -> String {
 /// the metadata tool, download the full dependency closure, generate the
 /// repository index. POSIX sh: the distro base images need no extra
 /// packages to run it.
-pub fn container_script(target: &OsTarget) -> String {
+pub fn container_script(target: &OsTarget, iso: bool) -> String {
     let packages = closure(target.family).join(" ");
+    let iso_deb = if iso {
+        format!(
+            "cd /work\n\
+             apt-get install -y -qq --no-install-recommends genisoimage >/dev/null\n\
+             genisoimage -r -o /work/{label}.iso /work/repo\n",
+            label = target.label()
+        )
+    } else {
+        String::new()
+    };
+    let iso_rpm = if iso {
+        format!(
+            "dnf install -y -q genisoimage\n\
+             genisoimage -r -o /work/{label}.iso /work/repo\n",
+            label = target.label()
+        )
+    } else {
+        String::new()
+    };
     match target.family {
         OsFamily::Deb => format!(
             "set -eu\n\
@@ -415,7 +438,8 @@ pub fn container_script(target: &OsTarget) -> String {
              rm -rf /work/repo/partial\n\
              apt-get install -y -qq --no-install-recommends dpkg-dev >/dev/null\n\
              cd /work/repo\n\
-             dpkg-scanpackages -m . > Packages\n"
+             dpkg-scanpackages -m . > Packages\n{iso_deb}\
+             chmod -R a+rX /work\n"
         ),
         // openEuler and Kylin drive the same dnf toolchain as the RHEL
         // lineage; only the package names differ (via `packages`).
@@ -424,7 +448,8 @@ pub fn container_script(target: &OsTarget) -> String {
              dnf install -y -q dnf-plugins-core createrepo_c\n\
              dnf --setopt=install_weak_deps=False download --resolve --alldeps \\\n\
              --destdir /work/repo {packages}\n\
-             createrepo_c /work/repo\n"
+             createrepo_c /work/repo\n{iso_rpm}\
+             chmod -R a+rX /work\n"
         ),
         OsFamily::Other => "set -eu\necho 'unsupported packaging family' >&2\nexit 1\n".to_string(),
     }
@@ -459,13 +484,14 @@ async fn run_container(
     target: &OsTarget,
     arch: Arch,
     work: &Path,
+    iso: bool,
 ) -> Result<(), OsError> {
     let platform = match arch {
         Arch::Amd64 => "linux/amd64",
         Arch::Arm64 => "linux/arm64",
     };
     let mount = format!("{}:/work", work.display());
-    let script = container_script(target);
+    let script = container_script(target, iso);
     let target_label = target.label();
     let image = target.container_image().to_string();
     let engine = engine.to_string();
@@ -542,9 +568,28 @@ pub async fn create_os(
         // <arch>/repo on the host.
         let arch_work = work.path().join(arch.as_str());
         std::fs::create_dir_all(&arch_work)?;
-        run_container(&engine, &opts.target, *arch, &arch_work).await?;
+        run_container(&engine, &opts.target, *arch, &arch_work, opts.iso.is_some()).await?;
         let repo = arch_work.join("repo");
         let count = validate_repo_dir(&opts.target, &repo)?;
+        if let Some(iso) = &opts.iso {
+            let source = arch_work.join(format!("{}.iso", opts.target.label()));
+            if !source.is_file() {
+                return Err(OsError::RepoIncomplete {
+                    target: opts.target.label(),
+                    detail: format!("container did not produce {}", source.display()),
+                });
+            }
+            let dest = iso_path_for(iso, &opts.target, *arch, opts.arches.len());
+            if let Some(parent) = dest.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::copy(&source, &dest)?;
+            eprintln!(
+                "[package] os ISO {} written to {}",
+                opts.target.label(),
+                dest.display()
+            );
+        }
         eprintln!(
             "[package] os {} {}: {} package(s), {}",
             opts.target.label(),
@@ -555,6 +600,24 @@ pub async fn create_os(
         add_repo_file(store, &mut builder, opts, *arch, &repo)?;
     }
     Ok(builder.build(store.blob_store(), out)?)
+}
+
+/// Where one arch's ISO lands: a directory gets `<target>-<arch>.iso`,
+/// a file path keeps its name for a single arch and inserts `-<arch>`
+/// before the extension for multiple arches.
+fn iso_path_for(base: &Path, target: &OsTarget, arch: Arch, arches: usize) -> PathBuf {
+    let is_dir = base.is_dir() || base.extension().and_then(|e| e.to_str()) != Some("iso");
+    if is_dir {
+        return base.join(format!("{}-{}.iso", target.label(), arch.as_str()));
+    }
+    if arches <= 1 {
+        return base.to_path_buf();
+    }
+    let stem = base
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("kurin-os");
+    base.with_file_name(format!("{stem}-{}.iso", arch.as_str()))
 }
 
 /// The builder with the metadata filled in (separate so tests can pin
@@ -778,6 +841,7 @@ mod tests {
             target: OsTarget::parse("kylin-10").unwrap(),
             arches: vec![Arch::Amd64],
             version: "2026.10".into(),
+            iso: None,
         };
         let out = PackageOutput::Layout(dir.path().join("x"));
         let err = create_os(&store, &opts, &out).await.unwrap_err();
@@ -881,13 +945,13 @@ mod tests {
 
     #[test]
     fn deb_container_script_is_deterministic() {
-        let script = container_script(&OsTarget::parse("ubuntu-24.04").unwrap());
+        let script = container_script(&OsTarget::parse("ubuntu-24.04").unwrap(), false);
         insta::assert_snapshot!(script);
     }
 
     #[test]
     fn rpm_container_script_is_deterministic() {
-        let script = container_script(&OsTarget::parse("rocky-9").unwrap());
+        let script = container_script(&OsTarget::parse("rocky-9").unwrap(), false);
         insta::assert_snapshot!(script);
     }
 
@@ -895,7 +959,7 @@ mod tests {
     fn euler_container_script_is_deterministic() {
         // Same dnf toolchain as rocky, but ebtables (not iptables-nft)
         // in the closure.
-        let script = container_script(&OsTarget::parse("openeuler-24.03").unwrap());
+        let script = container_script(&OsTarget::parse("openeuler-24.03").unwrap(), false);
         insta::assert_snapshot!(script);
     }
 
@@ -903,8 +967,8 @@ mod tests {
     fn kylin_container_script_matches_the_rpm_one() {
         // Kylin shares the dnf script shape; only the placeholder
         // image keeps it from building.
-        let kylin = container_script(&OsTarget::parse("kylin-10").unwrap());
-        let euler = container_script(&OsTarget::parse("openeuler-24.03").unwrap());
+        let kylin = container_script(&OsTarget::parse("kylin-10").unwrap(), false);
+        let euler = container_script(&OsTarget::parse("openeuler-24.03").unwrap(), false);
         assert_eq!(kylin, euler);
     }
 
@@ -968,5 +1032,42 @@ mod tests {
             ));
         }
         insta::assert_debug_snapshot!(names);
+    }
+
+    #[test]
+    fn iso_script_installs_genisoimage_and_writes_the_repo_iso() {
+        let ubuntu = container_script(&OsTarget::parse("ubuntu-24.04").unwrap(), true);
+        assert!(
+            ubuntu.contains("genisoimage -r -o /work/ubuntu-24.04.iso /work/repo"),
+            "{ubuntu}"
+        );
+        let rocky = container_script(&OsTarget::parse("rocky-9").unwrap(), true);
+        assert!(rocky.contains("dnf install -y -q genisoimage"), "{rocky}");
+        assert!(
+            rocky.contains("genisoimage -r -o /work/rocky-9.iso /work/repo"),
+            "{rocky}"
+        );
+        assert!(ubuntu.contains("chmod -R a+rX /work"), "{ubuntu}");
+        let plain = container_script(&OsTarget::parse("rocky-9").unwrap(), false);
+        assert!(!plain.contains("genisoimage"), "{plain}");
+    }
+
+    #[test]
+    fn iso_path_for_directory_and_multi_arch_files() {
+        let target = OsTarget::parse("ubuntu-24.04").unwrap();
+        let dir = std::path::Path::new("/srv/offline");
+        assert_eq!(
+            iso_path_for(dir, &target, Arch::Amd64, 1),
+            std::path::PathBuf::from("/srv/offline/ubuntu-24.04-amd64.iso")
+        );
+        let file = std::path::Path::new("/srv/out.iso");
+        assert_eq!(
+            iso_path_for(file, &target, Arch::Arm64, 2),
+            std::path::PathBuf::from("/srv/out-arm64.iso")
+        );
+        assert_eq!(
+            iso_path_for(file, &target, Arch::Amd64, 1),
+            std::path::PathBuf::from("/srv/out.iso")
+        );
     }
 }
