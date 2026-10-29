@@ -5,7 +5,9 @@
 - **WP-76 tier3 conformance**：3 control-plane + 2 worker（kubeadm/containerd/Calico/kube-vip）跑 hydrophone v0.8.0，**423 passed / 0 failed / 0 errors**（6735 total，6312 skipped，1h54m41s），报告 `docs/conformance/20261029T163747Z/`。这清掉了单节点 421/424 的「至少两个 untainted node」限制。
 - **WP-74 离线变体**：Ubuntu 22.04、AlmaLinux 9、openEuler 24.03 的 tier1 离线安装全部 PASS，二遍全 skip。修复：Alma 镜像换 `repo.almalinux.org`；openEuler 离线改 40G 磁盘/4G 内存、断言走 root SSH；openEuler/Kylin 的 dnf 本地仓库加 `--setopt=kurin-os.gpgcheck=0`（与 deb 的 `[trusted=yes]` 对等），否则 dnf 因无 GPG key 拒绝安装。
 - **e2e 幂等断言**：新 run 会重新 harvest join material（`bootstrap/kubeadm-init` / `bootstrap/k3s-init`）并写入新 op id（`post/state-record`）；各 tier1/tier2/tier3 脚本的二次运行检查排除这三个 refresh 任务，并加 `|| true` 兼容 `pipefail`。
-- **CI/文档**：`check.yml` 迁到 GitHub 托管 runner（push/PR），新增 `docs.yml` 用 mdBook 构建并发布 GitHub Pages；`mdbook build` 本地通过。
+- **0.5.3**：把 openEuler/Kylin 的 dnf gpgcheck 修复纳入发布；release + Docker `0.5.3`/`latest` 已推送。
+- **CI/文档**：`check.yml` 迁到 GitHub 托管 runner（push/PR），新增 `docs.yml` 用 mdBook 构建并发布 GitHub Pages；`mdbook build` 本地通过，站点已上线 <https://weironz.github.io/kurin/>。
+- **WP-75 阈值**：kube-bench v0.10.7 基线（default 64/15/51，CIS 70/11/49）与发布阈值写入 `docs/cis/README.md`：CIS fail ≤ 11，控制面项新增 fail 阻断。
 
 ## 补齐真实 e2e（2026-10-28，第二轮）
 
