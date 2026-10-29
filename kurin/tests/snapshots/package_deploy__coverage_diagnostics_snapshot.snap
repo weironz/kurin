@@ -4,7 +4,7 @@ expression: report
 ---
 base package oci-layout:///srv/base does not cover this cluster:
   package: base v1.34.0 (k3s, arm64)
-  - kurin: this build is v0.5.0, package requires >=0.6.0, <0.8.0
+  - kurin: this build is v0.5.1, package requires >=0.6.0, <0.8.0
   - kubernetes: cluster selects v1.33.1, package pins v1.34.0
   - distribution: cluster runs kubeadm, package was built for k3s
   - cni: calico is not in the package (components: cni/flannel)

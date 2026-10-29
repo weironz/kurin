@@ -4,7 +4,7 @@ kurin 的版本策略和 KubeKey 的 `components.md`、Kubespray 的 supported
 versions 表一致：**默认 pin 一个版本，其他版本必须由制品清单/包显式携带，
 不支持的组合在开始安装前报错**。
 
-## 当前构建（0.5.0）
+## 当前构建（0.5.1）
 
 | 场景 | 版本 | 说明 |
 |---|---|---|
@@ -29,7 +29,7 @@ kurin versions --json
 输出示例：
 
 ```text
-kurin 0.5.0
+kurin 0.5.1
 kubernetes (embedded): 1.33.1
 create online: 1.33.1
 create with package: version pinned by the base package

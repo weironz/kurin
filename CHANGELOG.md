@@ -2,7 +2,7 @@
 
 All notable changes to kurin. Format follows Keep a Changelog; semver.
 
-## Unreleased
+## 0.5.1 - 2026-10-29
 
 ### Added
 - Rich terminal progress for `create cluster` / `add nodes`
