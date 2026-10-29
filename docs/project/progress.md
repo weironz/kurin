@@ -1,3 +1,12 @@
+## 0.5.1/0.5.2、tier3 conformance 与离线变体（2026-10-29）
+
+- **0.5.1**：rich 终端进度、`kurin versions`、Kubernetes 1.30 最低版本门禁、artifact 并发优化、`package create offline`/`--iso` 进入发布。
+- **0.5.2 热修**：tier3 真机暴露 kube-vip 模板把完整镜像引用当 tag 拼接（`ghcr.io/kube-vip/kube-vip:ghcr.io/kube-vip/kube-vip:v0.8.8`），HA 集群 VIP 起不来。模板改为 `image: {{ image }}`，单测断言精确 `image:` 行并拒绝双拼；v0.5.2 release + Docker 镜像已发布。
+- **WP-76 tier3 conformance**：3 control-plane + 2 worker（kubeadm/containerd/Calico/kube-vip）跑 hydrophone v0.8.0，**423 passed / 0 failed / 0 errors**（6735 total，6312 skipped，1h54m41s），报告 `docs/conformance/20261029T163747Z/`。这清掉了单节点 421/424 的「至少两个 untainted node」限制。
+- **WP-74 离线变体**：Ubuntu 22.04、AlmaLinux 9、openEuler 24.03 的 tier1 离线安装全部 PASS，二遍全 skip。修复：Alma 镜像换 `repo.almalinux.org`；openEuler 离线改 40G 磁盘/4G 内存、断言走 root SSH；openEuler/Kylin 的 dnf 本地仓库加 `--setopt=kurin-os.gpgcheck=0`（与 deb 的 `[trusted=yes]` 对等），否则 dnf 因无 GPG key 拒绝安装。
+- **e2e 幂等断言**：新 run 会重新 harvest join material（`bootstrap/kubeadm-init` / `bootstrap/k3s-init`）并写入新 op id（`post/state-record`）；各 tier1/tier2/tier3 脚本的二次运行检查排除这三个 refresh 任务，并加 `|| true` 兼容 `pipefail`。
+- **CI/文档**：`check.yml` 迁到 GitHub 托管 runner（push/PR），新增 `docs.yml` 用 mdBook 构建并发布 GitHub Pages；`mdbook build` 本地通过。
+
 ## 补齐真实 e2e（2026-10-28，第二轮）
 
 - **WP-72**：tier1 k3s 1.33.1 → 1.34.1 离线升级 **PASS**。手工构造 `k3s-1.34.1+k3s1-amd64` bundle（真实 GitHub release + sha256），`kurin upgrade --offline` 完成 version-check → stop → install-bins → start → ready-gate；升级后 `k3s --version` 为 v1.34.1+k3s1、node Ready、`/readyz ok`，旧二进制保留。
