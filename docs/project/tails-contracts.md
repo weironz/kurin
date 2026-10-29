@@ -37,13 +37,13 @@ pub fn read_bundle_manifest(dir: &Path) -> miette::Result<ArtifactManifest>;
 
 ## 制品事实（上游已核）
 
-- CRI-O 静态包：`https://github.com/cri-o/cri-o/releases/download/v<ver>/cri-o.<arch>.<ver>.tar.gz`
+- CRI-O 静态包：`https://github.com/cri-o/cri-o/releases/download/v<ver>/cri-o.{arch}.<ver>.tar.gz`
   （含 `bin/crio`、`bin/pinns`；1.33.x 最新补丁自取；两架构 sha256 从
-  `.../cri-o.<arch>.<ver>.tar.gz.sha256sum`? —— 若无该文件，下载实测 sha 后写死）。
+  `.../cri-o.{arch}.<ver>.tar.gz.sha256sum`? —— 若无该文件，下载实测 sha 后写死）。
   conmon/crun 等 runt 依赖：Ubuntu24/Debian12 上 `crio` 静态包自带 handling，
   依赖由 KernelDeps 式 apt 兜底（conmon、containernetworking-plugins 即 cni-plugins 已有）。
-- k3s airgap：`k3s-airgap-images-<arch>.tar.gz`（每版有 sha256 行，见
-  sha256sum-<arch>.txt；amd64=e32338ce…）。安装位置
+- k3s airgap：`k3s-airgap-images-{arch}.tar.gz`（每版有 sha256 行，见
+  sha256sum-{arch}.txt；amd64=e32338ce…）。安装位置
   `/var/lib/rancher/k3s/agent/images/`（k3s server 启动时自动导入）。
 - 升级离线：bundle 需含目标版本 kubeadm/kubelet/kubectl + 镜像（空气间隙下镜像
   已在节点上、无需重拉——kubeadm upgrade 用本地镜像 tag 匹配，所以 bundle 里镜像

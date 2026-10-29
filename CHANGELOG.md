@@ -2,6 +2,15 @@
 
 All notable changes to kurin. Format follows Keep a Changelog; semver.
 
+## 0.5.2 - 2026-10-29
+
+### Fixed
+- kube-vip static pod rendered a doubled image reference
+  (`ghcr.io/kube-vip/kube-vip:ghcr.io/kube-vip/kube-vip:v0.8.8`), so every
+  HA cluster using `ha.mode = "kube-vip"` failed to start the VIP. The
+  template now uses the resolved image reference verbatim; the unit test
+  asserts the exact `image:` line and rejects a doubled reference.
+
 ## 0.5.1 - 2026-10-29
 
 ### Added

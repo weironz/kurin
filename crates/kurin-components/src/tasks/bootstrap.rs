@@ -764,10 +764,16 @@ mod tests {
         assert!(t.rendered.contains("value: \"192.168.10.100\""));
         assert!(t.rendered.contains("value: \"eth0\""));
         assert!(t.rendered.contains("10.233.64.0/18"));
-        assert!(t.rendered.contains(&format!(
-            "ghcr.io/kube-vip/kube-vip:{}",
+        let image = format!(
+            "image: ghcr.io/kube-vip/kube-vip:{}",
             kurin_artifact::version::KUBE_VIP_VERSION
-        )));
+        );
+        assert!(t.rendered.contains(&image), "{}", t.rendered);
+        assert!(
+            !t.rendered.contains("kube-vip:ghcr.io"),
+            "image reference must not be doubled: {}",
+            t.rendered
+        );
         assert!(t.rendered.contains("hostNetwork: true"));
     }
 

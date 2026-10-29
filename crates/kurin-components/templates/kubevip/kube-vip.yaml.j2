@@ -17,7 +17,7 @@ spec:
   priorityClassName: system-node-critical
   containers:
   - name: kube-vip
-    image: ghcr.io/kube-vip/kube-vip:{{ image }}
+    image: {{ image }}
     imagePullPolicy: IfNotPresent
     args:
     - manager
