@@ -3,7 +3,6 @@ name: mirrors
 # Manual only: run alongside a mirror-table change (see scripts/check-mirrors.sh).
 on:
   workflow_dispatch:
-  workflow_dispatch:
 
 jobs:
   mirrors:
