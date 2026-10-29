@@ -156,7 +156,7 @@ done
 
 echo "[extlb] idempotency"
 "$BIN" create cluster -f "$CFG" --json > "$EVENTS" 2>/dev/null || { echo "[FAIL] second run nonzero"; exit 1; }
-done2=$(grep -c '"task-done"' "$EVENTS" || true)
+done2=$(grep '"task-done"' "$EVENTS" | grep -vE '"id":"(bootstrap/kubeadm-init|bootstrap/k3s-init|post/state-record)@' | wc -l || true)
 [ "$done2" -eq 0 ] || { echo "[FAIL] re-ran $done2 tasks"; exit 1; }
 echo "[ok] second run fully skipped"
 

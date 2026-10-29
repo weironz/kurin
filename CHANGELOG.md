@@ -10,6 +10,11 @@ All notable changes to kurin. Format follows Keep a Changelog; semver.
   HA cluster using `ha.mode = "kube-vip"` failed to start the VIP. The
   template now uses the resolved image reference verbatim; the unit test
   asserts the exact `image:` line and rejects a doubled reference.
+- openEuler/Kylin offline installs: `dnf --repofrompath` now sets
+  `kurin-os.gpgcheck=0` for the unsigned local repository (the deb path
+  already used `[trusted=yes]`). Without it dnf refused the repository
+  with a GPG-key error. Package integrity is still enforced by the OCI
+  package's sha256 closure.
 
 ## 0.5.1 - 2026-10-29
 

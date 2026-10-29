@@ -50,7 +50,7 @@ EOF
 
 echo "[openeuler-offline] launching from $IMG_URL (first run downloads ~1GB)"
 multipass info "$NAME" >/dev/null 2>&1 || \
-    multipass launch "$IMG_URL" --name "$NAME" --cpus 2 --memory 3G --disk 20G --cloud-init "$CID" >/dev/null
+    multipass launch "$IMG_URL" --name "$NAME" --cpus 2 --memory 4G --disk 40G --cloud-init "$CID" >/dev/null
 
 IP=$(multipass info "$NAME" --format yaml | awk '/^    ipv4:/{getline; print $2; exit}')
 [ -n "$IP" ] || { echo "[FAIL] no ipv4"; exit 1; }
@@ -65,6 +65,7 @@ for i in $(seq 1 30); do
     sleep 10
 done
 echo "[openeuler-offline] $NAME at $IP with root ssh"
+SSH="ssh -i $KEYS/id_ed25519 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes root@$IP"
 
 cat > "$CFG" <<EOF
 version = "v1alpha2"
@@ -93,7 +94,7 @@ echo "[openeuler-offline] config: $CFG (os: $OSPKG)"
 
 # Block egress to everything kurin would reach online: the distro
 # repositories too, so the kernel deps cannot leak to dnf mirrors.
-multipass exec "$NAME" -- sudo bash -c '
+$SSH '
   for h in registry.k8s.io dl.k8s.io github.com raw.githubusercontent.com quay.io auth.docker.io registry-1.docker.io ghcr.io repo.openeuler.org repo.huaweicloud.com; do
     for a in $(getent ahostsv4 "$h" 2>/dev/null | awk "{print \$1}" | sort -u); do
       iptables -I OUTPUT -d "$a" -j REJECT 2>/dev/null || true
@@ -119,7 +120,7 @@ echo "[ok] openeuler2403 offline: cluster-ready, zero failures"
 # The kernel deps must have come from the os package: the repo tar was
 # uploaded to /opt/kurin/repo/<id> and the temporary dnf source config
 # is gone afterwards (WP-38 step 2).
-multipass exec "$NAME" -- sudo bash -c '
+$SSH '
   ls /opt/kurin/repo/*/repo.tar >/dev/null 2>&1 || { echo "[FAIL] no os repo tar under /opt/kurin/repo"; exit 1; }
   test ! -e /etc/yum.repos.d/kurin-os.repo || { echo "[FAIL] temporary dnf repo config left behind"; exit 1; }
   command -v conntrack >/dev/null || { echo "[FAIL] conntrack missing"; exit 1; }
@@ -128,16 +129,16 @@ multipass exec "$NAME" -- sudo bash -c '
   command -v ebtables >/dev/null || { echo "[FAIL] ebtables missing"; exit 1; }
   echo "[ok] kernel deps installed from the os package; temp repo config removed"'
 
-KC="sudo /usr/local/bin/kubectl --kubeconfig /etc/kubernetes/admin.conf"
+KC="/usr/local/bin/kubectl --kubeconfig /etc/kubernetes/admin.conf"
 for i in $(seq 1 60); do
-    READY=$(multipass exec "$NAME" -- sh -c "$KC get node node01 -o jsonpath='{.status.conditions[?(@.type==\"Ready\")].status}'" 2>/dev/null || true)
+    READY=$($SSH "$KC get node node01 -o jsonpath='{.status.conditions[?(@.type==\"Ready\")].status}'" 2>/dev/null || true)
     [ "$READY" = "True" ] && break; sleep 10
 done
 [ "$READY" = "True" ] || { echo "[FAIL] node Ready=$READY"; exit 1; }
 echo "[ok] node Ready (~$((i*10))s)"
 
 for i in $(seq 1 60); do
-    BAD=$(multipass exec "$NAME" -- sh -c "$KC get pods -A --no-headers" 2>/dev/null | awk '$4 !~ /^(Running|Succeeded|Completed)$/ {print $1"/"$2" "$4}')
+    BAD=$($SSH "$KC get pods -A --no-headers" 2>/dev/null | awk '$4 !~ /^(Running|Succeeded|Completed)$/ {print $1"/"$2" "$4}')
     [ -z "$BAD" ] && { echo "[ok] all pods healthy (~$((i*10))s)"; break; }
     [ "$i" = "60" ] && { echo "[FAIL] pods: $BAD"; exit 1; }
     sleep 10
@@ -146,7 +147,7 @@ done
 if ! "$BIN" create cluster -f "$CFG" --json > /tmp/openeuler-off-2.jsonl 2>/dev/null; then
     echo "[FAIL] second offline run failed"; exit 1
 fi
-done2=$(grep -c '"task-done"' /tmp/openeuler-off-2.jsonl || true)
+done2=$(grep '"task-done"' /tmp/openeuler-off-2.jsonl | grep -vE '"id":"(bootstrap/kubeadm-init|bootstrap/k3s-init|post/state-record)@' | wc -l || true)
 [ "$done2" -eq 0 ] || { echo "[FAIL] second run re-applied $done2 tasks"; exit 1; }
 echo "[ok] second run fully skipped"
 echo "tier1-openeuler2403-offline: PASS"

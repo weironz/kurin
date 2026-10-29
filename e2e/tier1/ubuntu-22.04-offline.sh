@@ -149,7 +149,7 @@ done
 if ! "$BIN" create cluster -f "$CFG" --json > /tmp/ubuntu2204-off-2.jsonl 2>/dev/null; then
     echo "[FAIL] second offline run failed"; exit 1
 fi
-done2=$(grep -c '"task-done"' /tmp/ubuntu2204-off-2.jsonl || true)
+done2=$(grep '"task-done"' /tmp/ubuntu2204-off-2.jsonl | grep -vE '"id":"(bootstrap/kubeadm-init|bootstrap/k3s-init|post/state-record)@' | wc -l || true)
 [ "$done2" -eq 0 ] || { echo "[FAIL] second run re-applied $done2 tasks"; exit 1; }
 echo "[ok] second run fully skipped"
 echo "tier1-ubuntu2204-offline: PASS"

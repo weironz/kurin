@@ -5,4 +5,4 @@ expression: script
 set -e
 mkdir -p /opt/kurin/repo/aabbccddeeff0011/repo
 tar -xf /opt/kurin/repo/aabbccddeeff0011/repo.tar -C /opt/kurin/repo/aabbccddeeff0011/repo
-dnf --disablerepo='*' --enablerepo=kurin-os --repofrompath=kurin-os,file:///opt/kurin/repo/aabbccddeeff0011/repo install -y -q haproxy keepalived
+dnf --disablerepo='*' --enablerepo=kurin-os --repofrompath=kurin-os,file:///opt/kurin/repo/aabbccddeeff0011/repo --setopt=kurin-os.gpgcheck=0 install -y -q haproxy keepalived

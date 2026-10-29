@@ -63,7 +63,7 @@ echo "[tier1] pass 2: idempotency"
 # `post/state-record` records this invocation's op id; both are expected to
 # run once per create (their apply paths are idempotent). Every other task
 # must be skipped on a converged cluster.
-done2=$(grep '"task-done"' "$EVENTS2" | grep -v -E '"id":"(bootstrap/kubeadm-init|post/state-record)@' | wc -l || true)
+done2=$(grep '"task-done"' "$EVENTS2" | grep -v -E '"id":"(bootstrap/kubeadm-init|bootstrap/k3s-init|post/state-record)@' | wc -l || true)
 fail2=$(grep -c '"task-failed"' "$EVENTS2" || true)
 skip2=$(grep -c '"task-skipped"' "$EVENTS2" || true)
 [ "$done2" -eq 0 ] || { echo "[FAIL] pass 2 re-ran $done2 unexpected tasks"; grep '"task-done"' "$EVENTS2"; exit 1; }

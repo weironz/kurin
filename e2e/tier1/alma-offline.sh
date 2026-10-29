@@ -20,10 +20,9 @@ LOCAL_IMG="$HOME/AlmaLinux-9-GenericCloud-latest.x86_64.qcow2"
 if [ -f "$LOCAL_IMG" ]; then
     IMG_URL="file://$LOCAL_IMG"
 else
-    IMG_URL="https://dl.almalinux.org/9/cloud/x86_64/images/AlmaLinux-9-GenericCloud-latest.x86_64.qcow2"
-    if ! curl -sI --max-time 10 "$IMG_URL" -o /dev/null; then
-        IMG_URL="https://mirror.yandex.ru/almalinux/9/cloud/x86_64/images/AlmaLinux-9-GenericCloud-latest.x86_64.qcow2"
-    fi
+    # dl.almalinux.org redirects to mirrors that may be unreachable; the
+    # official repo host is stable (same as alma.sh).
+    IMG_URL="https://repo.almalinux.org/almalinux/9/cloud/x86_64/images/AlmaLinux-9-GenericCloud-latest.x86_64.qcow2"
 fi
 CID="$HOME/kurin-alma9-cloud-init.yaml"
 EVENTS=$(mktemp)
@@ -146,7 +145,7 @@ done
 if ! "$BIN" create cluster -f "$CFG" --json > /tmp/alma-off-2.jsonl 2>/dev/null; then
     echo "[FAIL] second offline run failed"; exit 1
 fi
-done2=$(grep -c '"task-done"' /tmp/alma-off-2.jsonl || true)
+done2=$(grep '"task-done"' /tmp/alma-off-2.jsonl | grep -vE '"id":"(bootstrap/kubeadm-init|bootstrap/k3s-init|post/state-record)@' | wc -l || true)
 [ "$done2" -eq 0 ] || { echo "[FAIL] second run re-applied $done2 tasks"; exit 1; }
 echo "[ok] second run fully skipped"
 echo "tier1-alma9-offline: PASS"

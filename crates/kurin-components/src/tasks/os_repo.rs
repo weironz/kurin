@@ -143,6 +143,7 @@ impl NodeOsRepo {
                 script.push_str(&format!(
                     "dnf --disablerepo='*' --enablerepo={DNF_REPO_ID} \
                      --repofrompath={DNF_REPO_ID},file://{dir}/repo \
+                     --setopt={DNF_REPO_ID}.gpgcheck=0 \
                      install -y -q {packages}\n",
                     packages = packages.join(" "),
                 ));
@@ -237,6 +238,10 @@ mod tests {
             "{script}"
         );
         assert!(
+            script.contains("--setopt=kurin-os.gpgcheck=0"),
+            "the local repository is unsigned, like apt [trusted=yes]: {script}"
+        );
+        assert!(
             script.contains("install -y -q haproxy keepalived"),
             "{script}"
         );
@@ -256,6 +261,10 @@ mod tests {
                 .install_script(&["conntrack-tools".into(), "ebtables".into()]);
             assert!(
                 script.contains("dnf --disablerepo='*' --enablerepo=kurin-os"),
+                "{family:?}: {script}"
+            );
+            assert!(
+                script.contains("--setopt=kurin-os.gpgcheck=0"),
                 "{family:?}: {script}"
             );
             assert!(

@@ -91,7 +91,7 @@ if ! "$BIN" create cluster -f "$KOVN_TMP" --json > "$EVENTS" 2>/dev/null; then
     echo "[FAIL] second run nonzero"
     exit 1
 fi
-done2=$(grep -c '"task-done"' "$EVENTS" || true)
+done2=$(grep '"task-done"' "$EVENTS" | grep -vE '"id":"(bootstrap/kubeadm-init|bootstrap/k3s-init|post/state-record)@' | wc -l || true)
 fail2=$(grep -c '"task-failed"' "$EVENTS" || true)
 [ "$done2" -eq 0 ] && [ "$fail2" -eq 0 ] || { echo "[FAIL] second run re-ran $done2, failed $fail2"; exit 1; }
 echo "[ok] second run fully skipped"

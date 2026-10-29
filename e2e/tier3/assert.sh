@@ -53,7 +53,7 @@ echo "[tier3] pass 2: idempotency"
 "$BIN" create cluster -f "$CFG" --json > "$EVENTS2" 2>/dev/null || { echo "[FAIL] pass 2 nonzero"; exit 1; }
 # A fresh run re-harvests join material (kubeadm-init) and records the new
 # operation id (state-record); both are refresh tasks, not re-applied work.
-done2=$(grep '"task-done"' "$EVENTS2" | grep -vE '"id":"(bootstrap/kubeadm-init|post/state-record)@' | wc -l)
+done2=$(grep '"task-done"' "$EVENTS2" | grep -vE '"id":"(bootstrap/kubeadm-init|post/state-record)@' | wc -l || true)
 fail2=$(grep -c '"task-failed"' "$EVENTS2" || true)
 [ "$done2" -eq 0 ] && [ "$fail2" -eq 0 ] || { echo "[FAIL] pass 2 re-ran $done2, failed $fail2"; exit 1; }
 echo "[ok] pass 2: all skipped"
