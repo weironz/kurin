@@ -147,7 +147,7 @@
 - WP-72：tier1 k3s 1.33.1 → 1.34.1（手工离线 bundle），`k3s --version` / node Ready / `/readyz`，PASS。
 - WP-73：tier1 `kurin import --from-cluster` 重建 v1alpha2 配置，`status` 可用，PASS。
 - WP-74：Ubuntu 22.04.5、AlmaLinux 9.8、openEuler 24.03 的 tier1 在线安装，PASS。
-- WP-75：tier1 CIS 集群创建；kube-bench v0.10.7：default 64 pass/15 fail/51 warn，CIS 70 pass/11 fail/49 warn。
+- WP-75：tier1 CIS 集群创建；kube-bench v0.10.7：default 64 pass/15 fail/51 warn，CIS 70 pass/11 fail/49 warn。发布阈值已定：CIS fail ≤ 11 且控制面项无新增 fail，见 `docs/cis/README.md`。
 - WP-76：hydrophone v0.8.0 在 tier1 k3s 单节点：421/424；tier3（3 CP + 2 worker）完整 conformance：**423 passed / 0 failed / 0 errors**，报告 `docs/conformance/20261029T163747Z/`。
 - WP-74 离线变体：Ubuntu 22.04、AlmaLinux 9、openEuler 24.03 的 tier1 离线安装（base + os 包 + 断网）全部 PASS，二遍全 skip。
 - WP-77：tier1 无 registry 节点、`file://` base + os 包、`delivery = "seed"` 创建，PASS。
@@ -155,7 +155,6 @@
 ### 仍无法在本机执行
 - **WP-74 Kylin V10**：无公共 qcow2，镜像只在厂商门户；脚本已就绪，需本地提供 qcow2。
 - **WP-72 `just tier1-k3s-upgrade` 原脚本**：需要制品清单 pin 目标 k3s release；本次用等价的手工离线 bundle 验证了升级链。
-- **WP-75 kube-bench 正式阈值**：报告已出，阈值需维护者按 kube-bench 版本/适用项确定。
 - **WP-64 页面安装/卸载 metrics-server**：Playwright mock 已覆盖，tier1 真实 UI 操作未跑。
 - **WP-65 tier2 页面升级一个小版本**：Playwright mock 已覆盖，tier2 真实 UI 升级未跑。
 - **WP-71/WP-73 的 tier2 多控制面场景**：已在 tier1 验证等价路径，tier2 未跑。

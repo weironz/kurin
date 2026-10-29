@@ -63,7 +63,7 @@ profile = "cis"     # default（缺省，行为不变）| cis
 
 `cis` 会设置 apiserver/kubelet 加固参数、审计策略、Pod Security
 Admission `restricted`，并把相关文件权限收紧到 0600。验收可用
-`just cis-check`（kube-bench，人工判定阈值）。
+`just cis-check`（kube-bench，人工判定阈值；基线与阈值见 [CIS 基线](../cis/README.md)）。
 
 ## 制品与包
 

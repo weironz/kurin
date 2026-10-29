@@ -18,7 +18,7 @@ for f in ../*.md; do
 done
 
 # 分类目录
-for d in getting-started guides reference operations docker development project; do
+for d in getting-started guides reference operations docker development project cis; do
   mkdir -p "src/$d"
   for f in ../"$d"/*.md; do
     case "$f" in
