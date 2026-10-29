@@ -7,7 +7,7 @@
 - **e2e 幂等断言**：新 run 会重新 harvest join material（`bootstrap/kubeadm-init` / `bootstrap/k3s-init`）并写入新 op id（`post/state-record`）；各 tier1/tier2/tier3 脚本的二次运行检查排除这三个 refresh 任务，并加 `|| true` 兼容 `pipefail`。
 - **0.5.3**：把 openEuler/Kylin 的 dnf gpgcheck 修复纳入发布；release + Docker `0.5.3`/`latest` 已推送。
 - **CI/文档**：`check.yml` 迁到 GitHub 托管 runner（push/PR），新增 `docs.yml` 用 mdBook 构建并发布 GitHub Pages；`mdbook build` 本地通过，站点已上线 <https://weironz.github.io/kurin/>。
-- **WP-75 阈值**：kube-bench v0.10.7 基线（default 64/15/51，CIS 70/11/49）与发布阈值写入 `docs/cis/README.md`：CIS fail ≤ 11，控制面项新增 fail 阻断。
+- **WP-75 阈值**：kube-bench v0.10.7 基线（default 64/15/51，CIS 70/11/49）与建议阈值写入 `docs/cis/README.md`：CIS fail ≤ 11，控制面项新增 fail 阻断；原始报告未归档，正式阈值待重跑确认。
 
 ## 补齐真实 e2e（2026-10-28，第二轮）
 

@@ -15,6 +15,8 @@ Kubernetes conformance。脚本：`scripts/conformance.sh`；报告归档在
 - 结果：**423 passed / 0 failed / 0 errors**（6735 total，6312 skipped）
 - 耗时：1h54m41s
 - 报告：`e2e.log`、`junit_01.xml.gz`、`summary.md`
+- 注：`e2e/tier3/up.sh` 目前只起 3 个控制面；2 个 worker 是本次手工
+  `kurin add nodes` 加入的，尚未脚本化
 
 这是完整的 conformance 门禁结果。
 

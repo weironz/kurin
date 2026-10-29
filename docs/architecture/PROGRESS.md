@@ -147,7 +147,7 @@
 - WP-72：tier1 k3s 1.33.1 → 1.34.1（手工离线 bundle），`k3s --version` / node Ready / `/readyz`，PASS。
 - WP-73：tier1 `kurin import --from-cluster` 重建 v1alpha2 配置，`status` 可用，PASS。
 - WP-74：Ubuntu 22.04.5、AlmaLinux 9.8、openEuler 24.03 的 tier1 在线安装，PASS。
-- WP-75：tier1 CIS 集群创建；kube-bench v0.10.7：default 64 pass/15 fail/51 warn，CIS 70 pass/11 fail/49 warn。发布阈值已定：CIS fail ≤ 11 且控制面项无新增 fail，见 `docs/cis/README.md`。
+- WP-75：tier1 CIS 集群创建；kube-bench v0.10.7：default 64 pass/15 fail/51 warn，CIS 70 pass/11 fail/49 warn。阈值建议（CIS fail ≤ 11、控制面项无新增 fail）见 `docs/cis/README.md`，待维护者确认；原始报告未归档。
 - WP-76：hydrophone v0.8.0 在 tier1 k3s 单节点：421/424；tier3（3 CP + 2 worker）完整 conformance：**423 passed / 0 failed / 0 errors**，报告 `docs/conformance/20261029T163747Z/`。
 - WP-74 离线变体：Ubuntu 22.04、AlmaLinux 9、openEuler 24.03 的 tier1 离线安装（base + os 包 + 断网）全部 PASS，二遍全 skip。
 - WP-77：tier1 无 registry 节点、`file://` base + os 包、`delivery = "seed"` 创建，PASS。

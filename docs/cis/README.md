@@ -14,13 +14,17 @@ JSON 报告归档到 `docs/cis/<UTC timestamp>/`。这是人工发布门禁，�
   metadata、非 CIS 发行版路径等），不是 kurin 渲染缺陷
 - 本次原始 JSON 未入库（临时 VM 已销毁）；后续运行按时间戳目录归档
 
-## 发布阈值
+## 建议阈值（待维护者确认）
 
-- CIS 档位 fail **≤ 11**（v0.10.7 基线），且不得高于同版本 default 档位
+- 建议：CIS 档位 fail **≤ 11**（v0.10.7 基线），且不得高于同版本 default 档位
 - `kube-apiserver` / `etcd` / `kubelet` 控制面项出现**新增 fail** 直接阻断
 - 其余新增 fail 需在 PR 说明原因并更新本文件
 - warn 项逐条评审，不设硬上限
 - kube-bench 版本升级时重跑两档、重定基线并更新本文件
+
+以上为建议值；正式阈值需维护者确认。2026-10-28 的原始 JSON 未归档，
+正式门禁前应在新的 tier1 CIS 集群上重跑 `just cis-check` 并把报告提交到
+`docs/cis/<timestamp>/`。
 
 ## 复现
 
