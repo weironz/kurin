@@ -1,37 +1,33 @@
 name: check
 
-# Manual only: the runner lives on a dev workstation; push-triggered CI
-# raced local e2e too often (memory) and piled up failures.
+# Fast Rust checks on GitHub-hosted runners. E2E stays manual/local; the
+# self-hosted runner is only needed for tag releases and package builds.
 on:
+  push:
+    branches: [main]
+  pull_request:
   workflow_dispatch:
 
 jobs:
   check:
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
-      - name: toolchain
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: pnpm
         run: |
-          export PATH="$HOME/.cargo/bin:/usr/local/bin:$PATH"
-          rustup component add clippy rustfmt
-      - name: checks
+          corepack enable
+          corepack prepare pnpm@9.15.9 --activate
+      - name: web build
         run: |
-          export PATH="$HOME/.cargo/bin:/usr/local/bin:$PATH"
-          just fmt-check clippy test
-
-  e2e-tier0:
-    runs-on: self-hosted
-    needs: check
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v4
-      - name: tier-0 (systemd containers, idempotency)
+          pnpm --dir web install --frozen-lockfile
+          pnpm --dir web build
+      - name: rust checks
         run: |
-          export PATH="$HOME/.cargo/bin:/usr/local/bin:$PATH"
-          just tier0 tier0-test
-      - name: cleanup
-        if: always()
-        run: |
-          export PATH="$HOME/.cargo/bin:/usr/local/bin:$PATH"
-          just tier0-down || true
+          cargo fmt --all -- --check
+          cargo clippy --workspace --all-targets -- -D warnings
+          cargo clippy -p kurin --features ui -- -D warnings
+          cargo test --workspace
