@@ -13,7 +13,7 @@ use tokio::sync::Mutex;
 use kurin_config::Node;
 use miette::Result;
 
-use kurin_artifact::artifact::{install_manifest, Arch, ArtifactKind};
+use kurin_artifact::artifact::{install_manifest, Arch, ArtifactKind, ArtifactSpec};
 use kurin_artifact::preload::PayloadSet;
 use kurin_core::engine::{Drift, Outcome, Session, Stage, Task};
 use kurin_core::run::RunContext;
@@ -190,16 +190,10 @@ impl Task for ArtifactsInstall {
     }
 
     async fn apply(&self, session: &dyn Session) -> miette::Result<Outcome> {
-        // Parallel node tasks share the local cache: serialize downloads so
-        // concurrent fetches of the same artifact never race on .part files.
+        // Parallel node tasks share the local cache: serialize only the
+        // fetch step so concurrent downloads never race on `.part` files.
+        // Uploads and installs then run concurrently across nodes.
         static FETCH_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
-        // Offline installs never touch the network: the fetch lock only
-        // matters for online downloads.
-        let _guard = if self.run.sources.is_offline() {
-            None
-        } else {
-            Some(FETCH_LOCK.lock().await)
-        };
         let manifest = install_manifest(&self.run.sources)?;
         // One payload source per task: a legacy bundle is verified once
         // here instead of once per artifact, and a package is opened once.
@@ -213,22 +207,33 @@ impl Task for ArtifactsInstall {
             .exec("mkdir -p /usr/local/bin /opt/cni/bin /etc/kurin /var/lib/kurin/fetch")
             .await?;
 
-        for entry in manifest.artifacts() {
-            if !install_for_distribution(&entry.name, self.distribution) {
-                continue;
+        let mut work: Vec<(String, ArtifactSpec, Install, Source)> = Vec::new();
+        {
+            let _guard = if self.run.sources.is_offline() {
+                None
+            } else {
+                Some(FETCH_LOCK.lock().await)
+            };
+            for entry in manifest.artifacts() {
+                if !install_for_distribution(&entry.name, self.distribution) {
+                    continue;
+                }
+                let Some(install) = install_for(&entry.name) else {
+                    continue;
+                };
+                let spec = manifest.spec(&entry.name, self.arch)?;
+                let source = match &payloads {
+                    Some(payloads) => Source::Blob(payloads.file(&spec).await?),
+                    None => Source::Registry(fetch_path(
+                        &spec.name,
+                        &spec.expected_sha256().unwrap_or_default(),
+                    )),
+                };
+                work.push((entry.name.clone(), spec, install, source));
             }
-            let Some(install) = install_for(&entry.name) else {
-                continue;
-            };
-            let spec = manifest.spec(&entry.name, self.arch)?;
-            let source = match &payloads {
-                Some(payloads) => Source::Blob(payloads.file(&spec).await?),
-                None => Source::Registry(fetch_path(
-                    &spec.name,
-                    &spec.expected_sha256().unwrap_or_default(),
-                )),
-            };
+        }
 
+        for (name, spec, install, source) in work {
             match install {
                 Install::Direct(dest) => {
                     // Stage + rename: never truncate a binary that is
@@ -251,7 +256,7 @@ impl Task for ArtifactsInstall {
                     if !out.ok() {
                         return Err(miette::miette!(
                             "install {} on {} failed: {}",
-                            entry.name,
+                            name,
                             self.node.name,
                             out.stderr.lines().last().unwrap_or("").trim()
                         ));

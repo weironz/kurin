@@ -21,6 +21,11 @@ All notable changes to kurin. Format follows Keep a Changelog; semver.
   payloads keep their coverage-based validation. Configs below Kubernetes
   1.30 are rejected at load time (the `kube_version_min_required` gate).
 
+### Changed
+- Artifact installs now serialize only the local cache fetch; per-node
+  uploads and installs run concurrently (tier0 3-node artifacts stage:
+  151s -> 78s).
+
 ## 0.5.0 - 2026-10-28
 
 首个包含 Web UI、OCI 包、addon、私有 registry/seed 与 OS 矩阵扩展的发布。
