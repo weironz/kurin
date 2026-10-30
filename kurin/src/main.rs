@@ -1221,6 +1221,7 @@ fn versions(out: OutputOpts) -> Result<()> {
             "kubernetes": {
                 "embedded": kubernetes,
                 "create_online": [kubernetes],
+                "create_online_other": "any supported version (>=1.30) resolved online via dynamic manifest",
                 "create_package": "version pinned by the base package",
                 "upgrade": "current + 1 minor (dynamic manifest; tested 1.33.1 -> 1.34.1)",
                 "k3s_embedded": k3s,
@@ -1230,7 +1231,9 @@ fn versions(out: OutputOpts) -> Result<()> {
     } else {
         println!("kurin {}", env!("CARGO_PKG_VERSION"));
         println!("kubernetes (embedded): {kubernetes}");
-        println!("create online: {kubernetes}");
+        println!(
+            "create online: {kubernetes} (default) or any supported version via dynamic manifest"
+        );
         println!("create with package: version pinned by the base package");
         println!("upgrade: current + 1 minor (dynamic manifest; tested 1.33.1 -> 1.34.1)");
         println!("k3s: {k3s} (embedded)");

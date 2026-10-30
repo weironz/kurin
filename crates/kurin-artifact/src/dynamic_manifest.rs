@@ -56,6 +56,47 @@ pub async fn k8s_manifest_for(
     k8s_manifest_for_from(target, target, arch, zone).await
 }
 
+/// The bundle manifest re-pinned to `target` for every architecture in
+/// `arches`. Used by an online `create cluster`: the control-plane image
+/// list is resolved once with the host's kubeadm (the list is
+/// architecture-independent), while each architecture's binaries get
+/// their own dl.k8s.io `.sha256` pin.
+pub async fn k8s_manifest_for_arches(
+    target: &Version,
+    arches: &[Arch],
+    zone: crate::zone::Zone,
+) -> Result<ArtifactManifest> {
+    if arches.is_empty() {
+        return Err(miette::miette!(
+            "no node architectures to resolve Kubernetes v{target} for"
+        ));
+    }
+    // Resolve images through the host arch: kubeadm is executed locally,
+    // and `config images list` is identical for amd64 and arm64.
+    let host = Arch::host()?;
+    let mut manifest = k8s_manifest_for(target, host, zone).await?;
+    for arch in arches {
+        if *arch != host {
+            add_kubernetes_binary_pins(&mut manifest, target, *arch).await?;
+        }
+    }
+    for arch in arches {
+        let key = format!("linux-{}", arch.as_str());
+        for name in KUBE_BINS {
+            let pinned = manifest
+                .get(name)
+                .and_then(|entry| entry.sha256.get(&key))
+                .is_some();
+            if !pinned {
+                return Err(miette::miette!(
+                    "dynamic manifest for v{target} lacks the {name} pin for {key}"
+                ));
+            }
+        }
+    }
+    Ok(manifest)
+}
+
 /// The bundle manifest re-pinned from `current` to `target`, enforcing
 /// kubeadm's one-minor-at-a-time upgrade policy.
 pub async fn k8s_manifest_for_from(
@@ -126,19 +167,7 @@ async fn pin_kubernetes_binaries(
     arch: Arch,
 ) -> Result<()> {
     for name in KUBE_BINS {
-        let sha_url = format!(
-            "https://dl.k8s.io/release/v{target}/bin/linux/{}/{name}.sha256",
-            arch.as_str()
-        );
-        let resp = fetch_text(&sha_url)
-            .await
-            .map_err(|e| miette::miette!("fetch {sha_url}: {e}"))?;
-        let sha = resp.trim().to_string();
-        if sha.len() != 64 || !sha.chars().all(|c| c.is_ascii_hexdigit()) {
-            return Err(miette::miette!(
-                "sha256 endpoint returned garbage for {name} v{target}: {sha:.80}"
-            ));
-        }
+        let sha = fetch_binary_sha(target, arch, name).await?;
         let entry = manifest
             .artifacts
             .iter_mut()
@@ -146,11 +175,47 @@ async fn pin_kubernetes_binaries(
             .ok_or_else(|| miette::miette!("embedded manifest has no `{name}` entry"))?;
         entry.version = target.to_string();
         entry.sha256.clear();
-        entry
-            .sha256
-            .insert(format!("linux-{}", arch.as_str()), sha.clone());
+        entry.sha256.insert(format!("linux-{}", arch.as_str()), sha);
     }
     Ok(())
+}
+
+/// Add one architecture's binary pins to an already target-pinned
+/// manifest, without clearing the other architectures.
+async fn add_kubernetes_binary_pins(
+    manifest: &mut ArtifactManifest,
+    target: &Version,
+    arch: Arch,
+) -> Result<()> {
+    for name in KUBE_BINS {
+        let sha = fetch_binary_sha(target, arch, name).await?;
+        let entry = manifest
+            .artifacts
+            .iter_mut()
+            .find(|e| e.name == name)
+            .ok_or_else(|| miette::miette!("embedded manifest has no `{name}` entry"))?;
+        entry.version = target.to_string();
+        entry.sha256.insert(format!("linux-{}", arch.as_str()), sha);
+    }
+    Ok(())
+}
+
+/// Fetch and validate one dl.k8s.io `.sha256` pin.
+async fn fetch_binary_sha(target: &Version, arch: Arch, name: &str) -> Result<String> {
+    let sha_url = format!(
+        "https://dl.k8s.io/release/v{target}/bin/linux/{}/{name}.sha256",
+        arch.as_str()
+    );
+    let resp = fetch_text(&sha_url)
+        .await
+        .map_err(|e| miette::miette!("fetch {sha_url}: {e}"))?;
+    let sha = resp.trim().to_string();
+    if sha.len() != 64 || !sha.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(miette::miette!(
+            "sha256 endpoint returned garbage for {name} v{target}: {sha:.80}"
+        ));
+    }
+    Ok(sha)
 }
 
 /// Fetch the target kubeadm from the artifact store (checksum-verified

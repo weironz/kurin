@@ -85,7 +85,7 @@ kurin create cluster -f prod.kurin.toml --set network.pod-cidr=10.244.0.0/16 --c
 | 参数 | 对应配置 |
 |---|---|
 | `--name <N>` | `name`（无 `-f` 时必填） |
-| `--kubernetes <V>` | `kubernetes.version`（前导 `v` 可省略）；在线 create 只接受 embedded 版本（当前 1.33.1），其他版本需 base 包 |
+| `--kubernetes <V>` | `kubernetes.version`（前导 `v` 可省略）；在线 create 默认 1.33.1，其他受支持版本（≥1.30）在线动态解析制品 pin；离线用 base 包 |
 | `--distribution kubeadm\|k3s` | `kubernetes.distribution` |
 | `--runtime containerd\|crio` | `runtime.kind` |
 | `--cni calico\|flannel\|cilium\|kube-ovn\|none` | `network.cni.kind` |
@@ -712,7 +712,8 @@ become-password = "s3cret"     # 该节点的 sudo 需要密码
 - **`--dry-run`（不带 `--check`）保持零网络**：不 SSH，用
   `nodes.<n>.arch`；未配置的节点回退控制机架构，并在 stderr 打印
   `warn: arch not probed for <节点列表>` 提示。`--dry-run --check` 会真连
-  节点探测。
+  节点探测。在线 create 非 embedded 版本需要解析动态 manifest，纯
+  `--dry-run` 会要求改用 `--dry-run --check`（或使用 base 包）。
 - 混合架构集群（如 x86 控制面 + arm64 worker）自动被支持：每个节点拿
   自己架构的 kubeadm/kubelet/kubectl/containerd/CNI 插件与镜像。离线包
   需要覆盖所有涉及的架构：`kurin artifact --arch amd64,arm64 ...`。

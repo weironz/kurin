@@ -1,41 +1,29 @@
 //! `kurin create cluster`: prepare (facts, HA warnings) and plan via the
 //! component registry.
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use kurin_config::{Cluster, ResolvedSecrets};
 use kurin_core::executor::SessionPool;
 use kurin_core::lock::ClusterLockGuard;
-use miette::Result;
+use miette::{IntoDiagnostic, Result};
 
 use crate::output::{OpSession, OutputOpts};
 use crate::{warn, Params, Prepared};
 
-/// Online creates use the build's embedded manifest, which pins exactly one
-/// Kubernetes release. A different version needs a base package (the package
-/// manifest carries its own pins); failing here is better than installing
-/// 1.33.1 binaries under a 1.34.1 kubeadm config.
-fn validate_online_kubernetes_version(
-    spec: &Cluster,
-    payload: &crate::packages::Payload,
-) -> Result<()> {
+/// True when an online create must resolve a dynamic manifest: the
+/// requested version is not the build's embedded pin. The dynamic manifest
+/// re-pins kubeadm/kubelet/kubectl from dl.k8s.io's signed `.sha256`
+/// endpoints and resolves the target control-plane image digests, so one
+/// binary can create any supported Kubernetes version online.
+fn needs_dynamic_manifest(spec: &Cluster, payload: &crate::packages::Payload) -> bool {
     if !matches!(payload, crate::packages::Payload::Online) {
-        return Ok(());
+        return false;
     }
-    let embedded = kurin_artifact::version::KUBERNETES_VERSION;
-    let pinned = semver::Version::parse(embedded).expect("embedded version is semver");
-    if spec.kubernetes_version != pinned {
-        return Err(miette::miette!(
-            "unsupported Kubernetes version {} for an online create: this build's embedded manifest pins {}. \
-             Build a base package with `kurin package create base --kubernetes {}` and pass it via `--package`, \
-             or use {}. Run `kurin versions` for the supported-version matrix.",
-            spec.kubernetes_version,
-            embedded,
-            spec.kubernetes_version,
-            embedded
-        ));
-    }
-    Ok(())
+    let pinned = semver::Version::parse(kurin_artifact::version::KUBERNETES_VERSION)
+        .expect("embedded version is semver");
+    spec.kubernetes_version != pinned
 }
 
 /// Prepare a create run: blackboard (resume-aware), event session, HA
@@ -66,8 +54,43 @@ pub(crate) async fn prepare(
     // artifact sources record the outcome (WP-34). A legacy bundle
     // keeps its behaviour; a base package is opened for validation.
     let payload = crate::packages::resolve_payload(&mut spec).await?;
-    validate_online_kubernetes_version(&spec, &payload)?;
-    let run = crate::run_with_blackboard(&spec, resume, &seed)?;
+    let dynamic = needs_dynamic_manifest(&spec, &payload);
+    if dynamic && dry_run && !check {
+        return Err(miette::miette!(
+            "online create of Kubernetes {} needs network to resolve its artifact pins; \
+             run with `--dry-run --check`, or omit `--dry-run`",
+            spec.kubernetes_version
+        ));
+    }
+
+    // Facts before the run: the dynamic manifest needs every node's arch,
+    // and `--dry-run` (without --check) stays offline with synthetic facts.
+    let facts = if dry_run && !check {
+        kurin_core::facts::FactsTable::synthetic(&spec)?
+    } else {
+        kurin_components::discover::run(&spec, &pool).await?
+    };
+
+    let mut sources = crate::sources_for(&spec)?;
+    if dynamic {
+        let mut arches = BTreeSet::new();
+        for node in &spec.nodes {
+            arches.insert(facts.arch(&node.name)?);
+        }
+        let arches = arches.into_iter().collect::<Vec<_>>();
+        let manifest = kurin_artifact::dynamic_manifest::k8s_manifest_for_arches(
+            &spec.kubernetes_version,
+            &arches,
+            sources.zone,
+        )
+        .await?;
+        sources.manifest_json = Some(
+            serde_json::to_string(&manifest)
+                .into_diagnostic()
+                .map_err(|e| miette::miette!("encode dynamic manifest: {e}"))?,
+        );
+    }
+    let run = crate::run_with_blackboard_sources(&spec, resume, &seed, sources)?;
     let session = OpSession::start(&run, out, seed.cli_output)?;
     session.register_cluster(&spec);
     crate::register_resolved_secrets(&run, &secrets);
@@ -91,31 +114,31 @@ pub(crate) async fn prepare(
         );
     }
 
-    // Facts before the plan: per-node artifact selection is facts-driven.
-    // `--dry-run` stays offline (zero network): synthetic facts come from
-    // `nodes.<n>.arch` or the control machine's arch.
-    let facts = if dry_run && !check {
-        let facts = kurin_core::facts::FactsTable::synthetic(&spec)?;
+    if dynamic {
+        warn(
+            &run,
+            format!(
+                "online create resolves Kubernetes {} via a dynamic manifest",
+                spec.kubernetes_version
+            ),
+        );
+    }
+    if dry_run && !check && spec.nodes.iter().any(|n| n.arch.is_none()) {
         let missing = spec
             .nodes
             .iter()
             .filter(|n| n.arch.is_none())
             .map(|n| n.name.as_str())
             .collect::<Vec<_>>();
-        if !missing.is_empty() {
-            warn(
-                &run,
-                format!(
-                    "warn: arch not probed for {} (dry-run without --check): \
-                     using nodes.<n>.arch or the control machine's arch",
-                    missing.join(", ")
-                ),
-            );
-        }
-        facts
-    } else {
-        kurin_components::discover::run(&spec, &pool).await?
-    };
+        warn(
+            &run,
+            format!(
+                "warn: arch not probed for {} (dry-run without --check): \
+                 using nodes.<n>.arch or the control machine's arch",
+                missing.join(", ")
+            ),
+        );
+    }
     run.set_facts(facts.clone());
     // With the architectures known, the base package must cover the
     // cluster (WP-34 step 3); a mutating run additionally stops at the
@@ -165,30 +188,26 @@ role = "control-plane"
     }
 
     #[test]
-    fn online_create_rejects_a_version_the_embedded_manifest_does_not_pin() {
-        let err = validate_online_kubernetes_version(
+    fn online_create_uses_a_dynamic_manifest_for_a_non_embedded_version() {
+        assert!(needs_dynamic_manifest(
             &cluster("1.34.1"),
-            &crate::packages::Payload::Online,
-        )
-        .expect_err("1.34.1 is not the embedded pin");
-        let text = format!("{err:#}");
-        assert!(text.contains("embedded manifest pins 1.33.1"), "{text}");
-        assert!(
-            text.contains("kurin package create base --kubernetes 1.34.1"),
-            "{text}"
-        );
-        assert!(text.contains("kurin versions"), "{text}");
+            &crate::packages::Payload::Online
+        ));
     }
 
     #[test]
-    fn online_create_accepts_the_embedded_version() {
-        validate_online_kubernetes_version(&cluster("1.33.1"), &crate::packages::Payload::Online)
-            .expect("embedded version");
+    fn online_create_uses_the_embedded_manifest_for_the_pinned_version() {
+        assert!(!needs_dynamic_manifest(
+            &cluster("1.33.1"),
+            &crate::packages::Payload::Online
+        ));
     }
 
     #[test]
-    fn package_and_legacy_payloads_are_validated_by_coverage_not_here() {
-        validate_online_kubernetes_version(&cluster("1.34.1"), &crate::packages::Payload::Legacy)
-            .expect("legacy bundle carries its own pins");
+    fn package_and_legacy_payloads_carry_their_own_pins() {
+        assert!(!needs_dynamic_manifest(
+            &cluster("1.34.1"),
+            &crate::packages::Payload::Legacy
+        ));
     }
 }

@@ -304,12 +304,14 @@ pub(crate) fn ephemeral_run_seeded(cluster: &Cluster, seed: &RunSeed) -> Result<
     ))
 }
 
-/// Run context carrying the cluster's persisted Blackboard: `resume == true`
-/// loads it, `false` starts (and truncates) fresh.
-pub(crate) fn run_with_blackboard(
+/// Run context carrying the cluster's persisted Blackboard, with
+/// caller-resolved artifact sources (an online create resolves a dynamic
+/// manifest before the run context exists).
+pub(crate) fn run_with_blackboard_sources(
     cluster: &Cluster,
     resume: bool,
     seed: &RunSeed,
+    sources: ArtifactSources,
 ) -> Result<Arc<RunContext>> {
     let bb = match kurin_core::blackboard::Blackboard::default_path(&cluster.name) {
         Some(path) => kurin_core::blackboard::Blackboard::open(path, resume)
@@ -317,7 +319,7 @@ pub(crate) fn run_with_blackboard(
         None => kurin_core::blackboard::Blackboard::in_memory(),
     };
     Ok(Arc::new(
-        RunContext::new(seed.op_id.clone(), &cluster.name, sources_for(cluster)?)
+        RunContext::new(seed.op_id.clone(), &cluster.name, sources)
             .with_blackboard(bb)
             .with_events(Arc::clone(&seed.events))
             .with_cancel(seed.cancel.clone()),

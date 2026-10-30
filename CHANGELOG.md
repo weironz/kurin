@@ -2,6 +2,17 @@
 
 All notable changes to kurin. Format follows Keep a Changelog; semver.
 
+## Unreleased
+
+### Added
+- Online `create cluster` now supports any Kubernetes version ≥1.30, not
+  just the embedded pin: the target version's kubeadm/kubelet/kubectl are
+  pinned from dl.k8s.io's signed `.sha256` endpoints and the control-plane
+  image digests are resolved from the registry. Multi-architecture clusters
+  pin each node architecture; `--dry-run` without `--check` still stays
+  offline and asks for `--dry-run --check` when a dynamic manifest is
+  needed. Base packages remain the air-gapped path.
+
 ## 0.5.4 - 2026-10-30
 
 ### Fixed
