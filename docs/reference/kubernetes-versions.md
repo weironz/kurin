@@ -44,7 +44,7 @@ k3s: v1.37.1+k3s1 (embedded)
 
 ## CNI 与版本
 
-Cilium 1.20.4 的官方兼容范围是 Kubernetes **1.31–1.36**；默认 1.37.2 下
+Cilium 1.20.4 的官方兼容范围是 Kubernetes **1.33–1.36**；默认 1.37.2 下
 `--cni cilium` 会在配置校验期明确拒绝。需要 Cilium 时显式用 1.36.x：
 
 ```bash

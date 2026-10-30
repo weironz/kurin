@@ -404,7 +404,7 @@ key-path = "/root/.ssh/master01_key"
 |---|---|---|
 | `calico` | tigera-operator manifest + Installation CR（pinned sha256） | — |
 | `flannel` | 上游 kube-flannel.yml，pod-cidr 自动 patch | — |
-| `cilium` | 固定 Helm chart 1.20.4（`helm upgrade --install`），k8sServiceHost/nativeRoutingCIDR 自动注入；旧 cilium-cli 安装可 `--take-ownership` 接管 | 仅 k8s 发行版；Kubernetes **1.31–1.36**（1.37 需等 Cilium 新版本） |
+| `cilium` | 固定 Helm chart 1.20.4（`helm upgrade --install`），k8sServiceHost/nativeRoutingCIDR 自动注入；旧 cilium-cli 安装可 `--take-ownership` 接管 | 仅 k8s 发行版；Kubernetes **1.33–1.36**（1.37 需等 Cilium 新版本） |
 | `none` | 什么都不装（自带 CNI 的运维方） | — |
 
 zone=cn 时全部镜像引用自动改写为国内 mirror（calico CR registry、flannel manifest、

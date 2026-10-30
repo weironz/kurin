@@ -43,7 +43,7 @@
 | `ha/external` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `cni/calico` | ✅ | ✅ | — | ✅ | ✅ | ✅ |
 | `cni/flannel` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `cni/cilium` | ✅ | ✅ | — | ✅ | ✅ | ✅（K8s 1.31–1.36） |
+| `cni/cilium` | ✅ | ✅ | — | ✅ | ✅ | ✅（K8s 1.33–1.36） |
 | `cni/kube-ovn` | ✅ | ✅ | — | ✅ | ✅ | ✅ |
 | `cni/none` | ✅ | ✅ | ✅ | ✅ | ✅ | — |
 <!-- docs-matrix:end -->

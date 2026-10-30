@@ -163,9 +163,9 @@ impl Component for Cilium {
     fn validate(&self, spec: &Cluster, d: &mut Diagnostics) {
         // Cilium 1.20.4's official matrix is Kubernetes 1.31-1.36; 1.37
         // changed the PartialObjectMetadata watch path it relies on.
-        if !(31..=36).contains(&spec.kubernetes_version.minor) {
+        if !(33..=36).contains(&spec.kubernetes_version.minor) {
             d.error(format!(
-                "Cilium 1.20.4 supports Kubernetes 1.31-1.36; {} is newer. \
+                "Cilium 1.20.4 supports Kubernetes 1.33-1.36; {} is outside that range. \
                  Use `--kubernetes 1.36.6` (or a base package for 1.36.x), \
                  or wait for a Cilium release that supports 1.37.",
                 spec.kubernetes_version
@@ -370,7 +370,7 @@ role = "worker"
         let mut d = Diagnostics::new("");
         Cilium.validate(&c, &mut d);
         let err = d.first_error().expect("1.37 is rejected");
-        assert!(err.to_string().contains("1.31-1.36"), "{err}");
+        assert!(err.to_string().contains("1.33-1.36"), "{err}");
 
         c.kubernetes_version = semver::Version::parse("1.36.6").unwrap();
         let mut d = Diagnostics::new("");
