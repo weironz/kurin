@@ -2,10 +2,10 @@
 #
 # kurin — CLI + embedded web UI in one image.
 #
-#   docker build -t willdockerhub/kurin:0.5.3 .
-#   docker run --rm willdockerhub/kurin:0.5.3 --help
+#   docker build -t willdockerhub/kurin:0.5.4 .
+#   docker run --rm willdockerhub/kurin:0.5.4 --help
 #   docker run --rm -p 127.0.0.1:7080:7080 -v kurin-data:/data \
-#     willdockerhub/kurin:0.5.3 serve --listen 0.0.0.0:7080 --allow-insecure-http
+#     willdockerhub/kurin:0.5.4 serve --listen 0.0.0.0:7080 --allow-insecure-http
 #
 # The web SPA is built in the `web` stage and embedded into the binary by
 # rust-embed (`--features ui`), so the runtime image is a single executable.

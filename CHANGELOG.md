@@ -2,7 +2,7 @@
 
 All notable changes to kurin. Format follows Keep a Changelog; semver.
 
-## Unreleased
+## 0.5.4 - 2026-10-30
 
 ### Fixed
 - CIS kubelet profile no longer sets `serverTLSBootstrap: true`: kurin does

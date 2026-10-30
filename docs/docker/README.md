@@ -3,7 +3,7 @@
 同一个镜像同时提供 CLI 和 Web UI：
 
 ```text
-willdockerhub/kurin:0.5.3
+willdockerhub/kurin:0.5.4
 willdockerhub/kurin:latest
 ```
 
@@ -13,8 +13,8 @@ willdockerhub/kurin:latest
 ## 拉取
 
 ```bash
-docker pull willdockerhub/kurin:0.5.3
-docker run --rm willdockerhub/kurin:0.5.3 --version
+docker pull willdockerhub/kurin:0.5.4
+docker run --rm willdockerhub/kurin:0.5.4 --version
 ```
 
 ## CLI 模式
@@ -22,8 +22,8 @@ docker run --rm willdockerhub/kurin:0.5.3 --version
 ### 查看帮助 / 生成配置
 
 ```bash
-docker run --rm willdockerhub/kurin:0.5.3 --help
-docker run --rm willdockerhub/kurin:0.5.3 create config
+docker run --rm willdockerhub/kurin:0.5.4 --help
+docker run --rm willdockerhub/kurin:0.5.4 create config
 ```
 
 ### 用配置安装集群
@@ -37,7 +37,7 @@ docker run --rm -it \
   -v kurin-cache:/root/.cache/kurin \
   -v kurin-state:/root/.local/state \
   -w /work \
-  willdockerhub/kurin:0.5.3 \
+  willdockerhub/kurin:0.5.4 \
   create cluster -f cluster.toml --dry-run
 ```
 
@@ -54,7 +54,7 @@ docker run --rm -it \
 docker run --rm -it \
   -e KURIN_SSH_PASSWORD \
   -v "$PWD:/work" -w /work \
-  willdockerhub/kurin:0.5.3 \
+  willdockerhub/kurin:0.5.4 \
   create cluster -f cluster.toml
 ```
 
@@ -73,15 +73,15 @@ docker run --rm -it \
 # 预检
 docker run --rm -v "$PWD:/work" -w /work \
   -v "$HOME/.ssh:/root/.ssh:ro" \
-  willdockerhub/kurin:0.5.3 precheck -f cluster.toml
+  willdockerhub/kurin:0.5.4 precheck -f cluster.toml
 
 # 状态
 docker run --rm -v "$PWD:/work" -w /work \
   -v "$HOME/.ssh:/root/.ssh:ro" \
-  willdockerhub/kurin:0.5.3 status -f cluster.toml
+  willdockerhub/kurin:0.5.4 status -f cluster.toml
 
 # 制作离线包（需要公网）
-docker run --rm -v /srv:/srv willdockerhub/kurin:0.5.3 \
+docker run --rm -v /srv:/srv willdockerhub/kurin:0.5.4 \
   package create base --kubernetes 1.33.1 --arch amd64 \
   -o file:///srv/kurin-base.tar.zst
 ```
@@ -94,7 +94,7 @@ docker run --rm -v /srv:/srv willdockerhub/kurin:0.5.3 \
 docker run -d --name kurin \
   -p 127.0.0.1:7080:7080 \
   -v kurin-data:/data \
-  willdockerhub/kurin:0.5.3 \
+  willdockerhub/kurin:0.5.4 \
   serve --listen 0.0.0.0:7080 \
         --allow-insecure-http \
         --public-host localhost:7080
@@ -126,7 +126,7 @@ docker rm -f kurin
 docker run -d --name kurin \
   -p 127.0.0.1:7080:7080 \
   -v kurin-data:/data \
-  willdockerhub/kurin:0.5.3 \
+  willdockerhub/kurin:0.5.4 \
   serve --listen 0.0.0.0:7080 \
         --allow-insecure-http \
         --public-host localhost:7080 \
@@ -143,7 +143,7 @@ docker run -d --name kurin \
   -p 127.0.0.1:7080:7080 \
   -v kurin-data:/data \
   -v /etc/kurin/tls:/tls:ro \
-  willdockerhub/kurin:0.5.3 \
+  willdockerhub/kurin:0.5.4 \
   serve --listen 0.0.0.0:7080 \
         --tls-cert /tls/fullchain.pem \
         --tls-key  /tls/privkey.pem \
@@ -167,7 +167,7 @@ ssh -L 7080:127.0.0.1:7080 user@docker-host
 ```yaml
 services:
   kurin:
-    image: willdockerhub/kurin:0.5.3
+    image: willdockerhub/kurin:0.5.4
     container_name: kurin
     command:
       - serve
@@ -190,15 +190,15 @@ volumes:
 
 ```bash
 # 本地构建（多阶段：Node 构建前端 → Rust 编译 → Debian slim 运行）
-docker build -t willdockerhub/kurin:0.5.3 .
+docker build -t willdockerhub/kurin:0.5.4 .
 
 # 冒烟
-docker run --rm willdockerhub/kurin:0.5.3 --version
-docker run --rm willdockerhub/kurin:0.5.3 create config | head
+docker run --rm willdockerhub/kurin:0.5.4 --version
+docker run --rm willdockerhub/kurin:0.5.4 create config | head
 
 # 推送
-docker tag willdockerhub/kurin:0.5.3 willdockerhub/kurin:latest
-docker push willdockerhub/kurin:0.5.3
+docker tag willdockerhub/kurin:0.5.4 willdockerhub/kurin:latest
+docker push willdockerhub/kurin:0.5.4
 docker push willdockerhub/kurin:latest
 ```
 
@@ -206,7 +206,7 @@ docker push willdockerhub/kurin:latest
 
 ```bash
 docker buildx build --platform linux/amd64,linux/arm64 \
-  -t willdockerhub/kurin:0.5.3 --push .
+  -t willdockerhub/kurin:0.5.4 --push .
 ```
 
 构建依赖：Docker、能访问 crates.io / npm registry / Docker Hub 的网络。
@@ -218,7 +218,7 @@ docker buildx build --platform linux/amd64,linux/arm64 \
 - 不要把 UI 端口直接暴露到公网；优先 SSH 隧道或反向代理 + TLS。
 - 明文 HTTP 会暴露 token 和会话 cookie，只用于受信任的本机/内网。
 - 容器内 CLI 以 root 运行；挂载 SSH 私钥时用只读挂载，并限制容器权限。
-- 生产环境建议固定版本 tag（`0.5.3`），不要用 `latest`。
+- 生产环境建议固定版本 tag（`0.5.4`），不要用 `latest`。
 
 ## 相关
 

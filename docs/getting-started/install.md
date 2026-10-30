@@ -32,7 +32,7 @@ curl -fsSL https://raw.githubusercontent.com/weironz/kurin/main/scripts/install.
 
 | 变量 | 默认 | 说明 |
 |---|---|---|
-| `KURIN_VERSION` | `latest` | 固定版本，例如 `v0.5.3` |
+| `KURIN_VERSION` | `latest` | 固定版本，例如 `v0.5.4` |
 | `KURIN_PREFIX` | `/usr/local/bin` | 安装目录 |
 | `KURIN_REPO` | `weironz/kurin` | release 所在仓库 |
 | `KURIN_BASE_URL` | GitHub Releases | 自定义下载源（镜像/内网） |
