@@ -1,3 +1,13 @@
+## 剩余 e2e 收尾与产品修复（2026-10-30）
+
+- **WP-64 真实 UI**：`web/e2e/addons-real.spec.ts` 在 tier1 通过 Addon 页面安装/卸载 metrics-server，PASS。修复：metrics-server 默认值加 `--kubelet-insecure-tls`，单节点自动加 control-plane 容忍；CIS 档位移除 `serverTLSBootstrap: true`（无 CSR approver 时 kubelet 没有服务证书，metrics-server/`kubectl logs` 全部 500）。
+- **WP-65 真实 UI**：`web/e2e/upgrade-real.spec.ts` 在 tier2 页面升级 1.33.1 → 1.34.1，两节点 Ready，PASS。修复：e2e 节点主机名与节点名对齐（kubeadm upgrade node 用 OS hostname 查 Node，否则 Node authorizer 拒绝）。
+- **WP-71/73 tier2 多控制面**：`just tier2-add-cp` PASS（master2 Ready、2/2 etcd、清理后 1 member），`just tier2-certs`、`just tier2-status` PASS。修复：首控制面补 control-plane label/taint；`delete node` 在删 Node 对象前先移除 etcd member（失败时 Strict 中止）；add-cp 的 role/etcd 断言改用 `--show-labels` 与 `$2=="1/1"`。
+- **WP-72**：`just tier1-k3s-upgrade` 现在自动下载目标 k3s 二进制并构造最小离线 bundle，1.33.1 → 1.33.2 PASS；二遍 InSync PASS。
+- **WP-75**：修复后重跑 CIS：`docs/cis/20261030T044457Z/`，71 pass / 11 fail / 48 warn。
+- **tier3 拓扑**：`up.sh` 默认 3 CP + 2 worker（`TIER3_WORKERS`），`just tier3 && just tier3-test` 5 节点 PASS。
+- **v1.0 门禁**：新增 `crates/kurin-config/tests/historical.rs`（v0.4.0/v0.5.0/v0.5.1 配置解析 + 迁移等价）；新增 `docs/operations/troubleshooting-samples.md`（每类排查输出样本）。
+
 ## 0.5.1/0.5.2、tier3 conformance 与离线变体（2026-10-29）
 
 - **0.5.1**：rich 终端进度、`kurin versions`、Kubernetes 1.30 最低版本门禁、artifact 并发优化、`package create offline`/`--iso` 进入发布。
@@ -7,7 +17,7 @@
 - **e2e 幂等断言**：新 run 会重新 harvest join material（`bootstrap/kubeadm-init` / `bootstrap/k3s-init`）并写入新 op id（`post/state-record`）；各 tier1/tier2/tier3 脚本的二次运行检查排除这三个 refresh 任务，并加 `|| true` 兼容 `pipefail`。
 - **0.5.3**：把 openEuler/Kylin 的 dnf gpgcheck 修复纳入发布；release + Docker `0.5.3`/`latest` 已推送。
 - **CI/文档**：`check.yml` 迁到 GitHub 托管 runner（push/PR），新增 `docs.yml` 用 mdBook 构建并发布 GitHub Pages；`mdbook build` 本地通过，站点已上线 <https://weironz.github.io/kurin/>。
-- **WP-75 阈值**：kube-bench v0.10.7 基线（default 64/15/51，CIS 70/11/49）与建议阈值写入 `docs/cis/README.md`：CIS fail ≤ 11，控制面项新增 fail 阻断；原始报告未归档，正式阈值待重跑确认。
+- **WP-75 阈值**：kube-bench v0.10.7 基线（default 64/15/51，CIS 70/11/49）与建议阈值写入 `docs/cis/README.md`：CIS fail ≤ 11，控制面项新增 fail 阻断；原始报告已归档 `docs/cis/20261030T044457Z/`（71/11/48），正式阈值待维护者确认。
 
 ## 补齐真实 e2e（2026-10-28，第二轮）
 

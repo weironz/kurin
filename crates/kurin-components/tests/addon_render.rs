@@ -606,3 +606,66 @@ fn a_rendered_digest_must_match_the_declared_one() {
         error.summary()
     );
 }
+
+#[test]
+fn embedded_metrics_server_works_on_a_single_control_plane() {
+    // A one-node kubeadm cluster has only the tainted control plane, and
+    // kubelet serves a self-signed certificate: the built-in values must
+    // tolerate the taint and skip kubelet TLS verification, or the addon
+    // never becomes Ready (WP-64 real UI run).
+    let text = r#"version = "v1alpha2"
+name = "single"
+
+[ssh.auth]
+method = "password"
+password = "fake"
+
+[kubernetes]
+version = "1.33.1"
+distribution = "kubeadm"
+
+[network]
+pod-cidr = "10.244.0.0/16"
+service-cidr = "10.96.0.0/12"
+
+[network.cni]
+kind = "calico"
+
+[nodes.cp-1]
+address = "10.0.0.11"
+role = "control-plane"
+
+[addons.metrics-server]
+enabled = true
+"#;
+    let cluster = parse_str(Path::new("cluster.toml"), text).expect("single-node config parses");
+    let user = cluster
+        .addons
+        .get("metrics-server")
+        .expect("addon configured");
+    let catalog = Catalog::embedded().expect("embedded catalog loads");
+    let addon = catalog
+        .addons()
+        .iter()
+        .find(|addon| addon.name() == "metrics-server")
+        .expect("metrics-server is built in");
+    let rendered = addon
+        .render(
+            &RenderRequest::new(&cluster, user).zone("global"),
+            &Redactor::new(),
+        )
+        .expect("metrics-server renders");
+    assert!(
+        rendered.values.yaml.contains("--kubelet-insecure-tls"),
+        "{}",
+        rendered.values.yaml
+    );
+    assert!(
+        rendered
+            .values
+            .yaml
+            .contains("node-role.kubernetes.io/control-plane"),
+        "{}",
+        rendered.values.yaml
+    );
+}

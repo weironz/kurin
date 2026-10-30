@@ -5,3 +5,15 @@
 image:
   repository: k8s.m.daocloud.io/metrics-server/metrics-server
 {% endif %}
+# kubeadm/k3s kubelets serve self-signed certificates; metrics-server must
+# skip verification or its readiness probe fails with HTTP 500.
+args:
+  - --kubelet-insecure-tls
+{% if nodes | length == 1 %}
+# A single-node cluster has only the tainted control plane; without this
+# toleration the Deployment stays Pending.
+tolerations:
+  - key: node-role.kubernetes.io/control-plane
+    operator: Exists
+    effect: NoSchedule
+{% endif %}

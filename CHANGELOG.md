@@ -2,6 +2,27 @@
 
 All notable changes to kurin. Format follows Keep a Changelog; semver.
 
+## Unreleased
+
+### Fixed
+- CIS kubelet profile no longer sets `serverTLSBootstrap: true`: kurin does
+  not run a kubelet-serving CSR approver, so kubelet had no serving
+  certificate and metrics-server / `kubectl logs` / `exec` failed with TLS
+  errors. The kubelet keeps its self-signed serving certificate.
+- The first control-plane node now gets the
+  `node-role.kubernetes.io/control-plane` label and `NoSchedule` taint
+  after `kubeadm init` (kubeadm's mark-control-plane phase was not
+  reflected on the init node), so `kubectl get nodes` and role-aware
+  tooling agree with joined control planes.
+- `delete node` of a kubeadm control-plane member removes its etcd member
+  before deleting the Node object; a failure now aborts the operation
+  instead of warning and wiping the node (2-member etcd lost quorum).
+- metrics-server addon defaults add `--kubelet-insecure-tls` (kubeadm/k3s
+  kubelets use self-signed serving certs) and a control-plane toleration
+  on single-node clusters.
+- Addon inventory rows without a `status` field (older kurin-state
+  records) are shown as installed instead of a blank placeholder.
+
 ## 0.5.3 - 2026-10-29
 
 ### Fixed

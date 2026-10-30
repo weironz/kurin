@@ -59,21 +59,24 @@ const CATEGORY_LABEL_KEYS: Record<string, MessageKey> = {
 
 /** 清单里的 status → Tag（未知/缺失显示中性占位，不崩溃）。 */
 function statusTag(row: InstalledAddonRow) {
-  if (row.status === 'installed') {
+  // A row only exists because kurin-state recorded a successful install;
+  // older records carry no `status` field, so presence means installed.
+  const status = row.status ?? 'installed';
+  if (status === 'installed') {
     return (
       <Tag color="green" data-testid={`addons-status-${row.name}`}>
         {t('addons.status.installed')}
       </Tag>
     );
   }
-  if (row.status === 'failed') {
+  if (status === 'failed') {
     return (
       <Tag color="red" data-testid={`addons-status-${row.name}`}>
         {t('addons.status.failed')}
       </Tag>
     );
   }
-  return row.status ? <Tag>{row.status}</Tag> : <span>—</span>;
+  return status ? <Tag>{status}</Tag> : <span>—</span>;
 }
 
 /** 兼容性徽标：已安装 / 已装旧版（可升级）。 */

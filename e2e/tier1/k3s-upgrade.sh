@@ -14,7 +14,12 @@ NAME=kurin-tier1
 K3KC="sudo k3s kubectl"
 K3S_BIN="/usr/local/bin/k3s"
 EVENTS=$(mktemp) TMPCFG=$(mktemp --suffix=.toml)
-trap 'rm -f "$EVENTS" "$TMPCFG"' EXIT
+BUNDLE=
+cleanup() {
+    rm -f "$EVENTS" "$TMPCFG"
+    [ -n "$BUNDLE" ] && rm -rf "$BUNDLE"
+}
+trap cleanup EXIT
 
 # Prerequisite: a running k3s tier-1 cluster.
 if ! multipass info "$NAME" >/dev/null 2>&1; then
@@ -40,7 +45,7 @@ grep -q '^kind = "flannel"$' "$TMPCFG" || { echo "[FAIL] cni injection failed"; 
 CLUSTER=$(awk -F'"' '/^name = /{print $2}' "$TMPCFG")
 rm -rf "$HOME/.cache/kurin/clusters/$CLUSTER" "$HOME/.cache/kurin/runs/$CLUSTER.json"
 
-CURRENT=$(multipass exec "$NAME" -- sh -c "$K3S_BIN --version" 2>/dev/null | awk '{print $3}' | sed 's/^v//')
+CURRENT=$(multipass exec "$NAME" -- sh -c "$K3S_BIN --version" 2>/dev/null | awk 'NR==1{print $3}' | sed 's/^v//')
 [ -n "$CURRENT" ] || { echo "[FAIL] cannot read current k3s version"; exit 1; }
 echo "[tier1-k3s-upgrade] current k3s: v$CURRENT"
 
@@ -54,13 +59,47 @@ if [ -z "$TARGET" ]; then
 fi
 echo "[tier1-k3s-upgrade] target: v$TARGET"
 
-echo "[tier1-k3s-upgrade] kurin upgrade --with-kubernetes"
-if "$BIN" upgrade -f "$TMPCFG" --with-kubernetes "$TARGET" --json > "$EVENTS" 2> >(tee /tmp/kurin-tier1-k3s-upgrade-err.log >&2); then
+# k3s has no signed version endpoint, so the upgrade path is an offline
+# bundle carrying the target binary and its sha256 (WP-72). Build one
+# from the upstream release unless the caller supplied a prebuilt bundle.
+BUNDLE=${K3S_UPGRADE_BUNDLE:-}
+if [ -z "$BUNDLE" ]; then
+    BUNDLE=$(mktemp -d /tmp/kurin-k3s-upgrade.XXXXXX)
+    ARCH=$(multipass exec "$NAME" -- uname -m 2>/dev/null | tr -d '\r')
+    case "$ARCH" in
+        x86_64|amd64) ARCH=amd64; ASSET_ARCH= ;;
+        aarch64|arm64) ARCH=arm64; ASSET_ARCH=-arm64 ;;
+        *) echo "[FAIL] unsupported node arch: $ARCH"; exit 1 ;;
+    esac
+    DIR="$BUNDLE/k3s-$TARGET-$ARCH"
+    mkdir -p "$DIR"
+    URL="https://github.com/k3s-io/k3s/releases/download/v$TARGET/k3s$ASSET_ARCH"
+    echo "[tier1-k3s-upgrade] downloading $URL"
+    curl -fsSL --retry 3 -o "$DIR/k3s" "$URL" \
+        || { echo "[FAIL] cannot download k3s $TARGET"; exit 1; }
+    SHA=$(sha256sum "$DIR/k3s" | awk '{print $1}')
+    printf '%s\n' "$SHA" > "$DIR/k3s.sha256"
+    cat > "$BUNDLE/kurin-manifest.json" <<JSON
+{
+  "version": 1,
+  "artifacts": [
+    {
+      "name": "k3s",
+      "kind": "binary",
+      "version": "$TARGET",
+      "file": "k3s",
+      "url_template": "$URL",
+      "sha256": { "linux-$ARCH": "$SHA" }
+    }
+  ]
+}
+JSON
+    echo "[tier1-k3s-upgrade] bundle: $BUNDLE"
+fi
+
+echo "[tier1-k3s-upgrade] kurin upgrade --with-kubernetes --offline"
+if "$BIN" upgrade -f "$TMPCFG" --with-kubernetes "$TARGET" --offline "$BUNDLE" --json > "$EVENTS" 2> >(tee /tmp/kurin-tier1-k3s-upgrade-err.log >&2); then
     :
-elif grep -q "not pinned by the artifact manifest" "$EVENTS" /tmp/kurin-tier1-k3s-upgrade-err.log 2>/dev/null; then
-    echo "[FAIL] target v$TARGET is not pinned by the artifact manifest;"
-    echo "       build an offline bundle that carries it and re-run with --offline <dir>"
-    exit 1
 else
     echo "[FAIL] upgrade exited nonzero:"; tail -20 "$EVENTS"; exit 1
 fi
@@ -70,7 +109,7 @@ echo "[ok] upgrade completed, no task failures"
 
 echo "[tier1-k3s-upgrade] k3s --version on the node"
 for i in $(seq 1 12); do
-    VER=$(multipass exec "$NAME" -- sh -c "$K3S_BIN --version" 2>/dev/null | awk '{print $3}' | sed 's/^v//' || true)
+    VER=$(multipass exec "$NAME" -- sh -c "$K3S_BIN --version" 2>/dev/null | awk 'NR==1{print $3}' | sed 's/^v//' || true)
     [ "$VER" = "$TARGET" ] && break
     sleep 5
 done

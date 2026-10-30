@@ -13,7 +13,7 @@ versions 表一致：**默认 pin 一个版本，其他版本必须由制品清�
 | `add nodes` | 集群当前版本 | 动态 manifest 按集群版本重新 pin |
 | `upgrade` | 当前版本 + 1 个 minor | 动态 manifest；已验证 1.33.1 → 1.34.1 |
 | k3s（embedded） | `v1.33.1+k3s1` | k3s 包/离线 bundle 可携带其他 release |
-| k3s 升级 | `v1.34.1+k3s1` | 已验证 1.33.1 → 1.34.1（离线 bundle） |
+| k3s 升级 | `v1.34.1+k3s1` | 已验证 1.33.1 → 1.33.2（`just tier1-k3s-upgrade` 自动构造离线 bundle）与 1.33.1 → 1.34.1（手工 bundle） |
 
 支持策略：Kubernetes **≥ 1.30**；低于 1.30 的配置在加载期直接拒绝
 （对应 KubeKey 的 `kube_version_min_required`）。跨 minor 升级一次只允许

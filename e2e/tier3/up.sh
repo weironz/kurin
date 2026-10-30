@@ -5,7 +5,11 @@ set -euo pipefail
 
 PREFIX=kurin-tier3
 KEYS=e2e/tier3/.keys
+# Conformance needs >=2 untainted workers; override with TIER3_WORKERS=0
+# for the control-plane-only HA smoke.
+WORKERS=${TIER3_WORKERS:-2}
 NODES="master01 master02 master03"
+for i in $(seq 1 "$WORKERS"); do NODES="$NODES worker0$i"; done
 mkdir -p "$KEYS"
 
 if [ ! -f "$KEYS/id_ed25519" ]; then
@@ -22,8 +26,11 @@ launch() { # name cpu mem -> ip on stdout
     multipass info "$name" --format yaml | awk '/^    ipv4:/{getline; print $2; exit}'
 }
 
-setup_root() { # name ip
-    local name=$1
+setup_root() { # name ip node-name
+    local name=$1 node_name=$3
+    # kubeadm upgrade node resolves the Node object by OS hostname; keep it
+    # equal to the configured node name (kubelet uses --hostname-override).
+    multipass exec "$name" -- sudo hostnamectl set-hostname "$node_name"
     multipass exec "$name" -- sudo mkdir -p /root/.ssh
     multipass exec "$name" -- sudo bash -c "echo '$PUB' > /root/.ssh/authorized_keys && chmod 700 /root/.ssh && chmod 600 /root/.ssh/authorized_keys"
     multipass exec "$name" -- sudo bash -c "grep -q '^PermitRootLogin' /etc/ssh/sshd_config && sed -i 's/^PermitRootLogin.*/PermitRootLogin prohibit-password/' /etc/ssh/sshd_config || echo 'PermitRootLogin prohibit-password' >> /etc/ssh/sshd_config; systemctl restart ssh"
@@ -33,7 +40,7 @@ setup_root() { # name ip
 ips=""
 for n in $NODES; do
     ip=$(launch "$PREFIX-$n" 2 1800M)
-    setup_root "$PREFIX-$n" "$ip"
+    setup_root "$PREFIX-$n" "$ip" "$n"
     ips="$ips $ip"
 done
 set -- $ips
@@ -41,11 +48,11 @@ IP1=$1 IP2=$2 IP3=$3
 VIP="$(echo "$IP1" | cut -d. -f1-3).99"
 
 KH=~/.cache/kurin/known_hosts
-for ip in $IP1 $IP2 $IP3 $VIP; do
+for ip in $ips $VIP; do
     ssh-keygen -R "$ip" -f "$KH" >/dev/null 2>&1 || true
 done
 
-cat > e2e/tier3/config.toml <<EOF
+cat > e2e/tier3/config.toml <<CFGEOF
 version = "v1alpha1"
 name = "tier3"
 
@@ -81,7 +88,21 @@ role = "control-plane"
 address = "$IP3"
 internal-address = "$IP3"
 role = "control-plane"
-EOF
+CFGEOF
+
+# Workers follow the masters in the same order as the launch loop.
+set -- $ips
+shift 3
+for i in $(seq 1 "$WORKERS"); do
+    ip=$1; shift
+    cat >> e2e/tier3/config.toml <<CFGEOF
+
+[nodes.worker0$i]
+address = "$ip"
+internal-address = "$ip"
+role = "worker"
+CFGEOF
+done
 
 rm -rf ~/.cache/kurin/clusters/tier3 ~/.cache/kurin/runs/tier3.json
-echo "[tier3] wrote e2e/tier3/config.toml (vip=$VIP)"
+echo "[tier3] wrote e2e/tier3/config.toml (vip=$VIP, workers=$WORKERS)"

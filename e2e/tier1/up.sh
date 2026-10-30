@@ -21,6 +21,9 @@ IP=$(multipass info "$NAME" --format yaml | awk '/^    ipv4:/{getline; print $2;
 [ -n "$IP" ] || { echo "[tier1] no ipv4 found" >&2; exit 1; }
 
 echo "[tier1] $NAME at $IP; enabling root key auth"
+# kubeadm upgrade node resolves the Node object by OS hostname; keep it
+# equal to the configured node name (kubelet uses --hostname-override).
+multipass exec "$NAME" -- sudo hostnamectl set-hostname node01
 # VM rebuilds keep recycled IPs: purge the stale host key so kurin's TOFU
 # store doesn't reject the new VM.
 ssh-keygen -R "$IP" -f ~/.cache/kurin/known_hosts >/dev/null 2>&1 || true

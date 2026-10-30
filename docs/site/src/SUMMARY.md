@@ -41,6 +41,7 @@
 
 - [运维索引](operations/README.md)
 - [故障排查](operations/troubleshooting.md)
+- [排查输出样本](operations/troubleshooting-samples.md)
 - [安全](operations/security.md)
 - [一致性测试](operations/conformance.md)
 - [CIS 基线](cis/README.md)

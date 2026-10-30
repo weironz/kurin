@@ -25,15 +25,18 @@ launch() { # name cpu mem
 ip_master=$(launch "$PREFIX-master" 2 3G)
 ip_worker=$(launch "$PREFIX-worker" 1 2G)
 
-setup_root() { # name ip
-    local name=$1
+setup_root() { # name ip node-name
+    local name=$1 node_name=$3
+    # kubeadm upgrade node resolves the Node object by OS hostname; keep it
+    # equal to the configured node name (kubelet uses --hostname-override).
+    multipass exec "$name" -- sudo hostnamectl set-hostname "$node_name"
     multipass exec "$name" -- sudo mkdir -p /root/.ssh
     multipass exec "$name" -- sudo bash -c "echo '$PUB' > /root/.ssh/authorized_keys && chmod 700 /root/.ssh && chmod 600 /root/.ssh/authorized_keys"
     multipass exec "$name" -- sudo bash -c "grep -q '^PermitRootLogin' /etc/ssh/sshd_config && sed -i 's/^PermitRootLogin.*/PermitRootLogin prohibit-password/' /etc/ssh/sshd_config || echo 'PermitRootLogin prohibit-password' >> /etc/ssh/sshd_config; systemctl restart ssh"
     echo "[tier2] $name ready at $2"
 }
-setup_root "$PREFIX-master" "$ip_master"
-setup_root "$PREFIX-worker" "$ip_worker"
+setup_root "$PREFIX-master" "$ip_master" master01
+setup_root "$PREFIX-worker" "$ip_worker" worker01
 
 # Purge stale host keys for recycled IPs (VM rebuilds).
 KH=~/.cache/kurin/known_hosts

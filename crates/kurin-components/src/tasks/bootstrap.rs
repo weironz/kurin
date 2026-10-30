@@ -258,8 +258,13 @@ impl KubeadmInit {
             .exec(&format!(
                 "kubeadm init phase upload-config all --config {0} && \
                  kubeadm init phase bootstrap-token --config {0} && \
-                 kubeadm init phase addon all --config {0}",
-                Self::config_path()
+                 kubeadm init phase addon all --config {0} && \
+                 kubectl --kubeconfig /etc/kubernetes/admin.conf label node {1} \
+                   node-role.kubernetes.io/control-plane= --overwrite && \
+                 kubectl --kubeconfig /etc/kubernetes/admin.conf taint node {1} \
+                   node-role.kubernetes.io/control-plane:NoSchedule --overwrite",
+                Self::config_path(),
+                self.node_name
             ))
             .await?;
         if out.ok() {
@@ -702,6 +707,13 @@ mod tests {
         ] {
             assert!(t.rendered.contains(present), "cis render lacks {present}");
         }
+        // serverTLSBootstrap requires a kubelet-serving CSR approver; kurin
+        // does not run one, so enabling it leaves kubelet without a serving
+        // certificate (metrics-server / kubectl logs / exec all break).
+        assert!(
+            !t.rendered.contains("serverTLSBootstrap"),
+            "cis kubelet config must keep the self-signed serving cert"
+        );
         assert!(t.cis);
     }
 

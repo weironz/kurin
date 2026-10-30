@@ -27,11 +27,26 @@ echo "[ok] base cluster healthy"
 
 cleanup() {
     echo "[add-cp] cleanup: remove node, purge VM, roll back config"
+    local deleted=0
     if grep -q "^\[nodes\.$NODE\]" "$CFG"; then
-        "$BIN" delete node "$NODE" -f "$CFG" >/dev/null 2>&1 || true
+        # delete node removes the etcd member before the node object, so a
+        # 2-member etcd keeps quorum. If it fails, keep the VM and config
+        # for diagnosis instead of purging the only remaining member.
+        if "$BIN" delete node "$NODE" -f "$CFG" >/tmp/add-cp-delete.log 2>&1; then
+            deleted=1
+        else
+            echo "[add-cp] delete node failed; keeping $PREFIX-$NODE and $CFG"
+            tail -20 /tmp/add-cp-delete.log || true
+        fi
+    else
+        deleted=1
     fi
-    multipass delete --purge "$PREFIX-$NODE" >/dev/null 2>&1 || true
-    git checkout -- e2e/tier2/config.toml 2>/dev/null || true
+    if [ "$deleted" = 1 ]; then
+        multipass delete --purge "$PREFIX-$NODE" >/dev/null 2>&1 || true
+        # config.toml is generated and untracked; regenerate it from the
+        # live VMs instead of relying on git checkout.
+        e2e/tier2/up.sh >/dev/null 2>&1 || true
+    fi
     rm -f "$EVENTS"
 }
 trap cleanup EXIT
@@ -74,7 +89,9 @@ echo "[ok] join/kubeadm@$NODE done, 0 task failures"
 echo "[add-cp] waiting for $NODE Ready with control-plane role"
 for i in $(seq 1 30); do
     READY=$(multipass exec "$M" -- sh -c "$KC get node $NODE -o jsonpath='{.status.conditions[?(@.type==\"Ready\")].status}'" 2>/dev/null || true)
-    ROLE=$(multipass exec "$M" -- sh -c "$KC get node $NODE -o jsonpath='{.metadata.labels.node-role\.kubernetes\.io/control-plane}'" 2>/dev/null || true)
+    # The label value is the empty string, so jsonpath prints nothing even
+    # when the label exists; grep --show-labels instead.
+    ROLE=$(multipass exec "$M" -- sh -c "$KC get node $NODE --show-labels --no-headers" 2>/dev/null | grep -o 'node-role.kubernetes.io/control-plane' || true)
     [ "$READY" = "True" ] && [ -n "$ROLE" ] && break
     sleep 10
 done
@@ -84,7 +101,8 @@ echo "[ok] $NODE Ready, role=control-plane (~$((i*10))s)"
 
 echo "[add-cp] waiting for 2 Ready etcd members"
 for i in $(seq 1 30); do
-    ETCD=$(multipass exec "$M" -- sh -c "$KC -n kube-system get pods -l component=etcd --no-headers" 2>/dev/null | awk '$2 ~ /^([0-9]+)\/\1$/ {n++} END {print n+0}')
+    # POSIX awk has no backreferences; compare the ready pair directly.
+    ETCD=$(multipass exec "$M" -- sh -c "$KC -n kube-system get pods -l component=etcd --no-headers" 2>/dev/null | awk '$2 == "1/1" {n++} END {print n+0}')
     [ "$ETCD" -eq 2 ] && break
     sleep 10
 done

@@ -9,6 +9,7 @@ kurin logs --last --level debug
 ```
 
 `-vv` 会把远端 stdout/stderr 流到终端；`--json=v2` 适合喂给脚本。
+每类现象对应的实际输出样本见 [输出样本](troubleshooting-samples.md)。
 
 ## precheck 检查项
 
@@ -50,6 +51,7 @@ kurin logs --last --level debug
 |---|---|
 | 升级卡在 drain | 检查 PDB、裸 Pod、本地存储；必要时 `--force-drain-failure`（不安全） |
 | 升级后版本没变 | 确认目标版本与制品来源；k3s 在线升级要求清单 pin 目标 release |
+| `kubeadm upgrade node` 报 `nodes "..." is forbidden ... only its own Node object` | 节点名与主机名不一致：kubeadm 用 OS hostname 查 Node，而 kubelet 证书属于配置里的节点名 | 让主机名等于节点名（`hostnamectl set-hostname <node>`；e2e 的 `up.sh` 已这样做），或在安装前统一命名 |
 | 证书快过期 | `kurin certs check`；`kurin certs renew`；长期用 `certs schedule` |
 | etcd 恢复后 Pod 异常 | 等控制面重新选主；检查 `/healthz/etcd` 与 `/readyz`；旧数据在 `…-pre-restore-<ts>` |
 

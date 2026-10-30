@@ -22,6 +22,10 @@ enabled = true
 values = { replicas = 2 }
 ```
 
+单节点集群会自动加 control-plane 容忍；kubeadm/k3s 的 kubelet 自签证书
+默认用 `--kubelet-insecure-tls` 跳过校验（否则 metrics-server 就绪探针
+返回 500）。
+
 ## 就绪 / readiness
 
 `Deployment/metrics-server` 可用，且 hook 等待

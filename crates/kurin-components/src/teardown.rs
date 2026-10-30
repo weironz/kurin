@@ -437,7 +437,14 @@ impl Task for DeleteNodeObject {
     }
 
     fn failure_policy(&self) -> FailurePolicy {
-        FailurePolicy::BestEffort
+        // Deleting a control-plane node without removing its etcd member
+        // can cost the cluster quorum; fail the operation instead of
+        // warning and wiping the node. Workers stay best-effort.
+        if self.removes_etcd_member() {
+            FailurePolicy::Strict
+        } else {
+            FailurePolicy::BestEffort
+        }
     }
 
     async fn check(&self, session: &dyn Session) -> Result<Drift> {
@@ -468,9 +475,59 @@ impl Task for DeleteNodeObject {
     }
 
     async fn apply(&self, session: &dyn Session) -> Result<Outcome> {
+        // A kubeadm control-plane member owns an etcd member. Remove it
+        // *before* dropping the node object: leaving a stale member behind
+        // costs quorum on a 2-member cluster (delete node would take the
+        // surviving apiserver down with it). If removal fails, keep the
+        // node object so the operator can retry while the member is still
+        // reachable.
+        if self.removes_etcd_member() {
+            let script = etcd_member_remove_script(&self.anchor, &self.target);
+            let out = session.exec(&script).await?;
+            if !out.ok() {
+                return Err(miette::miette!(
+                    "remove etcd member {} via {} failed: {}",
+                    self.target,
+                    self.anchor,
+                    first_line(&format!("{}{}", out.stdout, out.stderr))
+                ));
+            }
+        }
         let script = format!("{} delete node {}", kubectl_cmd(&self.cluster), self.target);
         run_step(session, &self.target, "delete node", script, Detail::Stderr).await
     }
+}
+
+impl DeleteNodeObject {
+    /// True when `target` is a kubeadm control-plane member and another
+    /// control plane can perform the removal.
+    fn removes_etcd_member(&self) -> bool {
+        self.cluster.distribution == Distribution::K8s
+            && self.cluster.control_plane().count() > 1
+            && self
+                .cluster
+                .nodes
+                .iter()
+                .any(|n| n.name == self.target && n.role == kurin_config::NodeRole::ControlPlane)
+    }
+}
+
+/// Remove `target`'s etcd member through `anchor`'s etcd static pod.
+/// `etcdctl member remove` is a no-op when the member is already gone.
+fn etcd_member_remove_script(anchor: &str, target: &str) -> String {
+    let etcdctl = format!(
+        "kubectl --kubeconfig /etc/kubernetes/admin.conf -n kube-system \
+         exec etcd-{anchor} -- etcdctl --endpoints=https://127.0.0.1:2379 \
+         --cacert=/etc/kubernetes/pki/etcd/ca.crt \
+         --cert=/etc/kubernetes/pki/etcd/server.crt \
+         --key=/etc/kubernetes/pki/etcd/server.key"
+    );
+    format!(
+        "set -e\n\
+         members=$({etcdctl} member list)\n\
+         id=$(printf '%s\\n' \"$members\" | awk -F', ' '$3==\"{target}\" {{print $1}}')\n\
+         if [ -n \"$id\" ]; then {etcdctl} member remove \"$id\"; fi"
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -1442,6 +1499,7 @@ mod tests {
             wipe_probe(&cluster),
             stop_services_probe(&cluster),
             stop_services_cmd(&cluster),
+            etcd_member_remove_script("cp1", "cp2"),
         ];
         for script in scripts {
             let status = std::process::Command::new("sh")
@@ -1452,6 +1510,36 @@ mod tests {
                 .expect("run sh -n");
             assert!(status.success(), "invalid shell script:\n{script}");
         }
+    }
+
+    #[test]
+    fn control_plane_delete_removes_the_etcd_member() {
+        let mut cluster = cluster(Distribution::K8s, RuntimeKind::Containerd);
+        cluster.nodes.push(node("cp2", NodeRole::ControlPlane));
+        let target = cluster.nodes.iter().find(|n| n.name == "cp2").unwrap();
+        let task = DeleteNodeObject::new(&cluster, target, "cp1");
+        assert!(task.removes_etcd_member());
+
+        let script = etcd_member_remove_script("cp1", "cp2");
+        assert!(script.contains("etcd-cp1"), "{script}");
+        assert!(script.contains("member list"), "{script}");
+        assert!(script.contains("member remove"), "{script}");
+        assert!(script.contains("$3==\"cp2\""), "{script}");
+        // etcd member list is `id, started, NAME, peer, client, learner`;
+        // the name is the bare third field, not `name=...`.
+        let line = "abc123, started, cp2, https://10.0.0.12:2380, https://10.0.0.12:2379, false";
+        let id = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(format!(
+                "printf '%s\\n' '{line}' | awk -F', ' '$3==\"cp2\" {{print $1}}'"
+            ))
+            .output()
+            .expect("run awk");
+        assert_eq!(String::from_utf8_lossy(&id.stdout).trim(), "abc123");
+
+        // Workers own no etcd member.
+        let worker = cluster.nodes.iter().find(|n| n.name == "w1").unwrap();
+        assert!(!DeleteNodeObject::new(&cluster, worker, "cp1").removes_etcd_member());
     }
 
     #[tokio::test]

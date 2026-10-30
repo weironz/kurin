@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# tier-3 assertions: 3 CP nodes Ready, kube-vip leases the VIP, VIP-backed
-# API serves, all CP members joined, second run fully skipped.
+# tier-3 assertions: 3 CP + N workers Ready, kube-vip leases the VIP,
+# VIP-backed API serves, all members joined, second run fully skipped.
 set -euo pipefail
 
 BIN=${1:-target/tier3/debug/kurin}
@@ -8,6 +8,8 @@ CFG=${2:-e2e/tier3/config.toml}
 M=kurin-tier3-master01
 KC="sudo /usr/local/bin/kubectl --kubeconfig /etc/kubernetes/admin.conf"
 VIP=$(awk -F'"' '/^vip = /{print $2}' "$CFG")
+WORKERS=$(grep -c '^role = "worker"' "$CFG" || true)
+EXPECTED=$((3 + WORKERS))
 EVENTS1=$(mktemp) EVENTS2=$(mktemp)
 trap 'rm -f "$EVENTS1" "$EVENTS2"' EXIT
 
@@ -19,17 +21,19 @@ fails=$(grep -c '"task-failed"' "$EVENTS1" || true)
 [ "$fails" -eq 0 ] || { echo "[FAIL] $fails task failures"; grep task-failed "$EVENTS1"; exit 1; }
 cp_joins=$(grep -c '"id":"join/kubeadm@master0[23]"' "$EVENTS1" || true)
 [ "$cp_joins" -ge 2 ] || { echo "[FAIL] control-plane joins missing ($cp_joins)"; exit 1; }
-echo "[ok] pass 1: cluster-ready, 2 CP joins"
+worker_joins=$(grep -c '"id":"join/kubeadm@worker0[0-9]"' "$EVENTS1" || true)
+[ "$worker_joins" -ge "$WORKERS" ] || { echo "[FAIL] worker joins missing ($worker_joins/$WORKERS)"; exit 1; }
+echo "[ok] pass 1: cluster-ready, 2 CP joins, $worker_joins worker joins"
 
-echo "[tier3] waiting for 3 control-plane nodes Ready"
+echo "[tier3] waiting for $EXPECTED nodes Ready (3 CP + $WORKERS workers)"
 for i in $(seq 1 40); do
     READY=$(multipass exec "$M" -- sh -c "$KC get nodes -o jsonpath='{range .items[*]}{.metadata.name}={.status.conditions[?(@.type==\"Ready\")].status}{\" \"}{end}'" 2>/dev/null | xargs || true)
     count_ready=$(echo "$READY" | tr ' ' '\n' | grep -c '=True' || true)
-    [ "$count_ready" -eq 3 ] && break
+    [ "$count_ready" -eq "$EXPECTED" ] && break
     sleep 10
 done
-[ "${count_ready:-0}" -eq 3 ] || { echo "[FAIL] nodes not all Ready: $READY"; exit 1; }
-echo "[ok] 3 nodes Ready (~$((i*10))s): $READY"
+[ "${count_ready:-0}" -eq "$EXPECTED" ] || { echo "[FAIL] nodes not all Ready ($count_ready/$EXPECTED): $READY"; exit 1; }
+echo "[ok] $EXPECTED nodes Ready (~$((i*10))s): $READY"
 
 echo "[tier3] checking API via VIP $VIP"
 for i in $(seq 1 30); do

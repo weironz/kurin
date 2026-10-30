@@ -9,7 +9,7 @@ CFG=${2:-e2e/tier1/config.toml}
 NAME=kurin-tier1
 K3KC="sudo k3s kubectl"
 EVENTS=$(mktemp) TMPCFG=$(mktemp --suffix=.toml)
-trap 'rm -f "$EVENTS" "$TMPCFG"; e2e/tier1/down.sh' EXIT
+trap 'rm -f "$EVENTS" "$TMPCFG"' EXIT
 
 echo "[tier1-k3s] booting VM via tier1 up.sh"
 e2e/tier1/up.sh
