@@ -28,12 +28,13 @@ echo "[ok] pass 1: cluster-ready, no failures ($skips pre-converged skips)"
 
 echo "[tier1] checking node state (CNI may still be starting)"
 READY=""
-for i in $(seq 1 30); do
+# CNI images can be slow to pull on a fresh VM (quay.io); allow 10 min.
+for i in $(seq 1 60); do
     READY=$(multipass exec "$NAME" -- sudo /usr/local/bin/kubectl --kubeconfig /etc/kubernetes/admin.conf get node node01 -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || true)
     [ "$READY" = "True" ] && break
     sleep 10
 done
-[ "$READY" = "True" ] || { echo "[FAIL] node01 Ready=$READY (after 300s)"; exit 1; }
+[ "$READY" = "True" ] || { echo "[FAIL] node01 Ready=$READY (after 600s)"; exit 1; }
 echo "[ok] node01 Ready (~$((i*10))s)"
 
 NODE_JSON=$(multipass exec "$NAME" -- sudo /usr/local/bin/kubectl --kubeconfig /etc/kubernetes/admin.conf get node node01 -o json)
@@ -47,13 +48,13 @@ esac
 echo "[ok] podCIDR $POD_CIDR (slice of cluster 10.233.64.0/18)"
 
 echo "[tier1] waiting for calico pods"
-for i in $(seq 1 40); do
+for i in $(seq 1 60); do
     BAD=$(multipass exec "$NAME" -- sudo /usr/local/bin/kubectl --kubeconfig /etc/kubernetes/admin.conf get pods -A --no-headers 2>/dev/null | awk '$4 !~ /^(Running|Succeeded|Completed)$/ {print $1"/"$2" "$4}')
     if [ -z "$BAD" ]; then
         echo "[ok] all pods healthy after ~$((i*10))s"
         break
     fi
-    [ "$i" = "40" ] && { echo "[FAIL] pods not healthy after 400s:"; echo "$BAD"; exit 1; }
+    [ "$i" = "60" ] && { echo "[FAIL] pods not healthy after 600s:"; echo "$BAD"; exit 1; }
     sleep 10
 done
 
