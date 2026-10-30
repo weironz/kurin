@@ -260,7 +260,8 @@ impl KubeadmInit {
                  kubeadm init phase bootstrap-token --config {0} && \
                  kubeadm init phase addon all --config {0} && \
                  kubectl --kubeconfig /etc/kubernetes/admin.conf label node {1} \
-                   node-role.kubernetes.io/control-plane= --overwrite && \
+                   node-role.kubernetes.io/control-plane= \
+                   node.kubernetes.io/exclude-from-external-load-balancers= --overwrite && \
                  kubectl --kubeconfig /etc/kubernetes/admin.conf taint node {1} \
                    node-role.kubernetes.io/control-plane:NoSchedule --overwrite",
                 Self::config_path(),

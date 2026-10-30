@@ -10,7 +10,7 @@ expression: report
 
     for i in $(seq 1 60); do kubectl --kubeconfig /etc/kubernetes/admin.conf --server https://192.168.10.11:6443 get --raw /readyz >/dev/null 2>&1 && exit 0; sleep 2; done; echo 'API at 192.168.10.11:6443 never became ready' >&2; exit 1
 
-    kubeadm init phase upload-config all --config /etc/kurin/kubeadm-init.yaml && kubeadm init phase bootstrap-token --config /etc/kurin/kubeadm-init.yaml && kubeadm init phase addon all --config /etc/kurin/kubeadm-init.yaml && kubectl --kubeconfig /etc/kubernetes/admin.conf label node master01 node-role.kubernetes.io/control-plane= --overwrite && kubectl --kubeconfig /etc/kubernetes/admin.conf taint node master01 node-role.kubernetes.io/control-plane:NoSchedule --overwrite
+    kubeadm init phase upload-config all --config /etc/kurin/kubeadm-init.yaml && kubeadm init phase bootstrap-token --config /etc/kurin/kubeadm-init.yaml && kubeadm init phase addon all --config /etc/kurin/kubeadm-init.yaml && kubectl --kubeconfig /etc/kubernetes/admin.conf label node master01 node-role.kubernetes.io/control-plane= node.kubernetes.io/exclude-from-external-load-balancers= --overwrite && kubectl --kubeconfig /etc/kubernetes/admin.conf taint node master01 node-role.kubernetes.io/control-plane:NoSchedule --overwrite
 
     kubectl --kubeconfig /etc/kubernetes/admin.conf --server https://192.168.10.11:6443 get --raw /readyz
 
