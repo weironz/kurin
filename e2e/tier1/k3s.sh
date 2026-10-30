@@ -30,6 +30,9 @@ awk '
     }
 ' "$CFG" > "$TMPCFG"
 grep -q '^distribution = "k3s"$' "$TMPCFG" || { echo "[FAIL] distribution injection failed"; exit 1; }
+# The kubeadm default (1.37.2) and the k3s release (1.37.1+k3s1) can differ
+# by a patch; the k3s track installs the embedded k3s release.
+sed -i 's/^version = "1.37.2"/version = "1.37.1"/' "$TMPCFG"
 grep -q '^kind = "flannel"$' "$TMPCFG" || { echo "[FAIL] cni injection failed"; exit 1; }
 CLUSTER=$(awk -F'"' '/^name = /{print $2}' "$TMPCFG")
 rm -rf "$HOME/.cache/kurin/clusters/$CLUSTER" "$HOME/.cache/kurin/runs/$CLUSTER.json"

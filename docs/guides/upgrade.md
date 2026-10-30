@@ -1,8 +1,8 @@
 # 升级 Kubernetes
 
 ```bash
-kurin upgrade -f cluster.toml --with-kubernetes v1.34.1 --dry-run
-kurin upgrade -f cluster.toml --with-kubernetes v1.34.1
+kurin upgrade -f cluster.toml --with-kubernetes v1.37.2 --dry-run
+kurin upgrade -f cluster.toml --with-kubernetes v1.37.2
 ```
 
 - 跨 minor 一次只允许 +1（kubeadm 的限制）；k3s 按发布支持。
@@ -41,11 +41,11 @@ version-check → stop-service → install-bins → start-service → ready-gate
 
 ```bash
 # kubeadm：bundle 目录或包
-kurin upgrade -f cluster.toml --with-kubernetes v1.34.1 \
+kurin upgrade -f cluster.toml --with-kubernetes v1.37.2 \
   --offline /srv/kurin-bundle
 
 # k3s：bundle 需按每个 arch 携带目标 k3s 二进制与校验和
-kurin upgrade -f cluster.toml --with-kubernetes v1.34.1 \
+kurin upgrade -f cluster.toml --with-kubernetes v1.37.2 \
   --offline /srv/k3s-1.34.1-bundle
 ```
 

@@ -66,7 +66,7 @@ cat > "$CFG" <<EOF
 version = "v1alpha1"
 name = "openeuler"
 [kubernetes]
-version = "1.33.1"
+version = "1.37.2"
 [network]
 pod-cidr = "10.233.64.0/18"
 service-cidr = "10.233.0.0/18"

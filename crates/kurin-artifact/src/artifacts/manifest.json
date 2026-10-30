@@ -4,34 +4,34 @@
     {
       "name": "kubeadm",
       "kind": "binary",
-      "version": "1.33.1",
+      "version": "1.37.2",
       "file": "kubeadm",
       "url_template": "https://dl.k8s.io/release/v{version}/bin/{os}/{arch}/kubeadm",
       "sha256": {
-        "linux-amd64": "9a481b0a5f1cee1e071bc9a0867ca0aad5524408c2580596c00767ba1a7df0bd",
-        "linux-arm64": "5b3e3a1e18d43522fdee0e15be13a42cee316e07ddcf47ef718104836edebb3e"
+        "linux-amd64": "e621beed70d51a71d283d67c6a5fd6db93e641dfe2213883128200d9e52a937b",
+        "linux-arm64": "9607a9010951383304662012e4ca1d6f6a86afa298bcdb82cad855c5b87a67c8"
       }
     },
     {
       "name": "kubelet",
       "kind": "binary",
-      "version": "1.33.1",
+      "version": "1.37.2",
       "file": "kubelet",
       "url_template": "https://dl.k8s.io/release/v{version}/bin/{os}/{arch}/kubelet",
       "sha256": {
-        "linux-amd64": "f7224648451dd4f9f2c4f79416f9874223c286ce41727788965fd0341ddb59c4",
-        "linux-arm64": "10540261c311ae005b9af514d83c02694e12614406a8524fd2d0bad75296f70d"
+        "linux-amd64": "a0e0c4baca9d7e1e0a674359f1615b562a1091dc414c6f7a6094ec23aa2cbe59",
+        "linux-arm64": "de19336829ed3d3e0dea00bd22663f82e0f6709ded074879854a709e914cdaf6"
       }
     },
     {
       "name": "kubectl",
       "kind": "binary",
-      "version": "1.33.1",
+      "version": "1.37.2",
       "file": "kubectl",
       "url_template": "https://dl.k8s.io/release/v{version}/bin/{os}/{arch}/kubectl",
       "sha256": {
-        "linux-amd64": "5de4e9f2266738fd112b721265a0c1cd7f4e5208b670f811861f699474a100a3",
-        "linux-arm64": "d595d1a26b7444e0beb122e25750ee4524e74414bbde070b672b423139295ce6"
+        "linux-amd64": "c04487523e7aa7d1493f7808174c899db93d7a9cf57531420cd76b9bd415f8f4",
+        "linux-arm64": "fcc16f63186659d9722014b7e02d5fdd2d4e669cb8c0ab66365d7d3b8ba03509"
       }
     },
     {
@@ -81,12 +81,12 @@
     {
       "name": "pause",
       "kind": "image",
-      "version": "3.10",
+      "version": "3.10.2",
       "file": "index.json",
       "url_template": "registry.k8s.io/pause:{version}",
       "sha256": {
-        "linux-amd64": "ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a",
-        "linux-arm64": "ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a"
+        "linux-amd64": "f548e0e8e3dc1896ca956272154dde3314e8cc4fde0a57577ee9fa1c63f5baf4",
+        "linux-arm64": "f548e0e8e3dc1896ca956272154dde3314e8cc4fde0a57577ee9fa1c63f5baf4"
       }
     },
     {
@@ -103,67 +103,67 @@
     {
       "name": "kube-apiserver",
       "kind": "image",
-      "version": "1.33.1",
+      "version": "1.37.2",
       "file": "index.json",
       "url_template": "registry.k8s.io/kube-apiserver:v{version}",
       "sha256": {
-        "linux-amd64": "d8ae2fb01c39aa1c7add84f3d54425cf081c24c11e3946830292a8cfa4293548",
-        "linux-arm64": "d8ae2fb01c39aa1c7add84f3d54425cf081c24c11e3946830292a8cfa4293548"
+        "linux-amd64": "3e563afb5cb5b72a10bac7012698dd09f5a42bde7d22de8d7d3c12e654df86b4",
+        "linux-arm64": "3e563afb5cb5b72a10bac7012698dd09f5a42bde7d22de8d7d3c12e654df86b4"
       }
     },
     {
       "name": "kube-controller-manager",
       "kind": "image",
-      "version": "1.33.1",
+      "version": "1.37.2",
       "file": "index.json",
       "url_template": "registry.k8s.io/kube-controller-manager:v{version}",
       "sha256": {
-        "linux-amd64": "7c9bea694e3a3c01ed6a5ee02d55a6124cc08e0b2eec6caa33f2c396b8cbc3f8",
-        "linux-arm64": "7c9bea694e3a3c01ed6a5ee02d55a6124cc08e0b2eec6caa33f2c396b8cbc3f8"
+        "linux-amd64": "28e62daf706ed815a8bd1dd27b03294ba09421b2e1674e9a83bbac38e24ceb0c",
+        "linux-arm64": "28e62daf706ed815a8bd1dd27b03294ba09421b2e1674e9a83bbac38e24ceb0c"
       }
     },
     {
       "name": "kube-scheduler",
       "kind": "image",
-      "version": "1.33.1",
+      "version": "1.37.2",
       "file": "index.json",
       "url_template": "registry.k8s.io/kube-scheduler:v{version}",
       "sha256": {
-        "linux-amd64": "395b7de7cdbdcc3c3a3db270844a3f71d757e2447a1e4db76b4cce46fba7fd55",
-        "linux-arm64": "395b7de7cdbdcc3c3a3db270844a3f71d757e2447a1e4db76b4cce46fba7fd55"
+        "linux-amd64": "028c847fc321b8a7f9787f7b1c0840f832d6b68439be2e5c09279ffb14203d6b",
+        "linux-arm64": "028c847fc321b8a7f9787f7b1c0840f832d6b68439be2e5c09279ffb14203d6b"
       }
     },
     {
       "name": "kube-proxy",
       "kind": "image",
-      "version": "1.33.1",
+      "version": "1.37.2",
       "file": "index.json",
       "url_template": "registry.k8s.io/kube-proxy:v{version}",
       "sha256": {
-        "linux-amd64": "7ddf379897139ae8ade8b33cb9373b70c632a4d5491da6e234f5d830e0a50807",
-        "linux-arm64": "7ddf379897139ae8ade8b33cb9373b70c632a4d5491da6e234f5d830e0a50807"
+        "linux-amd64": "b2e075697d7ab4f0878775dff9e5dccf818b67644437175210ce72fc1ec70551",
+        "linux-arm64": "b2e075697d7ab4f0878775dff9e5dccf818b67644437175210ce72fc1ec70551"
       }
     },
     {
       "name": "coredns",
       "kind": "image",
-      "version": "1.12.0",
+      "version": "1.14.6",
       "file": "index.json",
       "url_template": "registry.k8s.io/coredns/coredns:v{version}",
       "sha256": {
-        "linux-amd64": "40384aa1f5ea6bfdc77997d243aec73da05f27aed0c5e9d65bfa98933c519d97",
-        "linux-arm64": "40384aa1f5ea6bfdc77997d243aec73da05f27aed0c5e9d65bfa98933c519d97"
+        "linux-amd64": "900f9c109f7a33545d3c811516e8376df9019147b750f5ce3e254468769176ea",
+        "linux-arm64": "900f9c109f7a33545d3c811516e8376df9019147b750f5ce3e254468769176ea"
       }
     },
     {
       "name": "etcd",
       "kind": "image",
-      "version": "3.5.21-0",
+      "version": "3.7.0-0",
       "file": "index.json",
       "url_template": "registry.k8s.io/etcd:{version}",
       "sha256": {
-        "linux-amd64": "d58c035df557080a27387d687092e3fc2b64c6d0e3162dc51453a115f847d121",
-        "linux-arm64": "d58c035df557080a27387d687092e3fc2b64c6d0e3162dc51453a115f847d121"
+        "linux-amd64": "6ecefbe2510c4a30573a62a4d6dd175acf881ca67003fcd91849a16df7a724d5",
+        "linux-arm64": "6ecefbe2510c4a30573a62a4d6dd175acf881ca67003fcd91849a16df7a724d5"
       }
     },
     {
@@ -268,23 +268,23 @@
     {
       "name": "k3s",
       "kind": "binary",
-      "version": "1.33.1+k3s1",
+      "version": "1.37.1+k3s1",
       "file": "k3s{asset_arch}",
       "url_template": "https://github.com/k3s-io/k3s/releases/download/v{version}/k3s{asset_arch}",
       "sha256": {
-        "linux-amd64": "0f53a0ee29c837713472e5fb0a13b5841f9dca76d029b26138364b9efbac66b1",
-        "linux-arm64": "ae4d5208d786b7ae3d916133419728bfc676648bd996de609e5cd55327c6f30a"
+        "linux-amd64": "92b94582eb7b34a8cf532e6006842b9ed215a6783cf56a3dd6271fd35243b2c0",
+        "linux-arm64": "a1561ca4aef8b99f5588a840d4468ac39c8c1cd92470bbcb9634823fa221741a"
       }
     },
     {
       "name": "k3s-airgap",
       "kind": "binary",
-      "version": "1.33.1+k3s1",
+      "version": "1.37.1+k3s1",
       "file": "k3s-airgap-images-{arch}.tar",
       "url_template": "https://github.com/k3s-io/k3s/releases/download/v{version}/k3s-airgap-images-{arch}.tar",
       "sha256": {
-        "linux-amd64": "e32338ce207d63bef89b76f546d7d590f32e540eef71e79bc9b308285af22a91",
-        "linux-arm64": "97b37345827b6c771ab75464ce08311e69e27c768bfefea7337253b0d58580ee"
+        "linux-amd64": "202d334501e61561354a2d45f4fe36d3a4104a3c95a9d2c9c47587c704864014",
+        "linux-arm64": "f16f71f9f75ed3ba08204ec54e59e9928cc8da6326b7fae5afac84a8c6a6e8df"
       },
       "optional": true
     },

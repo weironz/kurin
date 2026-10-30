@@ -82,7 +82,7 @@ docker run --rm -v "$PWD:/work" -w /work \
 
 # 制作离线包（需要公网）
 docker run --rm -v /srv:/srv willdockerhub/kurin:0.5.4 \
-  package create base --kubernetes 1.33.1 --arch amd64 \
+  package create base --kubernetes 1.37.2 --arch amd64 \
   -o file:///srv/kurin-base.tar.zst
 ```
 

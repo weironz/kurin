@@ -15,14 +15,15 @@
 //!   per-arch manifest digest taken from the registry's multi-arch index
 //!   (ghcr.io / registry.k8s.io)
 
-pub const KUBERNETES_VERSION: &str = "1.33.1";
+pub const KUBERNETES_VERSION: &str = "1.37.2";
+pub const K3S_VERSION: &str = "1.37.1+k3s1";
 pub const CONTAINERD_VERSION: &str = "2.1.4";
 pub const RUNC_VERSION: &str = "1.3.2";
 pub const CRICTL_VERSION: &str = "1.33.0";
 pub const CNI_PLUGINS_VERSION: &str = "1.7.1";
 pub const CALICO_VERSION: &str = "v3.30.2";
 pub const KUBE_VIP_VERSION: &str = "v0.8.8";
-pub const PAUSE_IMAGE: &str = "registry.k8s.io/pause:3.10";
+pub const PAUSE_IMAGE: &str = "registry.k8s.io/pause:3.10.2";
 
 /// One row of the checksum table: an artifact exactly as kurin downloads it.
 ///
@@ -40,42 +41,42 @@ pub struct ArtifactSha256 {
 /// sha256 of every installable artifact, keyed by `(name, arch)`.
 /// URLs are derived from the version consts by the `*_url` constructors below.
 pub const ARTIFACT_SHA256: &[ArtifactSha256] = &[
-    // kubernetes 1.33.1 — dl.k8s.io/release/v1.33.1/bin/linux/<arch>/<bin>.sha256
+    // kubernetes 1.37.2 — dl.k8s.io/release/v1.37.2/bin/linux/<arch>/<bin>.sha256
     ArtifactSha256 {
         name: "kubeadm",
         version: KUBERNETES_VERSION,
         arch: "amd64",
-        sha256: "9a481b0a5f1cee1e071bc9a0867ca0aad5524408c2580596c00767ba1a7df0bd",
+        sha256: "e621beed70d51a71d283d67c6a5fd6db93e641dfe2213883128200d9e52a937b",
     },
     ArtifactSha256 {
         name: "kubeadm",
         version: KUBERNETES_VERSION,
         arch: "arm64",
-        sha256: "5b3e3a1e18d43522fdee0e15be13a42cee316e07ddcf47ef718104836edebb3e",
+        sha256: "9607a9010951383304662012e4ca1d6f6a86afa298bcdb82cad855c5b87a67c8",
     },
     ArtifactSha256 {
         name: "kubelet",
         version: KUBERNETES_VERSION,
         arch: "amd64",
-        sha256: "f7224648451dd4f9f2c4f79416f9874223c286ce41727788965fd0341ddb59c4",
+        sha256: "a0e0c4baca9d7e1e0a674359f1615b562a1091dc414c6f7a6094ec23aa2cbe59",
     },
     ArtifactSha256 {
         name: "kubelet",
         version: KUBERNETES_VERSION,
         arch: "arm64",
-        sha256: "10540261c311ae005b9af514d83c02694e12614406a8524fd2d0bad75296f70d",
+        sha256: "de19336829ed3d3e0dea00bd22663f82e0f6709ded074879854a709e914cdaf6",
     },
     ArtifactSha256 {
         name: "kubectl",
         version: KUBERNETES_VERSION,
         arch: "amd64",
-        sha256: "5de4e9f2266738fd112b721265a0c1cd7f4e5208b670f811861f699474a100a3",
+        sha256: "c04487523e7aa7d1493f7808174c899db93d7a9cf57531420cd76b9bd415f8f4",
     },
     ArtifactSha256 {
         name: "kubectl",
         version: KUBERNETES_VERSION,
         arch: "arm64",
-        sha256: "d595d1a26b7444e0beb122e25750ee4524e74414bbde070b672b423139295ce6",
+        sha256: "fcc16f63186659d9722014b7e02d5fdd2d4e669cb8c0ab66365d7d3b8ba03509",
     },
     // containerd 2.1.4 — release asset containerd-2.1.4-linux-<arch>.tar.gz.sha256sum
     ArtifactSha256 {
@@ -149,18 +150,18 @@ pub const ARTIFACT_SHA256: &[ArtifactSha256] = &[
         arch: "arm64",
         sha256: "092558748b7187f6ff6bcb49fd2568aa7314f739d7d47ead5107ebfd9ad1f410",
     },
-    // pause 3.10 — per-arch manifest digest from the registry.k8s.io index
+    // pause 3.10.2 — per-arch manifest digest from the registry.k8s.io index
     ArtifactSha256 {
         name: "pause-image",
-        version: "3.10",
+        version: "3.10.2",
         arch: "amd64",
-        sha256: "7c38f24774e3cbd906d2d33c38354ccf787635581c122965132c9bd309754d4a",
+        sha256: "f548e0e8e3dc1896ca956272154dde3314e8cc4fde0a57577ee9fa1c63f5baf4",
     },
     ArtifactSha256 {
         name: "pause-image",
-        version: "3.10",
+        version: "3.10.2",
         arch: "arm64",
-        sha256: "e50b7059b633caf3c1449b8da680d11845cda4506b513ee7a2de00725f0a34a7",
+        sha256: "f548e0e8e3dc1896ca956272154dde3314e8cc4fde0a57577ee9fa1c63f5baf4",
     },
 ];
 

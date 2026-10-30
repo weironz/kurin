@@ -1595,12 +1595,12 @@ mod tests {
         let spec = manifest.spec("kubeadm", Arch::Amd64).unwrap();
         assert_eq!(
             spec.url(),
-            "https://dl.k8s.io/release/v1.33.1/bin/linux/amd64/kubeadm"
+            "https://dl.k8s.io/release/v1.37.2/bin/linux/amd64/kubeadm"
         );
         assert_eq!(spec.file_name(), "kubeadm");
         assert_eq!(
             spec.expected_sha256().unwrap(),
-            "9a481b0a5f1cee1e071bc9a0867ca0aad5524408c2580596c00767ba1a7df0bd"
+            "e621beed70d51a71d283d67c6a5fd6db93e641dfe2213883128200d9e52a937b"
         );
 
         let cni = manifest.spec("cni-plugins", Arch::Arm64).unwrap();

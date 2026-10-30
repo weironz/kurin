@@ -8,16 +8,19 @@ kurin 的版本策略：**默认 pin 一个版本；在线 create 可为其他�
 
 | 场景 | 版本 | 说明 |
 |---|---|---|
-| 在线 `create cluster` | **1.33.1（默认）** | 其他受支持版本（≥1.30）在线解析动态 manifest：kubeadm/kubelet/kubectl 用 dl.k8s.io 签名 sha256，镜像用 digest |
+| 在线 `create cluster` | **1.37.2（默认）** | 其他受支持版本（≥1.30）在线解析动态 manifest：kubeadm/kubelet/kubectl 用 dl.k8s.io 签名 sha256，镜像用 digest |
 | 带 base 包的 `create cluster` | 包 manifest 的版本 | `package create base --kubernetes <ver>` 决定 |
 | `add nodes` | 集群当前版本 | 动态 manifest 按集群版本重新 pin |
-| `upgrade` | 当前版本 + 1 个 minor | 动态 manifest；已验证 1.33.1 → 1.34.1 |
-| k3s（embedded） | `v1.33.1+k3s1` | k3s 包/离线 bundle 可携带其他 release |
-| k3s 升级 | `v1.34.1+k3s1` | 已验证 1.33.1 → 1.33.2（`just tier1-k3s-upgrade` 自动构造离线 bundle）与 1.33.1 → 1.34.1（手工 bundle） |
+| `upgrade` | 当前版本 + 1 个 minor | 动态 manifest；已验证 1.33.1 → 1.34.1；默认 1.37.2 的在线 create 已实测 |
+| k3s（embedded） | `v1.37.1+k3s1` | 已实测安装（tier1） | k3s 包/离线 bundle 可携带其他 release |
+| k3s 升级 | 当前版本 +1 | 已验证 1.33.1 → 1.33.2（`just tier1-k3s-upgrade` 自动构造离线 bundle）与 1.33.1 → 1.34.1（手工 bundle）；默认 1.37.1+k3s1 安装已实测 |
 
 支持策略：Kubernetes **≥ 1.30**；低于 1.30 的配置在加载期直接拒绝
 （对应 KubeKey 的 `kube_version_min_required`）。跨 minor 升级一次只允许
-+1（kubeadm 的限制）。实际可部署的版本由 embedded manifest、在线动态 manifest 或你提供的包决定。
++1（kubeadm 的限制）。embedded 默认版本随 kurin 发布更新为当时的最新稳定版
+（当前 1.37.2）；k3s 的 embedded release 跟随 k3s 上游最新稳定版
+（当前 1.37.1+k3s1，可能比上游 Kubernetes 晚一个 patch）。实际可部署的
+版本由 embedded manifest、在线动态 manifest 或你提供的包决定。
 
 ## 命令行查看
 
@@ -30,11 +33,11 @@ kurin versions --json
 
 ```text
 kurin 0.5.4
-kubernetes (embedded): 1.33.1
-create online: 1.33.1 (default) or any supported version via dynamic manifest
+kubernetes (embedded): 1.37.2
+create online: 1.37.2 (default) or any supported version via dynamic manifest
 create with package: version pinned by the base package
 upgrade: current + 1 minor (dynamic manifest; tested 1.33.1 -> 1.34.1)
-k3s: v1.33.1+k3s1 (embedded)
+k3s: v1.37.1+k3s1 (embedded)
 ```
 
 `--json` 输出同内容的机器可读对象，便于 CI/脚本判断。
@@ -44,8 +47,8 @@ k3s: v1.33.1+k3s1 (embedded)
 在线 create 可直接指定其他受支持版本（≥1.30）：
 
 ```bash
-kurin create cluster -f cluster.toml --kubernetes 1.34.1
-# 或配置里写 [kubernetes] version = "1.34.1"
+kurin create cluster -f cluster.toml --kubernetes 1.37.2
+# 或配置里写 [kubernetes] version = "1.37.2"
 ```
 
 kurin 会为目标版本拉取 kubeadm/kubelet/kubectl 的签名 sha256，并解析
@@ -56,10 +59,10 @@ kurin 会为目标版本拉取 kubeadm/kubelet/kubectl 的签名 sha256，并解
 离线场景仍用 base 包携带完整制品：
 
 ```bash
-kurin package create base --kubernetes 1.34.1 --arch amd64 \
-  -o file:///srv/kurin-base-1.34.1.tar.zst
+kurin package create base --kubernetes 1.37.2 --arch amd64 \
+  -o file:///srv/kurin-base-1.37.2.tar.zst
 kurin create cluster -f cluster.toml \
-  --package file:///srv/kurin-base-1.34.1.tar.zst
+  --package file:///srv/kurin-base-1.37.2.tar.zst
 ```
 
 包的覆盖性在 discover 之后校验：必须覆盖配置里的 Kubernetes 版本、发行版、

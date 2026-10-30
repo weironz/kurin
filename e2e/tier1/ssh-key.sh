@@ -50,7 +50,7 @@ create_args=(
     --ssh-user root
     --ssh-password-env KURIN_SSH_PASSWORD
     --setup-ssh-key
-    --kubernetes 1.33.1
+    --kubernetes 1.37.2
     --yes --json
 )
 

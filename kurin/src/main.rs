@@ -1214,7 +1214,7 @@ async fn run(cli: Cli) -> Result<()> {
 /// `kurin versions`: the supported Kubernetes matrix for this build.
 fn versions(out: OutputOpts) -> Result<()> {
     let kubernetes = kurin_artifact::version::KUBERNETES_VERSION;
-    let k3s = format!("v{kubernetes}+k3s1");
+    let k3s = format!("v{}", kurin_artifact::version::K3S_VERSION);
     if out.json_enabled() {
         let doc = serde_json::json!({
             "kurin": env!("CARGO_PKG_VERSION"),

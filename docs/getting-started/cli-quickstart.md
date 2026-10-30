@@ -88,7 +88,7 @@ kurin create cluster --name prod \
   --worker 192.168.10.21-23 \
   --vip 192.168.10.100 \
   --ssh-key ~/.ssh/id_ed25519 \
-  --kubernetes 1.33.1 \
+  --kubernetes 1.37.2 \
   --cni cilium \
   --addon metrics-server \
   --addon ingress-nginx

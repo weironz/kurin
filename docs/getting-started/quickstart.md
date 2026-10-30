@@ -172,7 +172,7 @@ multipass exec lb1 -- ip -4 addr | grep 192.168.10.100  # vip 在 lb1
 
 ```toml
 [kubernetes]
-version = "1.33.1"
+version = "1.37.2"
 distribution = "k3s"
 
 [ha]
@@ -218,7 +218,7 @@ gh-proxy 前缀。校验值不变——manifest 的 sha256 依旧兜底。
 ```bash
 kurin status -f cluster.toml          # 节点/pod/etcd/证书总览，exit 0 = 健康
 kurin certs check -f cluster.toml     # 每个 CP 的证书到期报告
-kurin upgrade -f cluster.toml --with-kubernetes v1.34.12   # 在线升级（含跨 minor 一级）
+kurin upgrade -f cluster.toml --with-kubernetes v1.37.2   # 在线升级（含跨 minor 一级）
 kurin add nodes -f cluster.toml       # 追加节点（含追加控制面；新节点安装集群当前版本）
 kurin certs renew -f cluster.toml --force                  # 轮转控制面证书
 ```

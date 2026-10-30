@@ -67,7 +67,7 @@ cat > "$CFG" <<EOF
 version = "v1alpha1"
 name = "k3s-ext"
 [kubernetes]
-version = "1.33.1"
+version = "1.37.1"
 distribution = "k3s"
 [network]
 pod-cidr = "10.42.0.0/16"

@@ -14,7 +14,7 @@
 
 ```bash
 kurin package create offline \
-  --kubernetes 1.33.1 \
+  --kubernetes 1.37.2 \
   --arch amd64 \
   --cni calico \
   --target ubuntu-24.04 --target rocky-9 \
@@ -27,12 +27,12 @@ kurin package create offline \
 
 ```text
 kurin-offline/
-  kurin-base-1.33.1-amd64.tar.zst
+  kurin-base-1.37.2-amd64.tar.zst
   kurin-os-ubuntu-24.04-amd64.tar.zst
   kurin-os-ubuntu-24.04-amd64.iso
   kurin-os-rocky-9-amd64.tar.zst
   kurin-os-rocky-9-amd64.iso
-  kurin-base-1.33.1-amd64.spdx.json
+  kurin-base-1.37.2-amd64.spdx.json
   kurin-os-*.spdx.json
   offline.json          # 包索引：路径、sha256、size、target、ISO、SBOM
   SHA256SUMS            # 所有文件的校验和
@@ -53,10 +53,10 @@ kurin-offline/
 ```bash
 # 单架构；--cni 默认 all，可写 calico,flannel 等
 kurin package create base \
-  --kubernetes 1.33.1 \
+  --kubernetes 1.37.2 \
   --arch amd64 \
   --cni calico \
-  -o file:///srv/kurin-base-v1.33.1.tar.zst
+  -o file:///srv/kurin-base-v1.37.2.tar.zst
 
 # 混合架构
 kurin package create base --arch amd64,arm64 -o file:///srv/kurin-base.tar.zst

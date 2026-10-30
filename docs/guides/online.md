@@ -17,7 +17,7 @@ version = "v1alpha1"
 name = "demo"
 
 [kubernetes]
-version = "1.33.1"   # 默认 embedded 版本；也可写 >=1.30 的其他版本
+version = "1.37.2"   # 默认 embedded 版本；也可写 >=1.30 的其他版本
 
 [network]
 pod-cidr = "10.233.64.0/18"
@@ -49,7 +49,7 @@ password = { env = "KURIN_SSH_PASSWORD" }
 秘密引用的完整写法（env/file/字面值、节点级覆盖）见
 [配置参考 §秘密引用](../reference/configuration.md#秘密引用secretref)。
 
-在线 create 默认用 embedded 1.33.1；写其他受支持版本（≥1.30）时，
+在线 create 默认用 embedded 1.37.2；写其他受支持版本（≥1.30）时，
 kurin 会为目标版本动态解析 kubeadm/kubelet/kubectl 的签名 sha256 和控制面
 镜像 digest。`--dry-run`（不带 `--check`）保持零网络，因此非 embedded
 版本的纯预览会要求改用 `--dry-run --check`。离线场景仍用

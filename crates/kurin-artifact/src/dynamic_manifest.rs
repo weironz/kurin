@@ -606,7 +606,7 @@ registry.k8s.io/etcd:3.5.21-0
         }
         // Unrelated artifacts keep their pins.
         let kubelet = manifest.get("kubelet").unwrap();
-        assert_eq!(kubelet.version, "1.33.1");
+        assert_eq!(kubelet.version, "1.37.2");
         let calico = manifest.get("calico-node").unwrap();
         assert_eq!(calico.version, "3.30.2");
     }

@@ -7,7 +7,7 @@ version = "v1alpha2"
 name = "edge"
 
 [kubernetes]
-version = "1.33.1"
+version = "1.37.1"
 distribution = "k3s"
 
 [network.cni]
@@ -44,7 +44,7 @@ role = "control-plane"
 
 ```toml
 [kubernetes]
-version = "1.33.1"
+version = "1.37.1"
 distribution = "k3s"
 
 [ha]
@@ -67,16 +67,16 @@ role = "control-plane"
 
 ```bash
 # 目标版本映射到 k3s release vX.Y.Z+k3s1（显式 +k3sN 原样保留）
-kurin upgrade -f cluster.toml --with-kubernetes 1.34.1 --dry-run
-kurin upgrade -f cluster.toml --with-kubernetes 1.34.1
+kurin upgrade -f cluster.toml --with-kubernetes 1.37.1 --dry-run
+kurin upgrade -f cluster.toml --with-kubernetes 1.37.1
 ```
 
 在线升级要求制品清单 pin 的正是目标 release；否则用离线 bundle：
 
 ```bash
 # bundle 需按集群每个 arch 携带目标 k3s 二进制 + 校验和
-kurin upgrade -f cluster.toml --with-kubernetes 1.34.1 \
-  --offline /srv/k3s-1.34.1-bundle
+kurin upgrade -f cluster.toml --with-kubernetes 1.37.1 \
+  --offline /srv/k3s-1.37.1-bundle
 ```
 
 每个节点：`version-check` → `stop-service` → `install-bins`（旧二进制保留为

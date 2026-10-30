@@ -151,8 +151,8 @@ RUNTIME / KERNEL`，下方汇总 etcd、版本、证书与 overall。
 ## upgrade
 
 ```bash
-kurin upgrade -f cluster.toml --with-kubernetes v1.34.1
-kurin upgrade -f cluster.toml --with-kubernetes v1.34.1 --dry-run
+kurin upgrade -f cluster.toml --with-kubernetes v1.37.2
+kurin upgrade -f cluster.toml --with-kubernetes v1.37.2 --dry-run
 ```
 
 | 选项 | 说明 |
@@ -221,13 +221,13 @@ kurin addon remove  <NAME> -f cluster.toml [--keep-crds] [--no-save]
 
 ```bash
 # 制作
-kurin package create base  --kubernetes 1.33.1 --arch amd64 --cni all --addons ingress-nginx -o file:///srv/base.tar.zst
+kurin package create base  --kubernetes 1.37.2 --arch amd64 --cni all --addons ingress-nginx -o file:///srv/base.tar.zst
 kurin package create os    --target ubuntu-24.04 --arch amd64 -o file:///srv/os.tar.zst
 kurin package create os    --target ubuntu-24.04 --arch amd64 --iso /srv/ubuntu.iso -o file:///srv/os.tar.zst
 kurin package create addon -f addons/ingress-nginx/addon.yaml -o file:///srv/addon.tar.zst
 
 # 完整离线介质：base + 多个 os 包 + 可选 ISO + offline.json + SHA256SUMS
-kurin package create offline --kubernetes 1.33.1 --arch amd64 \
+kurin package create offline --kubernetes 1.37.2 --arch amd64 \
   --target ubuntu-24.04 --target rocky-9 --iso -o /srv/kurin-offline
 
 # 检查

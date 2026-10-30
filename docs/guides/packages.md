@@ -12,7 +12,7 @@
 
 ```bash
 # base
-kurin package create base --kubernetes 1.33.1 --arch amd64 --cni calico \
+kurin package create base --kubernetes 1.37.2 --arch amd64 --cni calico \
   -o file:///srv/kurin-base.tar.zst
 
 # 多架构 + 嵌入 addon
@@ -59,10 +59,10 @@ kurin package verify oci://ghcr.io/weironz/kurin/base:v0.5.0 \
 ```bash
 # 推到 registry（只发缺失 blob）
 kurin package push file:///srv/kurin-base.tar.zst \
-  oci://registry.example.com/kurin/base:v1.33.1
+  oci://registry.example.com/kurin/base:v1.37.2
 
 # 从 registry 拉到本地
-kurin package pull oci://registry.example.com/kurin/base:v1.33.1 \
+kurin package pull oci://registry.example.com/kurin/base:v1.37.2 \
   file:///srv/kurin-base.tar.zst
 
 # 查看本地内容寻址缓存

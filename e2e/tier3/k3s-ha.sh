@@ -67,7 +67,7 @@ version = "v1alpha1"
 name = "tier3-k3s"
 
 [kubernetes]
-version = "1.33.1"
+version = "1.37.1"
 distribution = "k3s"
 
 [network]

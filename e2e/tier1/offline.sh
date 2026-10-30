@@ -9,7 +9,7 @@
 # legacy bundle directory (WP-35 preload delivery):
 #   oci-layout:///tmp/kurin-pkg
 #   file:///tmp/kurin-base.tar.zst
-#   oci://127.0.0.1:5000/kurin/base:v1.33.1-kubeadm   (local zot)
+#   oci://127.0.0.1:5000/kurin/base:v1.37.2-kubeadm   (local zot)
 set -euo pipefail
 
 BUNDLE=${1:-/tmp/kurin-bundle}

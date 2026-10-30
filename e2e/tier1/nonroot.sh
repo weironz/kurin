@@ -58,7 +58,7 @@ version = "v1alpha1"
 name = "nonroot"
 
 [kubernetes]
-version = "1.33.1"
+version = "1.37.2"
 
 [network]
 pod-cidr = "10.233.64.0/18"

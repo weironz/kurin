@@ -44,7 +44,7 @@ kurin create cluster --name prod \
   --worker 192.168.10.21,192.168.10.22,192.168.10.23 \
   --vip 192.168.10.100 \
   --ssh-user root --ssh-password-env KURIN_SSH_PASSWORD \
-  --kubernetes 1.33.1 --cni cilium --addon metrics-server --addon ingress-nginx
+  --kubernetes 1.37.2 --cni cilium --addon metrics-server --addon ingress-nginx
 
 # 只生成配置，不安装（参数与 create cluster 完全相同）
 kurin create config --name prod --control-plane 192.168.10.11-13 \
@@ -85,7 +85,7 @@ kurin create cluster -f prod.kurin.toml --set network.pod-cidr=10.244.0.0/16 --c
 | 参数 | 对应配置 |
 |---|---|
 | `--name <N>` | `name`（无 `-f` 时必填） |
-| `--kubernetes <V>` | `kubernetes.version`（前导 `v` 可省略）；在线 create 默认 1.33.1，其他受支持版本（≥1.30）在线动态解析制品 pin；离线用 base 包 |
+| `--kubernetes <V>` | `kubernetes.version`（前导 `v` 可省略）；在线 create 默认 1.37.2，其他受支持版本（≥1.30）在线动态解析制品 pin；离线用 base 包 |
 | `--distribution kubeadm\|k3s` | `kubernetes.distribution` |
 | `--runtime containerd\|crio` | `runtime.kind` |
 | `--cni calico\|flannel\|cilium\|kube-ovn\|none` | `network.cni.kind` |
@@ -164,7 +164,7 @@ version = "v1alpha2"
 name = "prod"
 
 [kubernetes]
-version = "1.33.1"
+version = "1.37.2"
 distribution = "kubeadm"        # "kubeadm"（原 "k8s"）| "k3s"
 
 [runtime]
@@ -290,7 +290,7 @@ name   = "prod"               # 集群名（kubeconfig context、状态文件、
 
 # ── kubernetes ─────────────────────────────────────────────────
 [kubernetes]
-version       = "1.33.1"      # 目标版本（semver；缺省用编译期默认）
+version       = "1.37.2"      # 目标版本（semver；缺省用编译期默认）
 distribution  = "k8s"         # "k8s"（kubeadm 轨道，默认）| "k3s"
 
 # ── network ────────────────────────────────────────────────────
@@ -473,7 +473,7 @@ registry 节点、但想用 pull 语义"的场景，例如引导集群内 regist
 
 ```toml
 [packages]
-base = "file:///media/usb/kurin-base-v1.33.1.tar.zst"
+base = "file:///media/usb/kurin-base-v1.37.2.tar.zst"
 delivery = "seed"
 ```
 
@@ -785,7 +785,7 @@ offline-dir = "/srv/kurin-bundle"
 | 离线 flag 覆盖 | `kurin create cluster -f cluster.toml --offline /srv/bundle` |
 | 镜像 zone 覆盖 | `KURIN_ZONE=cn kurin …` |
 | 增删节点 | `kurin add nodes -f …` / `kurin delete node <name> -f …` |
-| 升级到任意版本 | `kurin upgrade -f … --with-kubernetes v1.34.12`（跨 minor 一次一级） |
+| 升级到任意版本 | `kurin upgrade -f … --with-kubernetes v1.37.2`（跨 minor 一次一级） |
 | 销毁 | `kurin delete cluster -f …` |
 
 事件流（`--json`）逐行 JSONL：`task-start/skip/done/failed/reconciled`、

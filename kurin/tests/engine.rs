@@ -148,7 +148,7 @@ role = "control-plane"
 
 #[test]
 fn version_table_is_pinned() {
-    assert_eq!(kurin::version::KUBERNETES_VERSION, "1.33.1");
+    assert_eq!(kurin::version::KUBERNETES_VERSION, "1.37.2");
     let versions = kurin::version::component_versions();
     assert!(versions.iter().any(|(k, _)| *k == "kubernetes"));
 }

@@ -4,7 +4,7 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use kurin_config::{Cluster, ResolvedSecrets};
+use kurin_config::{Cluster, Distribution, ResolvedSecrets};
 use kurin_core::executor::SessionPool;
 use kurin_core::lock::ClusterLockGuard;
 use miette::{IntoDiagnostic, Result};
@@ -18,7 +18,9 @@ use crate::{warn, Params, Prepared};
 /// endpoints and resolves the target control-plane image digests, so one
 /// binary can create any supported Kubernetes version online.
 fn needs_dynamic_manifest(spec: &Cluster, payload: &crate::packages::Payload) -> bool {
-    if !matches!(payload, crate::packages::Payload::Online) {
+    if !matches!(payload, crate::packages::Payload::Online)
+        || spec.distribution != Distribution::K8s
+    {
         return false;
     }
     let pinned = semver::Version::parse(kurin_artifact::version::KUBERNETES_VERSION)
@@ -198,7 +200,17 @@ role = "control-plane"
     #[test]
     fn online_create_uses_the_embedded_manifest_for_the_pinned_version() {
         assert!(!needs_dynamic_manifest(
-            &cluster("1.33.1"),
+            &cluster("1.37.2"),
+            &crate::packages::Payload::Online
+        ));
+    }
+
+    #[test]
+    fn k3s_online_create_does_not_resolve_the_kubeadm_manifest() {
+        let mut c = cluster("1.37.1");
+        c.distribution = Distribution::K3s;
+        assert!(!needs_dynamic_manifest(
+            &c,
             &crate::packages::Payload::Online
         ));
     }

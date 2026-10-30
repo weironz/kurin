@@ -9,7 +9,7 @@ version = "v1alpha2"
 name = "seed-demo"
 
 [packages]
-base = "file:///media/usb/kurin-base-v1.33.1.tar.zst"
+base = "file:///media/usb/kurin-base-v1.37.2.tar.zst"
 delivery = "seed"
 
 [nodes.node01]

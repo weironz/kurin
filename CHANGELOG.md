@@ -4,6 +4,12 @@ All notable changes to kurin. Format follows Keep a Changelog; semver.
 
 ## Unreleased
 
+### Changed
+- The embedded default Kubernetes version is now **1.37.2** (latest stable
+  at release time); the embedded k3s release is **1.37.1+k3s1** (latest
+  k3s stable, which trails upstream by one patch). Online create can still
+  target any supported version ≥1.30 via the dynamic manifest.
+
 ### Added
 - Online `create cluster` now supports any Kubernetes version ≥1.30, not
   just the embedded pin: the target version's kubeadm/kubelet/kubectl are

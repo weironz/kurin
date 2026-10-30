@@ -41,7 +41,7 @@ if ! "$BIN" create cluster \
     --control-plane "$IP" \
     --ssh-user root \
     --ssh-password-env KURIN_SSH_PASSWORD \
-    --kubernetes 1.33.1 \
+    --kubernetes 1.37.2 \
     --yes --json > "$EVENTS" 2> >(tee /tmp/kurin-tier1-quick-err.log >&2); then
     echo "[FAIL] create exited nonzero; last events:"
     tail -5 "$EVENTS" || true

@@ -88,7 +88,7 @@ version = "v1alpha1"
 name = "prod"
 
 [kubernetes]
-version = "1.33.1"
+version = "1.37.2"
 
 [network]
 pod-cidr = "10.233.64.0/18"
@@ -119,7 +119,7 @@ k3s distribution:
 
 ```toml
 [kubernetes]
-version = "1.33.1"
+version = "1.37.2"
 distribution = "k3s"
 
 [network.cni]
