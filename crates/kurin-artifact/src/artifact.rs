@@ -1607,6 +1607,9 @@ mod tests {
         assert_eq!(cni.file_name(), "cni-plugins-linux-arm64-v1.7.1.tgz");
         assert!(cni.url().contains("cni-plugins-linux-arm64-v1.7.1.tgz"));
 
+        let cilium = manifest.spec("cilium-chart", Arch::Amd64).unwrap();
+        assert_eq!(cilium.url(), "https://helm.cilium.io/cilium-1.20.4.tgz");
+
         let unknown = manifest.spec("kube-vip", Arch::Amd64);
         assert!(matches!(
             unknown,

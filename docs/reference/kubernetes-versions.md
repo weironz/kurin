@@ -42,6 +42,17 @@ k3s: v1.37.1+k3s1 (embedded)
 
 `--json` 输出同内容的机器可读对象，便于 CI/脚本判断。
 
+## CNI 与版本
+
+Cilium 1.20.4 的官方兼容范围是 Kubernetes **1.31–1.36**；默认 1.37.2 下
+`--cni cilium` 会在配置校验期明确拒绝。需要 Cilium 时显式用 1.36.x：
+
+```bash
+kurin create cluster -f cluster.toml --kubernetes 1.36.6 --cni cilium
+```
+
+calico / flannel / kube-ovn 不受此限制。
+
 ## 安装其他版本
 
 在线 create 可直接指定其他受支持版本（≥1.30）：

@@ -44,7 +44,7 @@ kurin create cluster --name prod \
   --worker 192.168.10.21,192.168.10.22,192.168.10.23 \
   --vip 192.168.10.100 \
   --ssh-user root --ssh-password-env KURIN_SSH_PASSWORD \
-  --kubernetes 1.37.2 --cni cilium --addon metrics-server --addon ingress-nginx
+  --kubernetes 1.36.6 --cni cilium --addon metrics-server --addon ingress-nginx
 
 # 只生成配置，不安装（参数与 create cluster 完全相同）
 kurin create config --name prod --control-plane 192.168.10.11-13 \
@@ -404,7 +404,7 @@ key-path = "/root/.ssh/master01_key"
 |---|---|---|
 | `calico` | tigera-operator manifest + Installation CR（pinned sha256） | — |
 | `flannel` | 上游 kube-flannel.yml，pod-cidr 自动 patch | — |
-| `cilium` | cilium-cli（制品分发）`cilium install --version 1.20.4`，k8sServiceHost/nativeRoutingCIDR 自动注入 | 仅 k8s 发行版 |
+| `cilium` | 固定 Helm chart 1.20.4（`helm upgrade --install`），k8sServiceHost/nativeRoutingCIDR 自动注入；旧 cilium-cli 安装可 `--take-ownership` 接管 | 仅 k8s 发行版；Kubernetes **1.31–1.36**（1.37 需等 Cilium 新版本） |
 | `none` | 什么都不装（自带 CNI 的运维方） | — |
 
 zone=cn 时全部镜像引用自动改写为国内 mirror（calico CR registry、flannel manifest、

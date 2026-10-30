@@ -160,7 +160,18 @@ impl Component for Cilium {
         spec.cni == CniConfig::Cilium
     }
 
-    fn validate(&self, _spec: &Cluster, _d: &mut Diagnostics) {}
+    fn validate(&self, spec: &Cluster, d: &mut Diagnostics) {
+        // Cilium 1.20.4's official matrix is Kubernetes 1.31-1.36; 1.37
+        // changed the PartialObjectMetadata watch path it relies on.
+        if !(31..=36).contains(&spec.kubernetes_version.minor) {
+            d.error(format!(
+                "Cilium 1.20.4 supports Kubernetes 1.31-1.36; {} is newer. \
+                 Use `--kubernetes 1.36.6` (or a base package for 1.36.x), \
+                 or wait for a Cilium release that supports 1.37.",
+                spec.kubernetes_version
+            ));
+        }
+    }
 
     fn capabilities(&self) -> Capabilities {
         Capabilities {
@@ -350,6 +361,21 @@ role = "worker"
                 );
             }
         }
+    }
+
+    #[test]
+    fn cilium_rejects_kubernetes_outside_its_support_matrix() {
+        let mut c = spec("cilium");
+        c.kubernetes_version = semver::Version::parse("1.37.2").unwrap();
+        let mut d = Diagnostics::new("");
+        Cilium.validate(&c, &mut d);
+        let err = d.first_error().expect("1.37 is rejected");
+        assert!(err.to_string().contains("1.31-1.36"), "{err}");
+
+        c.kubernetes_version = semver::Version::parse("1.36.6").unwrap();
+        let mut d = Diagnostics::new("");
+        Cilium.validate(&c, &mut d);
+        assert!(d.is_clean(), "1.36.6 is supported");
     }
 
     #[test]

@@ -87,6 +87,8 @@ pub(super) fn check_rendered_images(
         let covered = allowed.iter().any(|(reference, digest)| {
             let (repo, tag, rendered_digest) = split(image);
             let (want_repo, want_tag) = split_tag(reference);
+            // Manifest pins are bare hex; rendered refs carry `sha256:`.
+            let rendered_digest = rendered_digest.map(|d| d.strip_prefix("sha256:").unwrap_or(d));
             repo == want_repo
                 && tag == want_tag
                 && rendered_digest.is_none_or(|d| Some(d) == digest.as_deref())
@@ -170,6 +172,7 @@ mod tests {
             allowed.iter().any(|(reference, digest)| {
                 let (repo, tag, rendered) = split(image);
                 let (want_repo, want_tag) = split_tag(reference);
+                let rendered = rendered.map(|d| d.strip_prefix("sha256:").unwrap_or(d));
                 repo == want_repo
                     && tag == want_tag
                     && rendered.is_none_or(|d| Some(d) == digest.as_deref())
@@ -177,6 +180,9 @@ mod tests {
         };
         assert!(ok("quay.io/cilium/cilium:v1.20.4"));
         assert!(ok(&format!("quay.io/cilium/cilium:v1.20.4@{digest}")));
+        assert!(ok(&format!(
+            "quay.io/cilium/cilium:v1.20.4@sha256:{digest}"
+        )));
         assert!(!ok("quay.io/cilium/cilium:v1.20.4@sha256:deadbeef"));
         assert!(!ok("quay.io/cilium/cilium:v1.20.5"));
         assert!(!ok("quay.io/other/cilium:v1.20.4"));

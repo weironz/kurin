@@ -293,7 +293,7 @@
       "kind": "binary",
       "version": "1.20.4",
       "file": "cilium-{version}.tgz",
-      "url_template": "https://helm.cilium.io/cilium-v{version}.tgz",
+      "url_template": "https://helm.cilium.io/cilium-{version}.tgz",
       "sha256": {
         "linux-amd64": "505abff8385811df1a949776fc42e9f10697989a332acc86d6e8933efcb855ed",
         "linux-arm64": "505abff8385811df1a949776fc42e9f10697989a332acc86d6e8933efcb855ed"
