@@ -2,7 +2,16 @@
 
 All notable changes to kurin. Format follows Keep a Changelog; semver.
 
-## Unreleased
+## 0.6.0 - 2026-10-30
+
+### Fixed
+- Cilium chart download URL used `cilium-v{version}.tgz`, which 404s;
+  it is now `cilium-{version}.tgz`. Rendered image digests with a
+  `sha256:` prefix now match the bare-hex manifest pins. Cilium 1.20.4 is
+  officially supported on Kubernetes 1.33-1.36; `--cni cilium` with a
+  newer version now fails validation with guidance instead of
+  half-installing.
+
 
 ### Changed
 - The embedded default Kubernetes version is now **1.37.2** (latest stable
@@ -22,12 +31,6 @@ All notable changes to kurin. Format follows Keep a Changelog; semver.
 ## 0.5.4 - 2026-10-30
 
 ### Fixed
-- Cilium chart download URL used `cilium-v{version}.tgz`, which 404s;
-  it is now `cilium-{version}.tgz`. Rendered image digests with a
-  `sha256:` prefix now match the bare-hex manifest pins. Cilium 1.20.4 is
-  officially supported on Kubernetes 1.33-1.36; `--cni cilium` with a
-  newer version now fails validation with guidance instead of
-  half-installing.
 - CIS kubelet profile no longer sets `serverTLSBootstrap: true`: kurin does
   not run a kubelet-serving CSR approver, so kubelet had no serving
   certificate and metrics-server / `kubectl logs` / `exec` failed with TLS

@@ -4,7 +4,7 @@ kurin 的版本策略：**默认 pin 一个版本；在线 create 可为其他�
 动态解析制品 pin，离线场景由 base 包显式携带**。不支持的组合在开始安装前
 报错。
 
-## 当前构建（Unreleased，基于 0.5.4）
+## 当前构建（0.6.0）
 
 | 场景 | 版本 | 说明 |
 |---|---|---|
@@ -32,7 +32,7 @@ kurin versions --json
 输出示例：
 
 ```text
-kurin 0.5.4
+kurin 0.6.0
 kubernetes (embedded): 1.37.2
 create online: 1.37.2 (default) or any supported version via dynamic manifest
 create with package: version pinned by the base package

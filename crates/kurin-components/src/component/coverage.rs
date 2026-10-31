@@ -338,7 +338,7 @@ role = "worker"
             name: "base".to_string(),
             kind: PackageKind::Base,
             version: version.to_string(),
-            kurin: ">=0.4.0, <0.6.0".to_string(),
+            kurin: ">=0.4.0, <0.8.0".to_string(),
             created: "2026-10-28T00:00:00Z".to_string(),
             distribution: distribution.to_string(),
             arch: arch.into_iter().map(str::to_string).collect(),
@@ -504,7 +504,7 @@ role = "worker"
     fn a_newer_kurin_requirement_is_a_gap() {
         let spec = spec();
         let mut meta = matching_manifest();
-        meta.kurin = ">=0.6.0, <0.8.0".to_string();
+        meta.kurin = ">=0.7.0, <0.9.0".to_string();
         let gaps = coverage_gaps(&spec, &amd64_facts(&spec), &meta);
         assert!(
             gaps.iter().any(|g| g.starts_with("kurin: this build is")),
